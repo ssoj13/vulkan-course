@@ -1,72 +1,64 @@
-/* ObjectGraph: object nodes colored by course stage, build-mode states and the call/validation console. */
+/*
+ * ObjectGraph on top of the engine's node look (course-kit graph.css): node color = the course stage that introduces
+ * the object, build-mode states (ghost / ready / alive / dangling), and the call + validation console.
+ */
 .vk-objects {
-	--vk-s0: #4f8ff7; /* instance */
-	--vk-s1: #3fb27f; /* devices */
-	--vk-s2: #e5a33b; /* presentation */
-	--vk-s3: #9c6ade; /* pipeline */
-	--vk-s4: #d9644a; /* commands */
-	--vk-s5: #e05d9a; /* sync */
-	--vk-s6: #2bb3c0; /* memory */
-	--vk-s7: #b5a642; /* descriptors */
-	--vk-s8: #7a8699; /* images */
+	--vk-s0: #6f86ff; /* instance */
+	--vk-s1: #2fbf9b; /* devices */
+	--vk-s2: #f0a640; /* presentation */
+	--vk-s3: #b07cf0; /* pipeline */
+	--vk-s4: #ef6461; /* commands */
+	--vk-s5: #e65f9e; /* sync */
+	--vk-s6: #33b5c8; /* memory */
+	--vk-s7: #c4b245; /* descriptors */
+	--vk-s8: #8b97ab; /* images */
 }
-.vk-stage-0 { --vk-c: var(--vk-s0); }
-.vk-stage-1 { --vk-c: var(--vk-s1); }
-.vk-stage-2 { --vk-c: var(--vk-s2); }
-.vk-stage-3 { --vk-c: var(--vk-s3); }
-.vk-stage-4 { --vk-c: var(--vk-s4); }
-.vk-stage-5 { --vk-c: var(--vk-s5); }
-.vk-stage-6 { --vk-c: var(--vk-s6); }
-.vk-stage-7 { --vk-c: var(--vk-s7); }
-.vk-stage-8 { --vk-c: var(--vk-s8); }
-.vk-objects .ck-swatch {
-	background: var(--vk-c);
-}
+.vk-stage-0 { --ck-c: var(--vk-s0); }
+.vk-stage-1 { --ck-c: var(--vk-s1); }
+.vk-stage-2 { --ck-c: var(--vk-s2); }
+.vk-stage-3 { --ck-c: var(--vk-s3); }
+.vk-stage-4 { --ck-c: var(--vk-s4); }
+.vk-stage-5 { --ck-c: var(--vk-s5); }
+.vk-stage-6 { --ck-c: var(--vk-s6); }
+.vk-stage-7 { --ck-c: var(--vk-s7); }
+.vk-stage-8 { --ck-c: var(--vk-s8); }
 
-.vk-node {
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	box-sizing: border-box;
-	padding: 0 0.5rem;
-	border: 2px solid var(--vk-c);
-	border-left-width: 6px;
-	border-radius: 0.45rem;
-	background: var(--sl-color-black);
-	color: var(--sl-color-white);
-	font-family: var(--__sl-font-mono);
-	font-size: 12px;
-	font-weight: 600;
-	cursor: pointer;
-	transition: opacity 0.15s, background 0.15s;
-}
-.vk-node span {
-	overflow: hidden;
-	white-space: nowrap;
-	text-overflow: ellipsis;
-}
-.vk-node .react-flow__handle {
-	opacity: 0;
-}
-.vk-node.is-ghost {
-	opacity: 0.4;
+/* Build mode: not created yet, can be created now, alive, dangling (its parent was destroyed). */
+.ck-node.is-ghost {
+	opacity: 0.38;
 	border-style: dashed;
+	box-shadow: none;
 }
-.vk-node.is-ready {
+.ck-node.is-ready {
 	border-style: dashed;
-	box-shadow: 0 0 0 3px color-mix(in srgb, var(--vk-c) 35%, transparent);
+	border-color: var(--ck-c);
+	box-shadow:
+		0 0 0 3px color-mix(in srgb, var(--ck-c) 30%, transparent),
+		var(--ck-shadow);
+	animation: vk-ready 1.6s ease-in-out infinite;
 }
-.vk-node.is-alive {
-	background: color-mix(in srgb, var(--vk-c) 30%, var(--sl-color-black));
+.ck-node.is-alive {
+	border-color: var(--ck-c);
 }
-.vk-node.is-dangling {
+.ck-node.is-alive .ck-node-head {
+	background: color-mix(in srgb, var(--ck-c) 45%, var(--ck-node-bg));
+}
+.ck-node.is-dangling {
+	--ck-c: var(--sl-color-red);
+	border-style: dashed;
 	border-color: var(--sl-color-red);
-	border-style: dashed;
-	color: var(--sl-color-red);
 }
-.vk-node.is-selected {
-	outline: 3px solid var(--sl-color-accent);
-	outline-offset: 2px;
+@keyframes vk-ready {
+	50% {
+		box-shadow:
+			0 0 0 6px color-mix(in srgb, var(--ck-c) 15%, transparent),
+			var(--ck-shadow);
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.ck-node.is-ready {
+		animation: none;
+	}
 }
 
 .vk-actions {
@@ -83,8 +75,8 @@
 }
 
 .vk-console {
-	border-top: 1px solid var(--sl-color-gray-5);
-	padding: 0.5rem 0.9rem 0.8rem;
+	border-top: 1px solid var(--ck-node-line);
+	padding: 0.55rem 1rem 0.8rem;
 }
 .vk-console-head {
 	justify-content: space-between;
@@ -94,12 +86,12 @@
 .vk-log {
 	list-style: none;
 	margin: 0.5rem 0 0;
-	padding: 0.5rem 0.7rem;
+	padding: 0.55rem 0.75rem;
 	max-height: 14rem;
 	overflow: auto;
-	background: var(--sl-color-black);
-	border: 1px solid var(--sl-color-gray-5);
-	border-radius: 0.4rem;
+	background: var(--ck-canvas);
+	border: 1px solid var(--ck-node-line);
+	border-radius: 0.5rem;
 	font-family: var(--__sl-font-mono);
 	font-size: var(--sl-text-xs);
 	overflow-wrap: anywhere;

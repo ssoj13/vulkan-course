@@ -81,8 +81,8 @@ shader objects, mesh shaders, ray tracing, tile-based mobile GPUs. Capstone: min
 - ObjectGraph: data `src/data/objects.json`, VUID texts `src/data/vuids.json` (generated: `bun scripts/sync-vuids.ts`),
   simulator `src/lib/objects.ts` (tests in tests/), view `src/components/ObjectGraph{.astro,View.tsx}`.
 - Quizzes: the engine fails the build if more than 1/3 of a quiz has the correct option as the longest.
-- Repo `ssoj13/vulkan-course` (public, Pages via Actions). Published branch `main` was started fresh without the
-  private `task.md` and `.omh/`; the earlier local commits live in the local branch `local-history`.
+- Repo `ssoj13/vulkan-course` (public, Pages via Actions). `task.md` (private notes) and `.omh/` are gitignored and
+  were never published; the pre-publication local history was deleted.
 
 ## TODO
 

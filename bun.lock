@@ -11,7 +11,7 @@
         "@dagrejs/dagre": "^3.1.1",
         "@xyflow/react": "^12.12.0",
         "astro": "^7.3.8",
-        "course-kit": "github:ssoj13/course-kit#v0.1.0",
+        "course-kit": "github:ssoj13/course-kit#v0.2.0",
         "react": "^19.3.0",
         "react-dom": "^19.3.0",
         "sharp": "^0.35.3",
@@ -346,7 +346,7 @@
 
     "cookie-es": ["cookie-es@1.2.3", "", {}, "sha512-lXVyvUvrNXblMqzIRrxHb57UUVmqsSWlxqt3XIjCkUP0wDAf6uicO6KMbEgYrMNtEvWgWHwe42CKxPu9MYAnWw=="],
 
-    "course-kit": ["course-kit@github:ssoj13/course-kit#edee95a", { "dependencies": { "@dagrejs/dagre": "^3.1.1", "@xyflow/react": "^12.12.0" }, "peerDependencies": { "@astrojs/markdown-satteri": "^0.4.3", "@astrojs/react": "^7.0.1", "@astrojs/starlight": "^0.42.6", "astro": "^7.3.8", "react": "^19.3.0", "react-dom": "^19.3.0" } }, "ssoj13-course-kit-edee95a", "sha512-l2bdHFJzW8GQRSwakyj8eUIjQVW6H1u8nNDW+6WbnlvWtdjdBow0yMs0B/dKcZOgmV/5HqWDylw8ykBAhqBjaw=="],
+    "course-kit": ["course-kit@github:ssoj13/course-kit#8ee4096", { "dependencies": { "@dagrejs/dagre": "^3.1.1", "@xyflow/react": "^12.12.0" }, "peerDependencies": { "@astrojs/markdown-satteri": "^0.4.3", "@astrojs/react": "^7.0.1", "@astrojs/starlight": "^0.42.6", "astro": "^7.3.8", "react": "^19.3.0", "react-dom": "^19.3.0" } }, "ssoj13-course-kit-8ee4096", "sha512-h624uzKonJAgDCcJzjUCUvOm+7XHhSzU7AVr86g+SLnV98P2A3YZpsYxmdi8JvQILgO8an+Eab+o6Ta10fNzhg=="],
 
     "crossws": ["crossws@0.3.5", "", { "dependencies": { "uncrypto": "^0.1.3" } }, "sha512-ojKiDvcmByhwa8YYqbQI/hg7MEU0NC03+pSdEq4ZUnZR9xXpwk7E43SMNGkn+JxJGPFtNvQ48+vV2p+P1ml5PA=="],
 

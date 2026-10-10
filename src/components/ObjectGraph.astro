@@ -31,16 +31,17 @@ const edges = scope.flatMap((id) => obj(id).parents.filter((p) => inScope.has(p.
 // The device parents most objects; in one rank they would make the map too wide to read. Objects of the later
 // stages hang one rank lower, which turns one long row into two shorter ones.
 const LOWER = new Set(['memory', 'images', 'descriptors', 'pipeline']);
+// Left to right inside a row: the order of objects.json, which follows the course.
+const order = new Map(OBJECTS.map((o, i) => [o.id, i]));
 const placed = layout({
-	terms: scope.map((id) => ({ id, label: labelOf(obj(id)) })),
-	edges: edges.map((e) => ({
-		from: e.from,
-		to: e.to,
-		type: 'built-on' as const,
+	nodes: scope.map((id) => ({ id, label: labelOf(obj(id)), order: order.get(id) })),
+	links: edges.map((e) => ({
+		source: e.from,
+		target: e.to,
 		minlen: e.from === 'device' && LOWER.has(obj(e.to).stage) ? 2 : 1,
 	})),
 });
-const nodes = placed.nodes.map((n) => ({ ...n, w: n.w + 24 }));
+const nodes = placed.nodes;
 const height = canvasHeight({ width: Math.max(...nodes.map((n) => n.x + n.w)), height: placed.height });
 const termHref = Object.fromEntries(scope.flatMap((id) => (obj(id).term ? [[obj(id).term!, resolveLink(`term:${obj(id).term}`)!]] : [])));
 ---
