@@ -19,7 +19,8 @@ use ash::{
 ///
 /// `extern "system"` gives the function the calling convention the C loader
 /// expects. Returning `FALSE` means "do not abort the Vulkan call that caused
-/// this message" - the only value the spec allows for application callbacks.
+/// this message": the application should always return FALSE; TRUE is
+/// reserved for layer development.
 unsafe extern "system" fn debug_callback(
     severity: vk::DebugUtilsMessageSeverityFlagsEXT,
     msg_type: vk::DebugUtilsMessageTypeFlagsEXT,
@@ -45,7 +46,7 @@ unsafe extern "system" fn debug_callback(
     let message = unsafe { data.as_ref() }
         .filter(|d| !d.p_message.is_null())
         .map(|d| unsafe { CStr::from_ptr(d.p_message) }.to_string_lossy())
-        .unwrap_or_default();
+        .unwrap_or(std::borrow::Cow::Borrowed("<no message>"));
     eprintln!("[{level}][{kind}] {message}");
     vk::FALSE
 }
@@ -56,7 +57,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let entry = unsafe { Entry::load()? };
 
     let app_info = vk::ApplicationInfo::default()
-        .application_name(c"Vulkan Book - 02 validation")
+        .application_name(c"Vulkan from Zero - 02 validation")
         .application_version(vk::make_api_version(0, 0, 1, 0))
         .engine_name(c"No Engine")
         .engine_version(vk::make_api_version(0, 0, 1, 0))
@@ -65,7 +66,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // #region layers-available
     // Layers are installed separately (the Vulkan SDK ships the validation
     // one), so a user's machine may not have it. Asking for a missing layer
-    // makes create_instance fail with a vague error - so check first.
+    // makes create_instance fail with ERROR_LAYER_NOT_PRESENT; checking first
+    // lets us print a helpful hint.
     let validation_layer = c"VK_LAYER_KHRONOS_validation";
     // SAFETY: plain query, no pointers involved.
     let layers = unsafe { entry.enumerate_instance_layer_properties()? };
@@ -108,7 +110,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // A messenger can only exist once the instance exists, so create_instance
     // and destroy_instance would go unchecked. Chaining the same create-info
-    // into `p_next` (push_next) makes the layer report on those two calls too.
+    // into `p_next` (`.push(...)`) makes the layer report on those two calls too.
     let create_info = vk::InstanceCreateInfo::default()
         .application_info(&app_info)
         .enabled_layer_names(&layer_ptrs)

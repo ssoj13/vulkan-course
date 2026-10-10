@@ -40,7 +40,7 @@ unsafe extern "system" fn debug_callback(
     let message = unsafe { data.as_ref() }
         .filter(|d| !d.p_message.is_null())
         .map(|d| unsafe { CStr::from_ptr(d.p_message) }.to_string_lossy())
-        .unwrap_or_default();
+        .unwrap_or(std::borrow::Cow::Borrowed("<no message>"));
     eprintln!("[{level}][{kind}] {message}");
     vk::FALSE
 }
@@ -50,7 +50,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let entry = unsafe { Entry::load()? };
 
     let app_info = vk::ApplicationInfo::default()
-        .application_name(c"Vulkan Book - 05 logical device")
+        .application_name(c"Vulkan from Zero - 05 logical device")
         .application_version(vk::make_api_version(0, 0, 1, 0))
         .engine_name(c"No Engine")
         .engine_version(vk::make_api_version(0, 0, 1, 0))
@@ -107,22 +107,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
-    // Scoring: a GPU is *eligible* only if it speaks Vulkan 1.4 and has the two
-    // features the book relies on. Among eligible GPUs we prefer a discrete
-    // card (fastest, own VRAM) over integrated (shares system RAM), then
-    // virtual, then CPU software rasterisers. Highest score wins.
+    // Eligible = a Vulkan 1.4 device with dynamic rendering and synchronization2
+    // (the two features the book relies on). Among eligible GPUs we prefer a
+    // discrete card (fastest, own VRAM) over integrated (shares system RAM),
+    // then virtual, then CPU software rasterisers. Highest score wins; on a
+    // tie the first one found stays.
     let mut best: Option<(u32, vk::PhysicalDevice)> = None;
     for &pd in &devices {
         // SAFETY: `pd` was enumerated from this instance.
         let props = unsafe { instance.get_physical_device_properties(pd) };
+        // Check the version before asking about 1.3 features: querying a core
+        // feature struct of a newer version on an older device is invalid
+        // (spec: "Extending Physical Device Core Functionality").
+        if props.api_version < vk::API_VERSION_1_4 {
+            continue;
+        }
         let mut f13 = vk::PhysicalDeviceVulkan13Features::default();
         let mut f2 = vk::PhysicalDeviceFeatures2::default().push(&mut f13);
         // SAFETY: `pd` came from this instance, and the chain structs outlive the call.
         unsafe { instance.get_physical_device_features2(pd, &mut f2) };
-        let eligible = props.api_version >= vk::API_VERSION_1_4
-            && f13.dynamic_rendering != 0
-            && f13.synchronization2 != 0;
-        if !eligible {
+        if f13.dynamic_rendering == 0 || f13.synchronization2 == 0 {
             continue;
         }
         let score = match props.device_type {
@@ -131,6 +135,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             vk::PhysicalDeviceType::VIRTUAL_GPU => 10,
             _ => 1,
         };
+        // Strictly greater: on a tie the first GPU found stays.
         if best.is_none_or(|(s, _)| score > s) {
             best = Some((score, pd));
         }
@@ -177,8 +182,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
-    // GRAPHICS queues can also do COMPUTE and TRANSFER (the spec guarantees it),
-    // so the first graphics family is enough for rendering.
+    // Pick families by capability. Our main family needs GRAPHICS. Only TRANSFER
+    // is implied by GRAPHICS/COMPUTE (the spec makes that bit optional for such
+    // families); COMPUTE on a graphics family is not implied for every family -
+    // the spec only guarantees that if graphics is supported at all, at least
+    // one family supports graphics AND compute. On desktop GPUs the first
+    // graphics family is that one, which is all we need for rendering.
     let graphics_family = families
         .iter()
         .position(|f| f.queue_flags.contains(vk::QueueFlags::GRAPHICS))
@@ -246,7 +255,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // #endregion
     // #region get-queue
     // Queues are created together with the device; we only fetch the handle.
-    // Arguments: family index, and the queue's index inside that family (0..queue_count).
+    // Arguments: family index, and the queue's index inside that family. The
+    // index must be below the queue count we requested for that family in
+    // `queue_infos` (VUID-vkGetDeviceQueue-queueIndex-00385), not below the
+    // family's `queue_count`.
     // SAFETY: one queue of this family was requested in `queue_infos`.
     let graphics_queue = unsafe { device.get_device_queue(graphics_index, 0) };
     println!("Graphics queue: {graphics_queue:?}");
@@ -255,14 +267,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // #region cleanup
     // Wait until the GPU has finished all submitted work (none yet, but this
     // habit prevents destroying resources the GPU is still reading), then
-    // destroy in reverse order of creation. Queues die with the device.
+    // destroy in reverse order of creation. Queues die with the device. If the
+    // wait fails we report it, still destroy everything, and return the error
+    // afterwards - skipping the destruction would leak the objects.
+    // SAFETY: plain call on a live device.
+    let waited = unsafe { device.device_wait_idle() };
+    if let Err(e) = &waited {
+        eprintln!("device_wait_idle failed: {e}");
+    }
     // SAFETY: nothing else uses these objects, and each is destroyed exactly once.
     unsafe {
-        device.device_wait_idle()?;
         device.destroy_device(None);
         debug_utils.destroy_debug_utils_messenger(messenger, None);
         instance.destroy_instance(None);
     }
     // #endregion
+    waited?;
     Ok(())
 }

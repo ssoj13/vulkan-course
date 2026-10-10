@@ -8,7 +8,7 @@ import MindMap from 'course-kit/components/MindMap.astro';
 import Quiz from 'course-kit/components/Quiz.astro';
 import Step from '../../../components/Step.astro';
 
-Lesson 3 said that a Vulkan driver checks nothing. Pass a wrong value and you may get a crash, a black screen, or -
+Lesson 3 said that a Vulkan driver does not check whether you use the API correctly. Pass a wrong value and you may get a crash, a black screen, or -
 worst of all - something that works on your GPU and breaks on someone else's. This lesson turns the checks back on.
 
 ## The validation layer
@@ -39,7 +39,7 @@ makes instance creation fail, so we check first and give a helpful error.
 <Step file="02_validation" region="debug-callback" />
 
 The layer calls this function with a **severity** (verbose, info, warning, error), a **type** (general, validation,
-performance) and the message text. The callback must return `false`; returning `true` is reserved for layer
+performance) and the message text. The application should always return `false`; `true` is reserved for layer
 development.
 
 ### 3. What we want to hear about
@@ -98,17 +98,18 @@ your own program without touching the code.
   time and memory.
 - Besides the core checks it has optional modes: **synchronization validation** (finds missing barriers), **GPU-assisted
   validation** (instruments shaders to catch out-of-bounds access) and **best practices** (performance advice). They are
-  switched on in vkconfig or through `VkValidationFeaturesEXT`.
+  switched on in vkconfig or from code through `VkLayerSettingsCreateInfoEXT` (`VK_EXT_layer_settings`; the older
+  `VkValidationFeaturesEXT` is deprecated).
 
 <Quiz
 	questions={[
 		{
 			q: 'Why is the validation layer not enabled in a shipped program?',
 			options: [
-				'It is illegal to distribute',
-				'It only works with debug builds of the driver',
-				'It checks every call against the spec and slows the program down a lot',
-				'It disables the GPU',
+				'Its license forbids distributing it with applications',
+				'It only works with debug builds of the GPU driver',
+				'It checks every call and slows the program a lot',
+				'It switches the GPU into a slower diagnostic mode',
 			],
 			answer: 2,
 			explain: 'The layer tracks all object state and checks every call; that costs a lot of CPU time and memory.',
@@ -116,17 +117,22 @@ your own program without touching the code.
 		{
 			q: 'Why is the messenger create info also chained into the instance create info?',
 			options: [
-				'So that problems in vkCreateInstance and vkDestroyInstance are reported, when the messenger object cannot exist yet',
+				'So vkCreateInstance and vkDestroyInstance are covered too',
 				'Because the messenger cannot be created without it',
-				'To make the instance creation faster',
-				'To enable the validation layer',
+				'To make instance creation faster by sharing the struct',
+				'Because that is how the validation layer is enabled',
 			],
 			answer: 0,
 			explain: 'The messenger object is made from the instance; the pNext copy covers the instance creation and destruction calls themselves.',
 		},
 		{
 			q: 'Which extension provides the debug messenger?',
-			options: ['VK_KHR_surface', 'VK_EXT_debug_utils', 'VK_KHR_swapchain', 'VK_LAYER_KHRONOS_validation'],
+			options: [
+				'VK_KHR_surface',
+				'VK_EXT_debug_utils',
+				'VK_KHR_swapchain',
+				'VK_LAYER_KHRONOS_validation',
+			],
 			answer: 1,
 			explain: 'VkDebugUtilsMessengerEXT belongs to the instance extension VK_EXT_debug_utils; VK_LAYER_KHRONOS_validation is a layer, not an extension.',
 		},

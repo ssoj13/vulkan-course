@@ -39,7 +39,7 @@ unsafe extern "system" fn debug_callback(
     let message = unsafe { data.as_ref() }
         .filter(|d| !d.p_message.is_null())
         .map(|d| unsafe { CStr::from_ptr(d.p_message) }.to_string_lossy())
-        .unwrap_or_default();
+        .unwrap_or(std::borrow::Cow::Borrowed("<no message>"));
     eprintln!("[{level}][{kind}] {message}");
     vk::FALSE
 }
@@ -49,7 +49,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let entry = unsafe { Entry::load()? };
 
     let app_info = vk::ApplicationInfo::default()
-        .application_name(c"Vulkan Book - 03 physical devices")
+        .application_name(c"Vulkan from Zero - 03 physical devices")
         .application_version(vk::make_api_version(0, 0, 1, 0))
         .engine_name(c"No Engine")
         .engine_version(vk::make_api_version(0, 0, 1, 0))
@@ -126,12 +126,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Vulkan 1.0 features are queried directly; newer sets are *chained*
         // onto `PhysicalDeviceFeatures2` through `p_next`: the driver walks the
         // chain and fills in every struct it recognises. Each core version
-        // since 1.1 has its own struct; we chain the 1.3 and 1.4 ones.
+        // since 1.1 has its own struct; we chain the 1.3 and 1.4 ones. A struct
+        // of a newer core version may only be queried on a device that supports
+        // that version, so the 1.4 struct is chained only when api >= 1.4.
+        let has14 = props.api_version >= vk::API_VERSION_1_4;
         let mut f13 = vk::PhysicalDeviceVulkan13Features::default();
         let mut f14 = vk::PhysicalDeviceVulkan14Features::default();
-        let mut f2 = vk::PhysicalDeviceFeatures2::default()
-            .push(&mut f13)
-            .push(&mut f14);
+        let mut f2 = vk::PhysicalDeviceFeatures2::default().push(&mut f13);
+        if has14 {
+            f2 = f2.push(&mut f14);
+        }
         // SAFETY: `pd` came from this instance, and the chain structs outlive the call.
         unsafe { instance.get_physical_device_features2(pd, &mut f2) };
         let f10 = f2.features;
@@ -148,52 +152,61 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "    synchronization2   (1.3): {}",
             f13.synchronization2 != 0
         );
-        println!("    push_descriptor    (1.4): {}", f14.push_descriptor != 0);
-        println!("    maintenance5       (1.4): {}", f14.maintenance5 != 0);
+        if has14 {
+            println!("    push_descriptor    (1.4): {}", f14.push_descriptor != 0);
+            println!("    maintenance5       (1.4): {}", f14.maintenance5 != 0);
+        } else {
+            println!("    push_descriptor    (1.4): n/a (device below 1.4)");
+            println!("    maintenance5       (1.4): n/a (device below 1.4)");
+        }
         // #endregion
 
         // #region limits
         // Limits are hard numbers your program must respect; exceeding one is
-        // an error that validation will catch.
+        // an error that validation usually catches.
         let limits = props.limits;
         println!("  limits:");
         println!(
-            "    max_image_dimension2_d:           {}",
+            "    max_image_dimension_2d:               {}",
             limits.max_image_dimension2_d
         );
         println!(
-            "    max_push_constants_size:          {} bytes",
+            "    max_push_constants_size:              {} bytes",
             limits.max_push_constants_size
         );
         println!(
-            "    min_uniform_buffer_offset_alignment: {} bytes",
+            "    min_uniform_buffer_offset_alignment:  {} bytes",
             limits.min_uniform_buffer_offset_alignment
         );
         // Nanoseconds per GPU timestamp tick - needed to convert timer queries to time.
         println!(
-            "    timestamp_period:                 {} ns/tick",
+            "    timestamp_period:                     {} ns/tick",
             limits.timestamp_period
         );
         // #endregion
     }
 
     // #region pick
-    // Scoring: a GPU is *eligible* only if it speaks Vulkan 1.4 and has the two
-    // features the book relies on. Among eligible GPUs we prefer a discrete
-    // card (fastest, own VRAM) over integrated (shares system RAM), then
-    // virtual, then CPU software rasterisers. Highest score wins.
+    // Eligible = a Vulkan 1.4 device with dynamic rendering and synchronization2
+    // (the two features the book relies on). Among eligible GPUs we prefer a
+    // discrete card (fastest, own VRAM) over integrated (shares system RAM),
+    // then virtual, then CPU software rasterisers. Highest score wins; on a
+    // tie the first one found stays.
     let mut best: Option<(u32, vk::PhysicalDevice)> = None;
     for &pd in &devices {
         // SAFETY: `pd` was enumerated from this instance.
         let props = unsafe { instance.get_physical_device_properties(pd) };
+        // Check the version before asking about 1.3 features: querying a core
+        // feature struct of a newer version on an older device is invalid
+        // (spec: "Extending Physical Device Core Functionality").
+        if props.api_version < vk::API_VERSION_1_4 {
+            continue;
+        }
         let mut f13 = vk::PhysicalDeviceVulkan13Features::default();
         let mut f2 = vk::PhysicalDeviceFeatures2::default().push(&mut f13);
-        // SAFETY: as in the `features` region above.
+        // SAFETY: `pd` came from this instance, and the chain structs outlive the call.
         unsafe { instance.get_physical_device_features2(pd, &mut f2) };
-        let eligible = props.api_version >= vk::API_VERSION_1_4
-            && f13.dynamic_rendering != 0
-            && f13.synchronization2 != 0;
-        if !eligible {
+        if f13.dynamic_rendering == 0 || f13.synchronization2 == 0 {
             continue;
         }
         let score = match props.device_type {
@@ -202,6 +215,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             vk::PhysicalDeviceType::VIRTUAL_GPU => 10,
             _ => 1,
         };
+        // Strictly greater: on a tie the first GPU found stays.
         if best.is_none_or(|(s, _)| score > s) {
             best = Some((score, pd));
         }

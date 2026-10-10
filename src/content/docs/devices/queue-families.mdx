@@ -73,18 +73,19 @@ dailies. Each has its own queue of jobs and they work at the same time. Queue fa
 
 - Each queue you submit to is a stream that the GPU's command processor (lesson 2) or a dedicated engine front end
   reads from. Multiple queues let independent work overlap instead of waiting in one line.
-- Queues of different families run **in parallel and unordered** relative to each other. As soon as two queues touch
-  the same resource, you need synchronization between them - a topic for the synchronization module.
+- Different queues - even two queues of the same family - run **in parallel and unordered** relative to each other;
+  priorities do not create an order. As soon as two queues touch the same resource, you need synchronization between
+  them - a topic for the synchronization module.
 
 <Quiz
 	questions={[
 		{
 			q: 'What is a queue family?',
 			options: [
-				'A group of queues with the same capabilities, usually backed by one kind of GPU engine',
-				'All queues of all GPUs in the machine',
+				'Queues with the same capabilities, backed by one engine kind',
+				'All queues of all GPUs in the machine, grouped by vendor',
 				'A list of command buffers waiting to be recorded',
-				'A Vulkan object you create with vkCreateQueueFamily',
+				'An object made with vkCreateQueueFamily',
 			],
 			answer: 0,
 			explain: 'Queue families are reported by the physical device; each groups queues with identical flags.',
@@ -92,10 +93,10 @@ dailies. Each has its own queue of jobs and they work at the same time. Queue fa
 		{
 			q: 'Why would you use a family that only has the TRANSFER flag?',
 			options: [
-				'Because graphics queues cannot copy',
-				'To run copies on the copy engines while rendering continues on the graphics queue',
-				'Because it is required to present images',
-				'To get more validation messages',
+				'Because graphics queues cannot run any copy commands at all',
+				'To copy on the copy engines while rendering continues',
+				'Presenting images to a window requires such a queue',
+				'To receive more messages from the validation layer',
 			],
 			answer: 1,
 			explain: 'A dedicated transfer family lets uploads overlap with rendering.',
@@ -103,10 +104,10 @@ dailies. Each has its own queue of jobs and they work at the same time. Queue fa
 		{
 			q: 'A family reports GRAPHICS and COMPUTE but not TRANSFER. Can it execute copy commands?',
 			options: [
-				'No, never',
-				'Only on integrated GPUs',
-				'Only with an extension',
-				'Yes - graphics and compute families support transfer commands even when the flag is not reported',
+				'No: copy commands need a family with the TRANSFER flag',
+				'Only on integrated GPUs that share memory with the CPU',
+				'Only after enabling a vendor extension for transfers',
+				'Yes: graphics and compute families can always copy',
 			],
 			answer: 3,
 			explain: 'Reporting TRANSFER separately is optional for graphics or compute families; transfer commands are allowed there.',

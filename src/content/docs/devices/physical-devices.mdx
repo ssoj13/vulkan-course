@@ -25,7 +25,7 @@ it: the instance **enumerates** the GPUs that exist, and the handles live as lon
 
 <Step file="03_physical_devices" region="properties" />
 
-- **deviceType**: discrete, integrated, virtual or CPU (a software implementation).
+- **deviceType**: discrete, integrated, virtual, CPU (a software implementation) or other.
 - **apiVersion**: the highest Vulkan version the driver supports for this GPU. The version you may actually use is the
   *lower* of this and the `apiVersion` you asked for in the instance.
 - **driverVersion**: encoded differently by each vendor; `vulkaninfo` decodes it.
@@ -77,7 +77,9 @@ GPU 0: NVIDIA GeForce RTX 3080 Ti
     timestamp_period:                 1 ns/tick
 ```
 
-The driver supports Vulkan 1.4 and our instance asks for 1.4, so we can use 1.4. The `(1.3)` and `(1.4)` marks show
+The driver supports Vulkan 1.4 and our instance asks for 1.4, so we can use 1.4. All five flags above are in fact
+guaranteed on any 1.4 device - the spec makes them mandatory - so the check matters for older devices and for truly
+optional features, which later lessons will meet. The `(1.3)` and `(1.4)` marks show
 which version's feature struct each flag comes from.
 
 ## Picking one
@@ -103,10 +105,10 @@ a discrete card over an integrated one. Real applications often also let the use
 		{
 			q: 'Who destroys a VkPhysicalDevice?',
 			options: [
-				'You, with vkDestroyPhysicalDevice',
-				'The logical device',
-				'Nobody: it is enumerated from the instance and lives as long as the instance',
-				'The validation layer',
+				'You, with vkDestroyPhysicalDevice, before the instance',
+				'The logical device, when it is destroyed itself',
+				'Nobody: it lives as long as the instance',
+				'The validation layer, when the program exits',
 			],
 			answer: 2,
 			explain: 'Physical devices are not created by the application, so there is nothing to destroy.',
@@ -114,27 +116,32 @@ a discrete card over an integrated one. Real applications often also let the use
 		{
 			q: 'A GPU reports dynamicRendering = true. Can your program use dynamic rendering now?',
 			options: [
-				'Yes, supported features are always on',
-				'Only after enabling the feature when creating the logical device',
-				'Only if the instance apiVersion is 1.0',
-				'Only with the validation layer enabled',
+				'Yes: every supported feature is always switched on',
+				'Only after enabling it when creating the device',
+				'Only if the instance apiVersion is set to 1.0',
+				'Only while the validation layer is enabled',
 			],
 			answer: 1,
 			explain: 'Supported is not enabled: features must be requested in vkCreateDevice.',
 		},
 		{
 			q: 'The instance asks for Vulkan 1.4 and an older GPU driver supports only 1.3. Which version can you use with that device?',
-			options: ['1.4', '1.3', '1.0', 'Whatever the loader supports'],
+			options: [
+				'1.4',
+				'1.3',
+				'1.0',
+				'Whatever the loader supports',
+			],
 			answer: 1,
 			explain: 'The usable version is the lower of the application apiVersion and the device apiVersion.',
 		},
 		{
 			q: 'How do you query features introduced in Vulkan 1.3 or 1.4?',
 			options: [
-				'With a separate call per feature',
-				'By creating a test device',
-				'By chaining the per-version feature structs onto VkPhysicalDeviceFeatures2 through pNext',
-				'They are in VkPhysicalDeviceLimits',
+				'With one separate query call for every feature',
+				'By creating a test device and checking for errors',
+				'By chaining per-version structs onto Features2',
+				'They are all listed in VkPhysicalDeviceLimits',
 			],
 			answer: 2,
 			explain: 'Newer feature structs (VkPhysicalDeviceVulkan13Features, ...14Features) are chained via pNext; vkGetPhysicalDeviceFeatures2 fills the whole chain.',

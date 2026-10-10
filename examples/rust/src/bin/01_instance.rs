@@ -40,7 +40,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // through VkPhysicalDeviceVulkan13Features); 1.4 additionally promotes push
     // descriptors, dynamic rendering local read, maintenance5/6 and more to core.
     let app_info = vk::ApplicationInfo::default()
-        .application_name(c"Vulkan Book - 01 instance")
+        .application_name(c"Vulkan from Zero - 01 instance")
         .application_version(vk::make_api_version(0, 0, 1, 0))
         .engine_name(c"No Engine")
         .engine_version(vk::make_api_version(0, 0, 1, 0))
@@ -49,8 +49,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // #region list-extensions
     // Instance extensions add optional features to the loader (surfaces,
-    // debug utils...). `None` means "from the loader and all layers", not from
-    // one specific layer. We only list them here; later steps enable some.
+    // debug utils...). `None` = extensions of the Vulkan implementation and of
+    // implicitly enabled layers (not of all installed layers). We only list
+    // them here; later steps enable some.
     // SAFETY: plain query, no pointers involved.
     let extensions = unsafe { entry.enumerate_instance_extension_properties(None)? };
     println!("{} instance extensions available:", extensions.len());

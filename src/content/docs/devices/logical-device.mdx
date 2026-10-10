@@ -34,7 +34,8 @@ Here we turn on the two features the course needs everywhere: **dynamic renderin
 became core in Vulkan 1.3, so they live in `VkPhysicalDeviceVulkan13Features` even though we target 1.4. We set the
 two flags to true and hang the struct directly onto `VkDeviceCreateInfo` through `pNext` - the specification allows
 the per-version feature structs there, so the `VkPhysicalDeviceFeatures2` wrapper we used for *querying* in lesson 8
-is not needed. Only what we enable is on: being core in 1.4 does not switch an optional feature on by itself.
+is not needed. Only what we enable is on - even features that every Vulkan 1.3 or 1.4 device must support, like
+these two, stay off until you enable them.
 
 <Aside type="caution" title="One way or the other">
 `VkDeviceCreateInfo` also has an old `pEnabledFeatures` field for Vulkan 1.0 features. You can use it together with
@@ -84,7 +85,7 @@ validation error. Try the wrong order on purpose too - the messages are the real
 
 - `vkCreateDevice` is where the driver really prepares the GPU for your process. What exactly happens is up to the
   vendor, but typically it sets up a GPU context and the hardware queues you asked for, allocates internal tables and
-  configures itself for the enabled features - which is why it takes noticeably longer than creating an instance.
+  configures itself for the enabled features.
 - Device-level functions (everything called with a `VkDevice`, `VkQueue` or `VkCommandBuffer`) can skip the loader's
   dispatch: bindings like ash and Vulkan-Hpp load them with `vkGetDeviceProcAddr`, which returns the driver's (or
   layer's) function directly. One less jump per call.
@@ -94,34 +95,44 @@ validation error. Try the wrong order on purpose too - the messages are the real
 		{
 			q: 'How are queues created?',
 			options: [
-				'With vkCreateQueue after the device exists',
-				'Together with the device, described by VkDeviceQueueCreateInfo; vkGetDeviceQueue only returns handles',
-				'By the instance',
-				'Automatically, one per queue family',
+				'With vkCreateQueue, once the device exists',
+				'With the device, via VkDeviceQueueCreateInfo',
+				'By the instance, one queue for every family',
+				'Automatically, one queue per family, on first use',
 			],
 			answer: 1,
 			explain: 'Queue creation is part of vkCreateDevice; afterwards you only retrieve the handles.',
 		},
 		{
 			q: 'Your chain contains VkPhysicalDeviceFeatures2. What must pEnabledFeatures be?',
-			options: ['A pointer to the same features', 'Null', 'A pointer to VkPhysicalDeviceVulkan13Features', 'It does not matter'],
+			options: [
+				'A pointer to the same features',
+				'Null',
+				'A pointer to VkPhysicalDeviceVulkan13Features',
+				'It does not matter',
+			],
 			answer: 1,
 			explain: 'VUID-VkDeviceCreateInfo-pNext-00373: with Features2 in the chain, pEnabledFeatures must be NULL.',
 		},
 		{
 			q: 'Why call vkDeviceWaitIdle before destroying the device?',
 			options: [
-				'To make sure the GPU has finished all submitted work that uses the device objects',
-				'To free the queues',
-				'Because the validation layer needs it',
-				'To flush the debug messenger',
+				'So the GPU finishes all work that uses the device objects',
+				'To free the queues before the device is destroyed',
+				'Because the validation layer refuses to unload without it',
+				'To flush the remaining messages of the debug messenger',
 			],
 			answer: 0,
 			explain: 'Objects must not be destroyed while the GPU may still use them; waiting for idle guarantees that.',
 		},
 		{
 			q: 'Where are layers enabled in modern Vulkan?',
-			options: ['On the device', 'On each queue', 'On the instance', 'In the shader'],
+			options: [
+				'On the device',
+				'On each queue',
+				'On the instance',
+				'In the shader',
+			],
 			answer: 2,
 			explain: 'Device layers are deprecated; layers are enabled at instance creation (or through vkconfig).',
 		},

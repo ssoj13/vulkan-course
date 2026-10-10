@@ -29,7 +29,20 @@
 VKAPI_ATTR vk::Bool32 VKAPI_CALL debugCallback(vk::DebugUtilsMessageSeverityFlagBitsEXT severity,
                                                vk::DebugUtilsMessageTypeFlagsEXT type,
                                                const vk::DebugUtilsMessengerCallbackDataEXT* data, void* /*userData*/) {
-    std::println(stderr, "[{}] [{}] {}", vk::to_string(severity), vk::to_string(type), data->pMessage);
+    // pMessage is optional in the spec, so check it. Nothing may throw out of here:
+    // exceptions must not unwind through the C loader/layer frames that called
+    // us, so std::println (which can throw) is wrapped and any failure ignored.
+    try {
+        // Same format as the Rust examples: [LEVEL][KIND] message.
+        const char* level = severity == vk::DebugUtilsMessageSeverityFlagBitsEXT::eError     ? "ERROR"
+                            : severity == vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning ? "WARNING"
+                                                                                             : "INFO";
+        const char* kind = (type & vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation)    ? "VALIDATION"
+                           : (type & vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance) ? "PERFORMANCE"
+                                                                                         : "GENERAL";
+        std::println(stderr, "[{}][{}] {}", level, kind, data && data->pMessage ? data->pMessage : "<no message>");
+    } catch (...) {
+    }
     return vk::False;
 }
 // #endregion
@@ -53,10 +66,10 @@ try {
     // #endregion
 
     constexpr vk::ApplicationInfo appInfo{
-        .pApplicationName   = "Vulkan Textbook - 02 Validation",
-        .applicationVersion = VK_MAKE_API_VERSION(0, 1, 0, 0),
+        .pApplicationName   = "Vulkan from Zero - 02 validation",
+        .applicationVersion = VK_MAKE_API_VERSION(0, 0, 1, 0),
         .pEngineName        = "No Engine",
-        .engineVersion      = VK_MAKE_API_VERSION(0, 1, 0, 0),
+        .engineVersion      = VK_MAKE_API_VERSION(0, 0, 1, 0),
         .apiVersion         = vk::ApiVersion14,
     };
 
@@ -101,7 +114,7 @@ try {
     // The persistent messenger that watches everything between instance
     // creation and destruction (all our later calls).
     vk::raii::DebugUtilsMessengerEXT messenger(instance, messengerInfo);
-    std::println("Instance with validation + debug messenger created");
+    std::println("Instance + debug messenger created");
     // #endregion
 
     // #region cleanup

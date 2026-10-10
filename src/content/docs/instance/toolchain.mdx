@@ -30,8 +30,8 @@ Two different things are easy to confuse:
 3. Check that Vulkan works: run `vulkaninfoSDK` (from the SDK's `Bin` folder) with `--summary`. It lists your GPUs and
    the Vulkan version each one supports.
 
-4. Open **Vulkan Configurator** (`vkconfig`). It can switch validation layers on for any Vulkan program without
-   changing its code. We will use it in lesson 7.
+4. Open **Vulkan Configurator** (`vkconfig-gui`, or `vkconfig gui` from a terminal). It can switch validation layers
+   on for any Vulkan program without changing its code. We will use it in lesson 7.
 
 </Steps>
 
@@ -89,17 +89,22 @@ from its GitHub repository, pinned to one commit that covers Vulkan 1.4; we swit
 	questions={[
 		{
 			q: 'Which part does an end user of your Vulkan program need to have installed?',
-			options: ['The Vulkan SDK', 'The validation layers', 'slangc', 'A GPU driver that includes the Vulkan runtime'],
+			options: [
+				'The Vulkan SDK with its headers and validation layers',
+				'The validation layers that ship with the Vulkan SDK',
+				'slangc and the other shader compilers from the SDK',
+				'A GPU driver, which includes the Vulkan runtime',
+			],
 			answer: 3,
 			explain: 'The loader and driver come with the GPU driver; the SDK is only for developers.',
 		},
 		{
 			q: 'What is vkconfig used for?',
 			options: [
-				'Compiling shaders to SPIR-V',
-				'Enabling layers such as validation for any Vulkan program without changing its code',
-				'Updating the GPU driver',
-				'Creating Visual Studio projects',
+				'Compiling Slang and GLSL shaders into SPIR-V binaries',
+				'Enabling layers such as validation for any program',
+				'Updating the GPU driver to the newest Vulkan version',
+				'Creating Visual Studio projects for Vulkan programs',
 			],
 			answer: 1,
 			explain: 'Vulkan Configurator controls which layers the loader inserts and how they are configured.',
@@ -107,10 +112,10 @@ from its GitHub repository, pinned to one commit that covers Vulkan 1.4; we swit
 		{
 			q: 'What does the vk::raii layer of Vulkan-Hpp do?',
 			options: [
-				'Destroys Vulkan objects automatically when they go out of scope',
-				'Runs Vulkan on the CPU',
-				'Validates every call like a validation layer',
-				'Translates Vulkan to OpenGL',
+				'Destroys Vulkan objects when they go out of scope',
+				'Runs Vulkan on the CPU when no GPU driver is installed',
+				'Validates every call just like the validation layer',
+				'Translates Vulkan calls to OpenGL on older systems',
 			],
 			answer: 0,
 			explain: 'RAII wrappers call the matching vkDestroy function in their destructor, in reverse order of construction.',

@@ -42,7 +42,7 @@ Vulkan removes the guessing by making the application state everything explicitl
 | Driver builds and submits command buffers | You **record** command buffers, on any number of threads, and **submit** them |
 | Driver tracks hazards and inserts waits | You declare **synchronization**: barriers, semaphores, fences |
 | Driver picks where memory lives | You choose **memory types** and bind resources to them |
-| Driver validates every call | No checks in the driver; **validation layers** check during development |
+| Driver validates every call | The driver does not check *valid usage*; **validation layers** check during development |
 
 <Aside type="tip" title="CG analogy">
 OpenGL is like a DCC that silently recooks things for you whenever you touch a parameter: convenient, but you never
@@ -65,20 +65,23 @@ same API on Windows, Linux, Android and (through a translation layer) macOS. Tha
 
 ## Underneath
 
-- Explicit APIs like Vulkan, Direct3D 12 and Metal grew out of AMD's Mantle (2013). Their shared idea: the driver should
-  be thin, and the application, which knows what it will draw, should make the decisions.
-- "Thin driver" also means "no safety net". This is why the very first thing we set up (lesson 7) is the validation
-  layer: it puts the checks back, but only while you develop.
+- Vulkan grew directly out of AMD's Mantle (2013), which AMD gave to Khronos as its starting point. Direct3D 12 and
+  Metal appeared at the same time with the same idea: the driver should be thin, and the application, which knows
+  what it will draw, should make the decisions.
+- "Thin driver" also means "no safety net". The driver still reports runtime failures (out of memory, a feature the
+  GPU lacks, a missing layer), but it does not check whether you use the API correctly - wrong parameters, wrong
+  order, wrong state. That is why the very first thing we set up (lesson 7) is the validation layer: it puts those
+  checks back, but only while you develop.
 
 <Quiz
 	questions={[
 		{
 			q: 'Why can an OpenGL draw call suddenly take much longer than usual?',
 			options: [
-				'Because OpenGL draws are always synchronous',
-				'Because the driver may compile a shader variant or validate new state at draw time',
-				'Because OpenGL cannot use VRAM',
-				'Because OpenGL submits one triangle at a time',
+				'Every OpenGL draw call waits until the GPU has finished it',
+				'The driver may compile or validate new state in the draw',
+				'OpenGL cannot use VRAM and streams everything over PCIe',
+				'OpenGL submits one triangle at a time to the GPU',
 			],
 			answer: 1,
 			explain: 'The driver resolves hidden state lazily; a new state combination can trigger compilation and validation inside the draw.',
@@ -86,10 +89,10 @@ same API on Windows, Linux, Android and (through a translation layer) macOS. Tha
 		{
 			q: 'Where does Vulkan check that your API usage is correct?',
 			options: [
-				'In the driver, on every call',
-				'In the GPU firmware',
-				'In optional validation layers, enabled during development',
-				'Nowhere, mistakes are impossible',
+				'In the driver, on every call, before the GPU sees it',
+				'In the GPU firmware, while it parses command buffers',
+				'In validation layers, enabled during development',
+				'Nowhere: an explicit API makes such mistakes impossible',
 			],
 			answer: 2,
 			explain: 'Vulkan drivers assume valid usage; validation layers are inserted between the app and the driver to check it.',
@@ -97,10 +100,10 @@ same API on Windows, Linux, Android and (through a translation layer) macOS. Tha
 		{
 			q: 'What does a Vulkan pipeline object replace?',
 			options: [
-				'The many small state-setting calls OpenGL checks at draw time',
-				'The swapchain',
-				'The command buffer',
-				'The GPU memory allocator',
+				'Many small state calls that OpenGL checks at draw time',
+				'The swapchain and the window surface it presents to',
+				'The command buffer and the queue it is submitted to',
+				'The GPU memory allocator and its memory heaps',
 			],
 			answer: 0,
 			explain: 'A pipeline bakes shaders and fixed-function state into one object built ahead of time.',

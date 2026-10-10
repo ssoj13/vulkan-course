@@ -35,12 +35,14 @@ recorders) and profilers are all layers. There are two kinds:
   them.
 
 <Aside type="caution" title="A real example from the machine this course was built on">
-On Windows the loader finds layers through the registry (`HKEY_LOCAL_MACHINE\SOFTWARE\Khronos\Vulkan\ImplicitLayers`
-and `...\ExplicitLayers`). On the development machine there were **six** implicit layers: RenderDoc, Bandicam, the Epic
-Games overlay, the Steam overlay, Steam's Fossilize and Nsight Systems. All of them load into every Vulkan program on
+On Windows the loader finds layers through the registry: `SOFTWARE\Khronos\Vulkan\ImplicitLayers` and
+`...\ExplicitLayers` under both `HKEY_LOCAL_MACHINE` and `HKEY_CURRENT_USER`, plus keys the GPU driver writes under its
+display-adapter entry. On the development machine there were **eight** implicit layers: six registered by installed
+software (RenderDoc, Bandicam, the Epic Games overlay, the Steam overlay, Steam's Fossilize, Nsight Systems) and two by
+the NVIDIA driver itself (`VK_LAYER_NV_optimus`, `VK_LAYER_NV_present`). All of them load into every Vulkan program on
 that PC, including ours - and Bandicam's layer even prints a warning that its API version is older than ours. That
-warning is not about our code. Each layer's JSON manifest names an environment variable that disables it, should a
-layer ever get in your way.
+warning is not about our code. Each implicit layer's JSON manifest names an environment variable that disables it
+(for example `DISABLE_LAYER_NV_OPTIMUS_1`), should a layer ever get in your way.
 </Aside>
 
 ## The instance
@@ -62,8 +64,9 @@ extensions and layers, ask the loader version. Rust's `Entry` and C++'s `vk::rai
 
 <Step file="01_instance" region="app-info" />
 
-Everything here is optional except the meaning of `apiVersion`: the **highest** Vulkan version the program is written
-against. Drivers also look at application and engine names to enable per-game fixes.
+This whole struct is optional metadata; the one field with a real effect is `apiVersion`: the **highest** Vulkan
+version the program is written against. Drivers may also look at the application and engine names to enable per-game
+fixes.
 
 ### 3. See what is available
 
@@ -92,9 +95,11 @@ function, get a handle. The bindings fill `sType` for us.
 
 - The loader is open source ([KhronosGroup/Vulkan-Loader](https://github.com/KhronosGroup/Vulkan-Loader)). On Windows,
   current drivers register their driver JSON manifest through the display adapter's own registry keys; the older
-  `HKEY_LOCAL_MACHINE\SOFTWARE\Khronos\Vulkan\Drivers` key is still read too (on the development machine it was empty).
+  `HKEY_LOCAL_MACHINE\SOFTWARE\Khronos\Vulkan\Drivers` key is still read too (on the development machine it did not
+  exist at all).
 - Every instance-level call goes through the loader's **trampoline** code, then through each enabled layer, and
-  finally into the driver. Layers are chained: each one calls the next.
+  finally into the loader's **terminator**, which forwards it to every driver. Layers are chained: each one calls the
+  next.
 - `vkCreateInstance` itself does not touch the GPU. It only sets up the loader, the layers and each driver's instance
   state.
 
@@ -103,10 +108,10 @@ function, get a handle. The bindings fill `sType` for us.
 		{
 			q: 'What does the Vulkan loader do?',
 			options: [
-				'Compiles shaders for the GPU',
-				'Finds installed drivers and layers and routes each call through the enabled layers to the right driver',
-				'Loads textures from disk',
-				'Is the part of the GPU that reads command buffers',
+				'Compiles shaders into the GPU\'s binary format for the driver',
+				'Finds drivers and layers and routes each call through them',
+				'Loads textures from disk into GPU memory at startup',
+				'It is the part of the GPU that reads command buffers',
 			],
 			answer: 1,
 			explain: 'The loader is a dispatcher between the application, the layers and one or more drivers.',
@@ -114,10 +119,10 @@ function, get a handle. The bindings fill `sType` for us.
 		{
 			q: 'A screen recorder installed on your PC prints a warning in your Vulkan program. Why can that happen?',
 			options: [
-				'It registered an implicit layer, which the loader inserts into every Vulkan program',
-				'It replaced vulkan-1.dll',
-				'Your program enabled it by name',
-				'It runs inside the GPU firmware',
+				'It registered an implicit layer, loaded into every program',
+				'It replaced vulkan-1.dll with its own patched version',
+				'Your program enabled its layer by name at instance creation',
+				'It runs inside the GPU firmware and reports from there',
 			],
 			answer: 0,
 			explain: 'Implicit layers are loaded automatically for all applications; explicit layers only when requested.',
@@ -125,10 +130,10 @@ function, get a handle. The bindings fill `sType` for us.
 		{
 			q: 'What does apiVersion in VkApplicationInfo mean?',
 			options: [
-				'The minimum driver version required',
-				'The version of your application',
-				'The highest Vulkan version the program is written to use',
-				'The version of the loader to download',
+				'The minimum driver version your program requires to run',
+				'The version number of your own application',
+				'The highest Vulkan version the program uses',
+				'The version of the loader to download on first start',
 			],
 			answer: 2,
 			explain: 'apiVersion states the highest Vulkan API version the application uses.',
@@ -136,10 +141,10 @@ function, get a handle. The bindings fill `sType` for us.
 		{
 			q: 'You listed VK_EXT_debug_utils among the instance extensions. Can you now call its functions?',
 			options: [
-				'Yes, every listed extension is active',
-				'Only if a GPU supports it',
-				'Only after creating a logical device',
-				'No - an extension must be enabled in the instance create info first',
+				'Yes: every extension the loader lists is already active',
+				'Only if a GPU in the machine supports it as well',
+				'Only after a logical device has been created',
+				'No: it must be enabled in the instance create info',
 			],
 			answer: 3,
 			explain: 'Enumeration only reports availability; the extension must be named in ppEnabledExtensionNames at creation.',

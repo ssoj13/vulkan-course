@@ -7,7 +7,8 @@ import { Aside, Steps } from '@astrojs/starlight/components';
 import MindMap from 'course-kit/components/MindMap.astro';
 import Quiz from 'course-kit/components/Quiz.astro';
 
-Your program runs on the CPU. The GPU is a separate machine on the other side of a PCIe cable. It cannot call your
+Your program runs on the CPU. A discrete GPU is a separate machine on the other side of a PCIe link (an integrated
+GPU shares the chip and memory with the CPU, but is still a separate processor). It cannot call your
 functions and you cannot call its. So how does a "draw" ever reach it?
 
 ## The path of one draw
@@ -66,23 +67,33 @@ In older APIs the driver built command buffers for you, behind the scenes, and d
 		{
 			q: 'When does the GPU execute a command that the application recorded?',
 			options: [
-				'Immediately, inside the API call',
-				'Only after the application exits',
+				'Immediately, inside the API call, before it returns',
+				'Only after the application exits and the driver flushes',
 				'At the moment the driver translates the call',
-				'Later, after the command buffer is submitted and the GPU gets to it',
+				'Later: after submission, when the GPU gets to it',
 			],
 			answer: 3,
 			explain: 'Recording only writes commands into memory. Execution happens after submission, asynchronously from the CPU.',
 		},
 		{
 			q: 'What reads command buffers on the GPU side?',
-			options: ['The vertex shader', 'The command processor (GPU front end)', 'The kernel-mode driver', 'The PCIe controller'],
+			options: [
+				'The vertex shader, before it processes any vertex',
+				'The command processor (GPU front end)',
+				'The kernel-mode driver, on behalf of the GPU',
+				'The PCIe controller between the CPU and the GPU',
+			],
 			answer: 1,
 			explain: 'The command processor fetches and parses the command stream and dispatches the work to the rest of the chip.',
 		},
 		{
 			q: 'Who records command buffers in Vulkan?',
-			options: ['The application', 'The driver, automatically', 'The operating system', 'The GPU firmware'],
+			options: [
+				'The application',
+				'The driver, automatically',
+				'The operating system',
+				'The GPU firmware',
+			],
 			answer: 0,
 			explain: 'Recording and submitting command buffers explicitly is the core idea of Vulkan; older APIs did this implicitly inside the driver.',
 		},

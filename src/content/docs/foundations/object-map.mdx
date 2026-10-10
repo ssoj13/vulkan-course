@@ -31,16 +31,17 @@ while downstream nodes still reference it and you get broken references - in Vul
 You never hold a Vulkan object itself. You hold a **handle**: an opaque value that names an object living inside the
 loader or driver (`VkInstance`, `VkDevice`, `VkBuffer`...). There are two kinds:
 
-- **Dispatchable handles** - `VkInstance`, `VkPhysicalDevice`, `VkDevice`, `VkQueue`, `VkCommandBuffer` - are real
-  pointers. The loader uses them to find which driver should receive a call.
-- **Non-dispatchable handles** - everything else - are 64-bit values whose meaning is up to the driver.
+- **Dispatchable handles** - in core Vulkan `VkInstance`, `VkPhysicalDevice`, `VkDevice`, `VkQueue`,
+  `VkCommandBuffer` - are real pointers. The loader uses them to find which driver should receive a call.
+- **Non-dispatchable handles** - everything else - are 64-bit values whose meaning is up to whoever owns the object:
+  usually the driver, sometimes the loader or a layer (a debug messenger, for example).
 
 ## Four ways to get an object
 
 | How | Calls | Who destroys it |
 | --- | --- | --- |
 | create | `vkCreateX` / `vkDestroyX` | you |
-| allocate from a pool | `vkAllocateX` / `vkFreeX` (or reset/destroy the pool) | you, or the pool |
+| allocate from a pool | `vkAllocateX` / `vkFreeX`, or destroy the pool (resetting a descriptor pool also frees its sets) | you, or the pool |
 | enumerate | `vkEnumeratePhysicalDevices` | nobody - it lives as long as its parent |
 | get | `vkGetDeviceQueue`, `vkGetSwapchainImagesKHR` | nobody - its owner does |
 
@@ -59,7 +60,7 @@ VkResult r = vkCreateFoo(parent, &info, NULL /* allocator */, &foo);
 ```
 
 - `sType` tells the driver which struct it is looking at; `pNext` lets you hang extra structs onto it (we use that in
-  lessons 7 and 8). The Rust and C++ bindings fill `sType` for you.
+  lessons 7, 8 and 10). The Rust and C++ bindings fill `sType` for you.
 - Every call that can fail returns a `VkResult`. `VK_SUCCESS` is 0; errors are negative.
 
 ## The map of this lesson
@@ -79,27 +80,32 @@ VkResult r = vkCreateFoo(parent, &info, NULL /* allocator */, &foo);
 		{
 			q: 'In what order must objects be destroyed?',
 			options: [
-				'In creation order',
+				'In creation order: first created, first destroyed',
 				'Children before the objects they were made from',
-				'Any order, the driver sorts it out',
-				'All at once with vkDestroyInstance',
+				'In any order: the driver sorts out the dependencies',
+				'All at once, with a single vkDestroyInstance call',
 			],
 			answer: 1,
 			explain: 'Destroying a parent while its children live is invalid; destroy in reverse creation order.',
 		},
 		{
 			q: 'Which handle is NOT dispatchable?',
-			options: ['VkDevice', 'VkCommandBuffer', 'VkBuffer', 'VkQueue'],
+			options: [
+				'VkDevice',
+				'VkCommandBuffer',
+				'VkBuffer',
+				'VkQueue',
+			],
 			answer: 2,
-			explain: 'Instance, physical device, device, queue and command buffer are dispatchable; buffers and all other objects use non-dispatchable handles.',
+			explain: 'In core Vulkan, instance, physical device, device, queue and command buffer are dispatchable; buffers and all other core objects use non-dispatchable handles.',
 		},
 		{
 			q: 'How do you get a VkQueue?',
 			options: [
-				'vkCreateQueue',
-				'vkAllocateQueues from a queue pool',
-				'You get it from the device with vkGetDeviceQueue; the device created it',
-				'vkEnumerateQueues on the instance',
+				'vkCreateQueue, after the device has been created',
+				'vkAllocateQueues from a queue pool, like command buffers',
+				'vkGetDeviceQueue: the device already created it',
+				'vkEnumerateQueues on the instance, like physical devices',
 			],
 			answer: 2,
 			explain: 'Queues are created together with the device; vkGetDeviceQueue only returns handles to them.',
@@ -107,10 +113,10 @@ VkResult r = vkCreateFoo(parent, &info, NULL /* allocator */, &foo);
 		{
 			q: 'What is pNext for?',
 			options: [
-				'Pointing to the next object in creation order',
-				'Chaining extra structs (extensions, newer features) onto a create-info struct',
-				'Linking command buffers together',
-				'Storing the next frame index',
+				'To point to the next object in creation order',
+				'To chain extra structs onto a create-info',
+				'To link several command buffers into one submit',
+				'To store the index of the next frame in flight',
 			],
 			answer: 1,
 			explain: 'pNext builds a linked list of structs, so new versions and extensions can add parameters without changing old structs.',

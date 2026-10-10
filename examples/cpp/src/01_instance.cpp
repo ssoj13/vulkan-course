@@ -27,6 +27,13 @@ try {
     // vkCreateInstance, vkEnumerateInstanceExtensionProperties, ...
     // The loader is the small library that forwards our calls to the GPU driver.
     vk::raii::Context context;
+
+    // vkEnumerateInstanceVersion exists since loader 1.1 (a 1.0 loader does not
+    // export it); we target 1.4, so we call it directly. It reports the highest
+    // Vulkan version the loader supports.
+    const uint32_t loaderVersion = context.enumerateInstanceVersion();
+    std::println("Vulkan loader supports up to {}.{}.{}", VK_API_VERSION_MAJOR(loaderVersion),
+                 VK_API_VERSION_MINOR(loaderVersion), VK_API_VERSION_PATCH(loaderVersion));
     // #endregion
 
     // #region app-info
@@ -37,10 +44,10 @@ try {
     // VkPhysicalDeviceVulkan13Features); 1.4 additionally promotes push descriptors,
     // dynamic rendering local read, maintenance5/6 and more to core.
     constexpr vk::ApplicationInfo appInfo{
-        .pApplicationName   = "Vulkan Textbook - 01 Instance",
-        .applicationVersion = VK_MAKE_API_VERSION(0, 1, 0, 0),
+        .pApplicationName   = "Vulkan from Zero - 01 instance",
+        .applicationVersion = VK_MAKE_API_VERSION(0, 0, 1, 0),
         .pEngineName        = "No Engine",
-        .engineVersion      = VK_MAKE_API_VERSION(0, 1, 0, 0),
+        .engineVersion      = VK_MAKE_API_VERSION(0, 0, 1, 0),
         .apiVersion         = vk::ApiVersion14,
     };
     // #endregion
@@ -49,10 +56,12 @@ try {
     // Extensions are optional features of the loader/drivers. Asking which
     // instance-level extensions exist is a harmless way to see what the
     // installed Vulkan runtime offers (surface support, debug utils, ...).
+    // The context overload passes no layer name: it lists the extensions of the
+    // Vulkan implementation and of implicitly enabled layers (not of all layers).
     const std::vector<vk::ExtensionProperties> extensions = context.enumerateInstanceExtensionProperties();
-    std::println("Available instance extensions ({}):", extensions.size());
+    std::println("{} instance extensions available:", extensions.size());
     for (const vk::ExtensionProperties& ext : extensions) {
-        std::println("  {} (spec revision {})", ext.extensionName.data(), ext.specVersion);
+        std::println("  {} (rev {})", ext.extensionName.data(), ext.specVersion);
     }
     // #endregion
 
@@ -65,10 +74,7 @@ try {
         .pApplicationInfo = &appInfo,
     };
     vk::raii::Instance instance(context, createInfo);
-
-    const uint32_t version = context.enumerateInstanceVersion();
-    std::println("Instance created. Loader supports Vulkan {}.{}.{}", VK_API_VERSION_MAJOR(version),
-                 VK_API_VERSION_MINOR(version), VK_API_VERSION_PATCH(version));
+    std::println("VkInstance created: {}", static_cast<const void*>(static_cast<VkInstance>(*instance)));
     // #endregion
 
     // #region cleanup

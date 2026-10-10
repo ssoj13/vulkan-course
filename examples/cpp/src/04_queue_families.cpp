@@ -29,7 +29,20 @@
 VKAPI_ATTR vk::Bool32 VKAPI_CALL debugCallback(vk::DebugUtilsMessageSeverityFlagBitsEXT severity,
                                                vk::DebugUtilsMessageTypeFlagsEXT type,
                                                const vk::DebugUtilsMessengerCallbackDataEXT* data, void* /*userData*/) {
-    std::println(stderr, "[{}] [{}] {}", vk::to_string(severity), vk::to_string(type), data->pMessage);
+    // pMessage is optional in the spec, so check it. Nothing may throw out of here:
+    // exceptions must not unwind through the C loader/layer frames that called
+    // us, so std::println (which can throw) is wrapped and any failure ignored.
+    try {
+        // Same format as the Rust examples: [LEVEL][KIND] message.
+        const char* level = severity == vk::DebugUtilsMessageSeverityFlagBitsEXT::eError     ? "ERROR"
+                            : severity == vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning ? "WARNING"
+                                                                                             : "INFO";
+        const char* kind = (type & vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation)    ? "VALIDATION"
+                           : (type & vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance) ? "PERFORMANCE"
+                                                                                         : "GENERAL";
+        std::println(stderr, "[{}][{}] {}", level, kind, data && data->pMessage ? data->pMessage : "<no message>");
+    } catch (...) {
+    }
     return vk::False;
 }
 
@@ -47,10 +60,10 @@ try {
     }
 
     constexpr vk::ApplicationInfo appInfo{
-        .pApplicationName   = "Vulkan Textbook - 04 Queue Families",
-        .applicationVersion = VK_MAKE_API_VERSION(0, 1, 0, 0),
+        .pApplicationName   = "Vulkan from Zero - 04 queue families",
+        .applicationVersion = VK_MAKE_API_VERSION(0, 0, 1, 0),
         .pEngineName        = "No Engine",
-        .engineVersion      = VK_MAKE_API_VERSION(0, 1, 0, 0),
+        .engineVersion      = VK_MAKE_API_VERSION(0, 0, 1, 0),
         .apiVersion         = vk::ApiVersion14,
     };
 
@@ -82,23 +95,44 @@ try {
     if (devices.empty()) {
         throw std::runtime_error("No Vulkan-capable GPU found");
     }
+    // Eligible = a Vulkan 1.4 device with dynamicRendering and synchronization2
+    // (the two features this textbook relies on: dynamic rendering replaces
+    // render passes, synchronization2 is the modern barrier API). Among eligible
+    // GPUs we prefer a discrete card (fastest, own VRAM) over integrated (shares
+    // system RAM), then virtual, then CPU software rasterisers. Highest score
+    // wins; on a tie the first one found stays.
     const vk::raii::PhysicalDevice* best = nullptr;
-    uint64_t bestScore                   = 0;
+    int bestScore                        = 0;
     for (const vk::raii::PhysicalDevice& device : devices) {
         const vk::PhysicalDeviceProperties props = device.getProperties();
-        const auto features13 = device.getFeatures2<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan13Features>()
-                                    .get<vk::PhysicalDeviceVulkan13Features>();
-        const bool suitable = props.apiVersion >= vk::ApiVersion14 && features13.dynamicRendering == vk::True &&
-                              features13.synchronization2 == vk::True;
-        if (!suitable) {
+        // Check the version before asking about 1.3 features: querying a core
+        // feature struct of a newer version on an older device is invalid
+        // (spec: "Extending Physical Device Core Functionality").
+        if (props.apiVersion < vk::ApiVersion14) {
             continue;
         }
-        uint64_t score = props.limits.maxImageDimension2D;
-        if (props.deviceType == vk::PhysicalDeviceType::eDiscreteGpu) {
-            score += 100'000;
-        } else if (props.deviceType == vk::PhysicalDeviceType::eIntegratedGpu) {
-            score += 50'000;
+        // Named chain: reading through a reference avoids copying a struct (with
+        // a dangling pNext) out of a temporary.
+        const auto featureChain = device.getFeatures2<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan13Features>();
+        const auto& features13  = featureChain.get<vk::PhysicalDeviceVulkan13Features>();
+        if (features13.dynamicRendering != vk::True || features13.synchronization2 != vk::True) {
+            continue;
         }
+        int score = 1;
+        switch (props.deviceType) {
+        case vk::PhysicalDeviceType::eDiscreteGpu:
+            score = 1000;
+            break;
+        case vk::PhysicalDeviceType::eIntegratedGpu:
+            score = 100;
+            break;
+        case vk::PhysicalDeviceType::eVirtualGpu:
+            score = 10;
+            break;
+        default:
+            break;
+        }
+        // Strictly greater: on a tie the first GPU found stays.
         if (score > bestScore) {
             bestScore = score;
             best      = &device;

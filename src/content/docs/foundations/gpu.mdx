@@ -40,7 +40,7 @@ about 912 GB/s; the PCIe 4.0 x16 link to the CPU moves about 32 GB/s. So data th
 and data that has to cross from the CPU is expensive. Vulkan makes you decide **where every buffer lives** for exactly
 this reason.
 
-GPUs hide memory latency differently from CPUs: instead of big caches, an SM keeps many warps in flight and switches
+GPUs hide memory latency differently from CPUs: rather than relying mainly on big caches, an SM keeps many warps in flight and switches
 to another one whenever the current one waits for memory. That is why GPUs want *lots* of parallel work.
 
 ## What this means for Vulkan
@@ -67,10 +67,10 @@ to another one whenever the current one waits for memory. That is why GPUs want 
 		{
 			q: 'Why is a GPU fast at shading pixels?',
 			options: [
-				'Each of its cores is much faster than a CPU core',
-				'It runs the same small program on many pixels at once on thousands of simple cores',
-				'It has larger caches than a CPU',
-				'It predicts branches better than a CPU',
+				'Each of its cores is far faster than any CPU core',
+				'Many simple cores run one program on many pixels',
+				'It has much larger caches than a desktop CPU',
+				'It predicts branches better than CPU cores ever could',
 			],
 			answer: 1,
 			explain: 'GPU cores are simpler and slower than CPU cores; the speed comes from running thousands of them in parallel on the same program.',
@@ -78,9 +78,9 @@ to another one whenever the current one waits for memory. That is why GPUs want 
 		{
 			q: 'Half of a warp takes an if-branch and half takes the else-branch. What happens?',
 			options: [
-				'The warp splits into two independent warps',
-				'The GPU picks the faster branch for all threads',
-				'The warp executes both branches one after another, masking off the inactive lanes',
+				'The warp splits into two independent warps that run at once',
+				'The GPU picks the faster branch for all of the threads',
+				'Both branches run one after another, idle lanes masked off',
 				'The driver recompiles the shader without the branch',
 			],
 			answer: 2,
@@ -89,10 +89,10 @@ to another one whenever the current one waits for memory. That is why GPUs want 
 		{
 			q: 'Why does Vulkan make you choose where a buffer lives?',
 			options: [
-				'Because VRAM is fast for the GPU and data crossing PCIe from the CPU is far slower',
-				'Because VRAM is smaller than a CPU cache',
-				'Because the CPU cannot write to memory at all',
-				'Because OpenGL did it the same way',
+				'VRAM is fast for the GPU; data crossing PCIe is far slower',
+				'VRAM is smaller than a CPU cache, so it must be shared',
+				'The CPU cannot write to any memory the GPU can read',
+				'OpenGL already made you choose it in exactly the same way',
 			],
 			answer: 0,
 			explain: 'Device memory is fast for the GPU; host memory reached over PCIe is much slower, so placement matters and Vulkan makes it explicit.',

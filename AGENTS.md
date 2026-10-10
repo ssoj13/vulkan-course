@@ -16,7 +16,7 @@ code (Rust and C++) → what the driver and the GPU actually do.
 
 ## Decisions (2026-10-10)
 
-- Language: English. Hosting: GitHub Pages. Toolchain: bun 1.3.12.
+- Language: English. Hosting: GitHub Pages. Toolchain: bun 1.4.3.
 - Engine: `course-kit` (separate repo), consumed as a git dependency `github:ssoj13/course-kit#<tag>`;
   local co-development via `bun link`. Everything course-agnostic goes there, never into this repo.
 - Code examples: BOTH Rust (`ash`) and C++ (Vulkan-Hpp), in this repo: `examples/rust` (cargo workspace),
@@ -71,23 +71,23 @@ shader objects, mesh shaders, ray tracing, tile-based mobile GPUs. Capstone: min
 
 ## State (2026-10-10)
 
-- course-kit pushed (public, github:ssoj13/course-kit#main; tag v0.1.0 once this site builds on it).
-- examples/rust (ash 0.38, API 1.3) and examples/cpp (vk::raii, C++23 for std::print) steps 01-05 written by agents,
-  built and run on RTX 3080 Ti, region contract checked. NOT yet independently reviewed.
-- Debug messenger: WARNING|ERROR only (INFO = 100+ loader lines). VK_LAYER_bandicam_helper (implicit layer on the
-  dev machine) prints one expected warning: use it as the live example in the loader lesson.
+- Engine: `github:ssoj13/course-kit#v0.1.0` (public). Bump the tag in package.json for engine changes.
+- examples 01-05 in Rust (ash git master, Vulkan 1.4) and C++ (vk::raii, ApiVersion14, C++23 for std::print):
+  built and run on RTX 3080 Ti; reviewed by two independent reviewers (code vs spec, lesson facts) and fixed.
+  Both languages print the same output; step 05 chains Vulkan13Features directly onto VkDeviceCreateInfo
+  (ash master's `push()` panics on a struct that already has its own chain).
+- Debug messenger: WARNING|ERROR only (INFO = 100+ loader lines). The dev machine has 8 implicit layers (6 from apps,
+  2 from the NVIDIA driver); VK_LAYER_bandicam_helper prints one expected warning, used as the live example.
 - ObjectGraph: data `src/data/objects.json`, VUID texts `src/data/vuids.json` (generated: `bun scripts/sync-vuids.ts`),
-  simulator `src/lib/objects.ts` (11 tests pass), view `src/components/ObjectGraph{.astro,View.tsx}` NOT yet built/viewed.
-- terms.json seeded for modules 1-3; course.json has modules 1-3.
+  simulator `src/lib/objects.ts` (tests in tests/), view `src/components/ObjectGraph{.astro,View.tsx}`.
+- Quizzes: the engine fails the build if more than 1/3 of a quiz has the correct option as the longest.
+- Repo `ssoj13/vulkan-course` (public, Pages via Actions). Published branch `main` was started fresh without the
+  private `task.md` and `.omh/`; the earlier local commits live in the local branch `local-history`.
 
 ## TODO
 
-- [x] Stage 1: course-kit engine
-- [ ] Commit kit change: `layout()` takes `LayoutInput` (uncommitted in ../course-kit), push
-- [ ] Add `@xyflow/react` + `@dagrejs/dagre` as explicit deps of this site; `bun install`
-- [ ] Home page src/content/docs/index.mdx + the 10 lessons (modules 1-3) -> site builds (kit checks every lesson has a page)
-- [ ] Build + look at ObjectGraph (map and build modes)
-- [ ] Two independent reviewers for examples/rust and examples/cpp
-- [ ] CI: Pages deploy (bun 1.4.3), cargo check, cmake build; create ssoj13/vulkan-course
-- [ ] Queue-family lesson: use the real RTX 3080 Ti table (6 families) recorded by both examples
-- [ ] User review, then remaining modules
+- [x] Stage 1: course-kit engine; [x] site on the kit; [x] examples 01-05 both languages; [x] lessons 1-10
+- [x] ObjectGraph map + build modes; [x] two reviewers, findings fixed; [x] CI (tests, clippy/fmt, Pages)
+- [ ] C++ examples in CI (needs Vulkan SDK headers 1.4.341 with vulkan_raii.hpp on the runner)
+- [ ] Decide with the user: term maps put foundations at the bottom, ObjectGraph puts the root on top
+- [ ] User review, then modules 4+ (presentation, pipeline, commands, sync, memory, descriptors, images, compute)
