@@ -14,10 +14,12 @@ software it connects us to: the **loader**.
 ## Where this fits
 
 We move down from the application into the **loader & driver** layer, and create the first object of the **Vulkan
-API** layer. [Lesson 2](lesson:talking-to-gpu) spoke of "the driver" as one piece; here it splits into a loader, layers
-and one driver per vendor. The chain:
+API** layer. [Talking to the GPU](lesson:talking-to-gpu) already split the driver into a user-mode and a kernel-mode
+part; here the user-mode side splits further into the loader, layers and the drivers (ICDs). Two chains, not to be mixed
+up:
 
-`your program → loader → layers → driver (ICD) → GPU`, and on the API side `VkInstance` as the root of the object tree.
+- the **call path**: `your program → loader (trampoline) → [layers] → loader (terminator) → driver (ICD) → GPU`;
+- the **object tree**: `VkInstance → VkPhysicalDevice → VkDevice → VkQueue`, with the instance as its root.
 
 The loader is built on the drivers and layers it finds on the machine; the instance is built on the loader: it is your
 program's registered connection to it, with the layers and extensions you chose. Everything that follows hangs off
@@ -26,9 +28,11 @@ it: the [validation layer](lesson:validation) is enabled on it, and the GPUs are
 ## The loader: a switchboard
 
 Your program never talks to the GPU driver directly. It talks to the **Vulkan loader** (`vulkan-1.dll`), a small
-library from Khronos that ships with every driver. At startup the loader:
+library from Khronos (on Windows it is installed with the GPU driver; on Linux it is a distribution package). At
+startup the loader:
 
-1. finds the installed **drivers** (one per GPU vendor - a machine can have NVIDIA and Intel at once),
+1. finds the installed **drivers** (ICDs): one per installed driver, not per vendor - a machine can have NVIDIA and
+   Intel at once, a vendor can ship several, and software drivers such as lavapipe run on the CPU,
 2. finds the installed **layers** - libraries that can sit between your program and the driver,
 3. routes each of your calls through the enabled layers to the right driver.
 
@@ -76,23 +80,23 @@ extensions and layers, ask the loader version. Rust's `Entry` and C++'s `vk::rai
 
 <Step file="01_instance" region="app-info" />
 
-This whole struct is optional metadata; the one field with a real effect is `apiVersion`: the **highest** Vulkan
-version the program is written against. Drivers may also look at the application and engine names to enable per-game
-fixes.
+This whole struct is optional metadata; the one field whose effect the specification defines is `apiVersion`: the
+**highest** Vulkan version the program is written against. Drivers may also look at the application and engine names to
+enable per-application fixes, but that is their own business, not a rule of the spec.
 
 ### 3. See what is available
 
 <Step file="01_instance" region="list-extensions" />
 
 An **extension** is optional API functionality with a name such as `VK_KHR_surface`. *Instance* extensions extend the
-loader and instance (window surfaces, debug messages); *device* extensions, which we meet in lesson 10, extend what a
+loader and instance (window surfaces, debug messages); *device* extensions, which we meet with the [logical device](lesson:logical-device), extend what a
 GPU can do. An extension must be **enabled at creation time**; listing it only tells you it exists.
 
 ### 4. Create the instance
 
 <Step file="01_instance" region="create-instance" />
 
-This is the first appearance of the pattern from lesson 4: fill a `*CreateInfo` struct, pass it to a `create`
+This is the first appearance of the pattern from the [object map](lesson:object-map): fill a `*CreateInfo` struct, pass it to a `create`
 function, get a handle. The bindings fill `sType` for us.
 
 ### 5. Clean up
@@ -110,8 +114,9 @@ function, get a handle. The bindings fill `sType` for us.
   `HKEY_LOCAL_MACHINE\SOFTWARE\Khronos\Vulkan\Drivers` key is still read too (on the development machine it did not
   exist at all).
 - Every instance-level call goes through the loader's **trampoline** code, then through each enabled layer, and
-  finally into the loader's **terminator**, which forwards it to every driver. Layers are chained: each one calls the
-  next.
+  finally into the loader's **terminator**. For instance calls such as `vkCreateInstance` the terminator forwards the
+  call to every driver; for physical-device calls it forwards it only to the one driver that owns that device. Layers
+  are chained: each one calls the next.
 - `vkCreateInstance` itself does not touch the GPU. It only sets up the loader, the layers and each driver's instance
   state.
 
@@ -176,11 +181,11 @@ function, get a handle. The bindings fill `sType` for us.
 				},
 				{
 					text: 'The highest Vulkan version the program uses',
-					why: 'apiVersion is the highest Vulkan version the program is written against; it is the one field of VkApplicationInfo with a real effect.',
+					why: 'apiVersion is the highest Vulkan version the program is written against; it is the one field of VkApplicationInfo whose effect the specification defines.',
 				},
 				{
 					text: 'The version of the loader to download on first start',
-					why: 'Vulkan never downloads anything. The loader comes with the GPU driver, and you can ask its version with a global function before creating an instance.',
+					why: 'Vulkan never downloads anything. The loader is already installed (on Windows, with the GPU driver), and you can ask its version with a global function before creating an instance.',
 				},
 			],
 			answer: 2,

@@ -77,7 +77,7 @@ same API on Windows, Linux, Android and (through a translation layer) macOS. Tha
 ## Underneath
 
 - Vulkan grew directly out of AMD's Mantle (2013), which AMD gave to Khronos as its starting point. Direct3D 12 and
-  Metal appeared at the same time with the same idea: the driver should be thin, and the application, which knows
+  Metal are separate designs, both announced in 2014, with the same idea: the driver should be thin, and the application, which knows
   what it will draw, should make the decisions.
 - "Thin driver" also means "no safety net". The driver still reports runtime failures (out of memory, a feature the
   GPU lacks, a missing layer), but it does not check whether you use the API correctly - wrong parameters, wrong

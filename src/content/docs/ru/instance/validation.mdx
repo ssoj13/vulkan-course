@@ -69,10 +69,11 @@ import Step from '../../../../components/Step.astro';
 
 <Step file="02_validation" region="debug-callback" />
 
-Слой вызывает эту функцию и передаёт **серьёзность** (verbose, info, warning, error), **тип** (general — общее,
+Слой вызывает эту функцию и передаёт **уровень важности** (severity: verbose, info, warning, error), **тип** (general — общее,
 validation — нарушение правил, performance — совет по скорости) и текст сообщения. Приложение всегда должно возвращать
-`false`: значение `true` зарезервировано для разработки самих слоёв. Функция вызывается из C-кода загрузчика, поэтому в
-Rust у неё соглашение вызова `extern "system"`, а в C++ из неё не должно вылететь ни одно исключение.
+`false`: значение `true` зарезервировано для разработки самих слоёв. Слой вызывает функцию через C ABI Vulkan
+(`VKAPI_CALL`), поэтому в Rust у неё соглашение вызова `extern "system"`, а в C++ из неё не должно вылететь ни одно
+исключение: раскрутка стека через кадры слоя недопустима.
 
 ### 3. Что мы хотим слышать
 
@@ -93,8 +94,8 @@ Rust у неё соглашение вызова `extern "system"`, а в C++ и
 <Step file="02_validation" region="create-messenger" />
 
 А это уже постоянный messenger: он слушает всё, что происходит между созданием и уничтожением instance, то есть все
-наши дальнейшие вызовы. В Rust функции расширения не входят в основную таблицу загрузчика, поэтому `ash` подгружает их
-отдельной структурой `debug_utils::Instance`.
+наши дальнейшие вызовы. В Rust функции расширения не входят в основную таблицу функций `ash::Instance` (это устройство самой
+`ash`, а не загрузчика), поэтому `ash` подгружает их отдельной структурой `debug_utils::Instance`.
 
 <Step file="02_validation" region="cleanup" />
 
@@ -109,14 +110,13 @@ Rust у неё соглашение вызова `extern "system"`, а в C++ и
 самого. Этот идентификатор — ключ для поиска в спецификации.
 </Aside>
 
-Вот настоящий вывод этого эксперимента (хэндлы сокращены):
+Вот настоящий вывод этого эксперимента (сокращено: три обычные строки перед ошибкой убраны, а те же две строки ошибки в реальном запуске напечатались ещё раз):
 
 ```txt
-[ERROR][VALIDATION] vkDestroyInstance(): Object Tracking - For VkInstance 0x17b3..., VkDebugUtilsMessengerEXT
-0x10000000001 has not been destroyed.
-The Vulkan spec states: All child objects that were created with instance or with a VkPhysicalDevice retrieved
-from it, and that can be destroyed or freed, must have been destroyed or freed prior to destroying instance
-(https://docs.vulkan.org/spec/latest/chapters/initialization.html#VUID-vkDestroyInstance-instance-00629)
+…
+[ERROR][VALIDATION] vkDestroyInstance(): Object Tracking - For VkInstance 0x15d991071a0, VkDebugUtilsMessengerEXT 0x10000000001 has not been destroyed.
+The Vulkan spec states: All child objects that were created with instance or with a VkPhysicalDevice retrieved from it, and that can be destroyed or freed, must have been destroyed or freed prior to destroying instance (https://docs.vulkan.org/spec/latest/chapters/initialization.html#VUID-vkDestroyInstance-instance-00629)
+…
 ```
 
 Читать его удобно с конца: **VUID** называет правило, «The Vulkan spec states» цитирует его, а первая строка говорит,
@@ -153,7 +153,7 @@ from it, and that can be destroyed or freed, must have been destroyed or freed p
 					why: 'Дело не в лицензии: слой открытый. Его не включают, потому что он дорогой.',
 				},
 				{
-					text: 'Он работает только с отладочными сборками драйвера',
+					text: 'Он требует отладочный драйвер',
 					why: 'Слой работает с обычным драйвером, он стоит перед ним в цепочке вызовов и драйвер не меняет.',
 				},
 				{
@@ -172,7 +172,7 @@ from it, and that can be destroyed or freed, must have been destroyed or freed p
 			q: 'Зачем create info messenger-а вешают ещё и на create info instance?',
 			options: [
 				{
-					text: 'Чтобы проверялись и сами vkCreateInstance с vkDestroyInstance',
+					text: 'Чтобы проверялись vkCreateInstance и vkDestroyInstance',
 					why: 'Верно. Обычный messenger существует только пока жив instance; копия в pNext закрывает создание и уничтожение instance.',
 				},
 				{
@@ -222,7 +222,7 @@ from it, and that can be destroyed or freed, must have been destroyed or freed p
 					why: 'VkResult — число, которое возвращает вызов. VUID — имя правила из спецификации, и vkDestroyInstance вообще ничего не возвращает.',
 				},
 				{
-					text: 'Адрес объекта, который забыли уничтожить',
+					text: 'Адрес забытого объекта',
 					why: 'Хэндлы объектов указаны в первой строке сообщения. VUID — не адрес, а идентификатор правила.',
 				},
 				{

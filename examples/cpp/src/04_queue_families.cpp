@@ -23,6 +23,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 // Step 02: validation messages end up here.
@@ -30,8 +31,9 @@ VKAPI_ATTR vk::Bool32 VKAPI_CALL debugCallback(vk::DebugUtilsMessageSeverityFlag
                                                vk::DebugUtilsMessageTypeFlagsEXT type,
                                                const vk::DebugUtilsMessengerCallbackDataEXT* data, void* /*userData*/) {
     // pMessage is optional in the spec, so check it. Nothing may throw out of here:
-    // exceptions must not unwind through the C loader/layer frames that called
-    // us, so std::println (which can throw) is wrapped and any failure ignored.
+    // the layer calls us through Vulkan's C ABI (VKAPI_CALL), and exceptions must
+    // not unwind through its frames, so std::println (which can throw) is wrapped
+    // and any failure ignored.
     try {
         // Same format as the Rust examples: [LEVEL][KIND] message.
         const char* level = severity == vk::DebugUtilsMessageSeverityFlagBitsEXT::eError     ? "ERROR"
@@ -95,6 +97,11 @@ try {
     if (devices.empty()) {
         throw std::runtime_error("No Vulkan-capable GPU found");
     }
+    std::println("Found {} GPU(s)", devices.size());
+    // Step 03 printed every property, feature and limit; here we only list names.
+    for (size_t i = 0; i < devices.size(); ++i) {
+        std::println("GPU {}: {}", i, devices[i].getProperties().deviceName.data());
+    }
     // Eligible = a Vulkan 1.4 device with dynamicRendering and synchronization2
     // (the two features this textbook relies on: dynamic rendering replaces
     // render passes, synchronization2 is the modern barrier API). Among eligible
@@ -142,7 +149,7 @@ try {
         throw std::runtime_error("No GPU supports Vulkan 1.4 with dynamicRendering and synchronization2");
     }
     const vk::raii::PhysicalDevice& physicalDevice = *best;
-    std::println("Picked: {}\n", physicalDevice.getProperties().deviceName.data());
+    std::println("\nPicked: {}", physicalDevice.getProperties().deviceName.data());
 
     // ---- Step 04: queue families ----
 
@@ -154,20 +161,48 @@ try {
 
     // #region print-families
     // queueCount   - how many queues exist in the family.
-    // flags        - which operations the family supports.
+    // queueFlags   - which operations the family supports. A bitmask: a family
+    //                may have several capabilities at once, so we print every
+    //                flag that is set, by its spec name.
     // timestampValidBits - how many bits of GPU timestamps are meaningful
     //                      (0 = the family cannot write timestamps).
-    std::println("{:>5} {:>6} {:>10}  {}", "index", "queues", "timestamp", "flags");
-    for (uint32_t i = 0; i < families.size(); ++i) {
+    using Flag = vk::QueueFlagBits;
+    constexpr std::array<std::pair<Flag, std::string_view>, 8> knownFlags{{
+        {Flag::eGraphics, "GRAPHICS"},
+        {Flag::eCompute, "COMPUTE"},
+        {Flag::eTransfer, "TRANSFER"},
+        {Flag::eSparseBinding, "SPARSE_BINDING"},
+        {Flag::eProtected, "PROTECTED"},
+        {Flag::eVideoDecodeKHR, "VIDEO_DECODE"},
+        {Flag::eVideoEncodeKHR, "VIDEO_ENCODE"},
+        {Flag::eOpticalFlowNV, "OPTICAL_FLOW"},
+    }};
+    std::println("\n{} queue families:", families.size());
+    for (size_t i = 0; i < families.size(); ++i) {
         const vk::QueueFamilyProperties& f = families[i];
-        std::println("{:>5} {:>6} {:>7} bit  {}", i, f.queueCount, f.timestampValidBits, vk::to_string(f.queueFlags));
+        std::string flags;
+        for (const auto& [flag, name] : knownFlags) {
+            if (f.queueFlags & flag) {
+                flags += flags.empty() ? "" : " | ";
+                flags += name;
+            }
+        }
+        std::println("  family {}: {} queue(s), timestamp bits {}, [{}]", i, f.queueCount, f.timestampValidBits,
+                     flags);
     }
     // #endregion
 
     // #region find-graphics
-    // Pick families by capability. Our main family needs graphics (on every
-    // desktop GPU it also supports compute and transfer). Beyond that, many
-    // GPUs have extra specialised families, useful for async work later:
+    // Pick families by capability. Our main family needs GRAPHICS. Only TRANSFER
+    // is implied by GRAPHICS/COMPUTE (the spec makes that bit optional for such
+    // families); COMPUTE on a graphics family is not implied. The spec only
+    // promises: "If an implementation exposes any queue family that supports
+    // graphics operations, at least one queue family of at least one physical
+    // device exposed by the implementation must support both graphics and
+    // compute operations" - per implementation, not per GPU. On desktop GPUs
+    // the first graphics family also has COMPUTE; rendering needs only GRAPHICS.
+    // Beyond that, many GPUs have extra specialised families, useful for async
+    // work later:
     //  - a transfer-only family: DMA engine, uploads that do not stall rendering
     //  - a compute family without graphics: "async compute"
     // std::optional means "may not exist on this GPU".
@@ -179,7 +214,6 @@ try {
         return static_cast<uint32_t>(it - families.begin());
     };
 
-    using Flag = vk::QueueFlagBits;
     const std::optional<uint32_t> graphicsFamily = findFamily([](const vk::QueueFamilyProperties& f) {
         return static_cast<bool>(f.queueFlags & Flag::eGraphics);
     });
@@ -193,16 +227,16 @@ try {
     if (!graphicsFamily) {
         throw std::runtime_error("GPU has no graphics queue family");
     }
-    std::println("\nGraphics family:       {}", *graphicsFamily);
+    std::println("\nGraphics family: {}", *graphicsFamily);
     if (transferFamily) {
-        std::println("Dedicated transfer:    {}", *transferFamily);
+        std::println("Dedicated transfer family: {}", *transferFamily);
     } else {
-        std::println("Dedicated transfer:    none");
+        std::println("No dedicated transfer family");
     }
     if (computeFamily) {
-        std::println("Compute without gfx:   {}", *computeFamily);
+        std::println("Async compute family: {}", *computeFamily);
     } else {
-        std::println("Compute without gfx:   none");
+        std::println("No async compute family");
     }
     // #endregion
 

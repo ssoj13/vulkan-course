@@ -8,14 +8,15 @@ import MindMap from 'course-kit/components/MindMap.astro';
 import Quiz from 'course-kit/components/Quiz.astro';
 import Step from '../../../components/Step.astro';
 
-Lesson 3 said that a Vulkan driver does not check whether you use the API correctly. Pass a wrong value and you may get a crash, a black screen, or -
+[Why Vulkan](lesson:why-vulkan) said that a Vulkan driver does not check whether you use the API correctly. Pass a wrong value and you may get a crash, a black screen, or -
 worst of all - something that works on your GPU and breaks on someone else's. This lesson turns the checks back on.
 
 ## Where this fits
 
 We stay in the **loader & driver** layer, one level above the driver: a layer is a library the loader puts between
-your program and the driver. [Lesson 6](lesson:loader-and-instance) created the instance and listed layers and
-extensions; now we enable one of each. The chain:
+your program and the driver. The [loader lesson](lesson:loader-and-instance) explained layers and extensions, created
+the instance and listed the instance extensions; now step 02 lists the installed layers for the first time and enables
+one layer and one extension. The chain:
 
 `VkInstance → VK_LAYER_KHRONOS_validation (checks) + VK_EXT_debug_utils → VkDebugUtilsMessengerEXT → our callback`
 
@@ -66,7 +67,7 @@ hundred lines per run - and they would bury the one line that matters.
 <Step file="02_validation" region="create-with-validation" />
 
 There is a chicken-and-egg problem: the messenger is created *from* the instance, so who reports problems during
-`vkCreateInstance` and `vkDestroyInstance`? The answer is the `pNext` chain from lesson 4: we hang the same messenger
+`vkCreateInstance` and `vkDestroyInstance`? The answer is the `pNext` chain from the [object map](lesson:object-map): we hang the same messenger
 create info onto the instance create info, and the layer uses it for those two calls.
 
 <Step file="02_validation" region="create-messenger" />
@@ -80,14 +81,13 @@ alive, the layer reports `VUID-vkDestroyInstance-instance-00629` - all child obj
 before the instance. That id is your search key in the specification.
 </Aside>
 
-This is the real output of that experiment (handles shortened):
+This is the real output of that experiment (shortened: the three normal lines before the error are cut, and the run printed the same two error lines a second time):
 
 ```txt
-[ERROR][VALIDATION] vkDestroyInstance(): Object Tracking - For VkInstance 0x17b3..., VkDebugUtilsMessengerEXT
-0x10000000001 has not been destroyed.
-The Vulkan spec states: All child objects that were created with instance or with a VkPhysicalDevice retrieved
-from it, and that can be destroyed or freed, must have been destroyed or freed prior to destroying instance
-(https://docs.vulkan.org/spec/latest/chapters/initialization.html#VUID-vkDestroyInstance-instance-00629)
+…
+[ERROR][VALIDATION] vkDestroyInstance(): Object Tracking - For VkInstance 0x15d991071a0, VkDebugUtilsMessengerEXT 0x10000000001 has not been destroyed.
+The Vulkan spec states: All child objects that were created with instance or with a VkPhysicalDevice retrieved from it, and that can be destroyed or freed, must have been destroyed or freed prior to destroying instance (https://docs.vulkan.org/spec/latest/chapters/initialization.html#VUID-vkDestroyInstance-instance-00629)
+…
 ```
 
 Read it from the end: the **VUID** names the rule, "The Vulkan spec states" quotes it, and the first line says which

@@ -23,8 +23,8 @@ backbone of the first section of the course:
 pipelines, command pools → command buffers).
 
 Each object is made from its parent: a physical device is found through an instance, a device is opened on a physical
-device, a queue lives inside a device. That is why the course goes top to bottom: [toolchain](lesson:toolchain), then
-the instance, then devices and queues, one level of the tree per step.
+device, a queue lives inside a device. That is why the course follows the chain from the root of the tree: [toolchain](lesson:toolchain),
+then the instance, then devices and queues, one link per step.
 
 ## How to read the map
 
@@ -94,7 +94,7 @@ VkResult r = vkCreateFoo(parent, &info, NULL /* allocator */, &foo);
 			q: 'In what order must objects be destroyed?',
 			options: [
 				{
-					text: 'In creation order: first created, first destroyed',
+					text: 'In creation order, parents first',
 					why: 'That destroys the parents first, while their children are still alive. The tree is taken down from the leaves: bottom to top on the map.',
 				},
 				{
@@ -140,7 +140,7 @@ VkResult r = vkCreateFoo(parent, &info, NULL /* allocator */, &foo);
 			q: 'How do you get a VkQueue?',
 			options: [
 				{
-					text: 'vkCreateQueue, after the device has been created',
+					text: 'vkCreateQueue, after vkCreateDevice',
 					why: 'There is no vkCreateQueue. Queues are requested in the device create info and come into existence together with the device.',
 				},
 				{
@@ -171,12 +171,12 @@ VkResult r = vkCreateFoo(parent, &info, NULL /* allocator */, &foo);
 					why: 'pNext builds a linked list of structs, so newer versions and extensions can add parameters without changing the old structs.',
 				},
 				{
-					text: 'To link several command buffers into one submit',
+					text: 'To batch command buffers into a submit',
 					why: 'A submit takes an array of command buffers in its own fields. pNext only chains additional structs that extend the submit info.',
 				},
 				{
-					text: 'To store the index of the next frame in flight',
-					why: 'Frames in flight are your own bookkeeping, kept in your code. Vulkan structs know nothing about frames.',
+					text: 'To list the extensions the object should enable',
+					why: 'Extensions are enabled by name, in the ppEnabledExtensionNames array of the create info. pNext carries the extra structs that an enabled extension or a newer version defines, not the list of names.',
 				},
 			],
 			answer: 1,

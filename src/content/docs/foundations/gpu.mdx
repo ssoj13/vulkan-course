@@ -12,7 +12,7 @@ every strange rule in Vulkan comes from the shape of this machine.
 
 ## Where this fits
 
-This is the bottom of the whole stack: the **hardware** layer. Nothing comes before it, and every later layer (the
+This is where the whole stack starts: the **hardware** layer. Nothing comes before it, and every later layer (the
 driver, the loader, the Vulkan objects) exists only to feed this machine with work. The chain inside the chip:
 
 `GPU → SMs / CUs → warps (lockstep groups) → threads, one per pixel or vertex`, plus `VRAM` next to it.
@@ -134,11 +134,11 @@ to another one whenever the current one waits for memory. That is why GPUs want 
 				},
 				{
 					text: 'The CPU cannot write to any memory the GPU can read',
-					why: 'It can: some memory is visible to both, and the CPU writes into it directly. Such memory is just slower for the GPU than its own VRAM, which is why the choice matters.',
+					why: 'It can: some memory is visible to both, and the CPU writes into it directly. Such memory is often slower for the GPU than VRAM; the exception is VRAM the CPU can map directly (memory that is both device-local and host-visible, which Resizable BAR enlarges). Placement is a trade-off, which is why the choice matters.',
 				},
 				{
 					text: 'OpenGL already made you choose it in exactly the same way',
-					why: 'OpenGL only took usage hints (such as GL_STATIC_DRAW) and the driver decided where the data went. Making the placement explicit is new in Vulkan.',
+					why: 'OpenGL took usage hints (such as GL_STATIC_DRAW) and, since 4.4, glBufferStorage flags, but the driver still decided where the data went. Vulkan, like Mantle and Direct3D 12, leaves that decision to you.',
 				},
 			],
 			answer: 0,

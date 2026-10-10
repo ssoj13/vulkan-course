@@ -22,7 +22,8 @@
 #include <vector>
 
 // #region debug-callback
-// The driver/layer calls this function whenever it has something to say.
+// The validation layer calls this function through Vulkan's C ABI (VKAPI_ATTR /
+// VKAPI_CALL) whenever it has something to say.
 // Return vk::False: "do not abort the Vulkan call that triggered the message".
 // The signature (vk:: enums instead of Vk* ones) is what Vulkan-Hpp 1.4
 // expects for PFN_DebugUtilsMessengerCallbackEXT.
@@ -30,8 +31,9 @@ VKAPI_ATTR vk::Bool32 VKAPI_CALL debugCallback(vk::DebugUtilsMessageSeverityFlag
                                                vk::DebugUtilsMessageTypeFlagsEXT type,
                                                const vk::DebugUtilsMessengerCallbackDataEXT* data, void* /*userData*/) {
     // pMessage is optional in the spec, so check it. Nothing may throw out of here:
-    // exceptions must not unwind through the C loader/layer frames that called
-    // us, so std::println (which can throw) is wrapped and any failure ignored.
+    // the layer calls us through Vulkan's C ABI (VKAPI_CALL), and exceptions must
+    // not unwind through its frames, so std::println (which can throw) is wrapped
+    // and any failure ignored.
     try {
         // Same format as the Rust examples: [LEVEL][KIND] message.
         const char* level = severity == vk::DebugUtilsMessageSeverityFlagBitsEXT::eError     ? "ERROR"

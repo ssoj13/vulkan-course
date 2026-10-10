@@ -16,9 +16,9 @@ functions and you cannot call its. So how does a "draw" ever reach it?
 [Lesson 1](lesson:gpu) showed the machine; this lesson is the road to it. It spans three layers: your **application**,
 the **driver** (and the operating system under it), and the GPU's **front end** in hardware. The chain of one draw:
 
-`application → driver (user-mode → kernel-mode) → command buffer → queue → command processor → shader cores`
+`application → user-mode driver → command buffer → queue → kernel-mode driver (schedules) → command processor → shader cores`
 
-A command buffer is built *by* the driver *from* your calls; a queue is built on top of a hardware engine and feeds it
+A command buffer is built *by* the user-mode driver *from* your calls; a queue is built on top of a hardware engine and feeds it
 command buffers; the command processor is the part of the GPU that reads them. Vulkan's version of this road is the
 subject of the [next lesson](lesson:why-vulkan): it hands the recording and submitting from the driver to you.
 
@@ -53,8 +53,12 @@ want the result, you must *check* that the job finished - you cannot just assume
 ## Command buffers and queues
 
 - A **command buffer** is the job description: "bind this, draw that, copy this image there".
-- A **queue** is the line of submitted jobs in front of one of the GPU's engines. Jobs in one queue start in the order
-  they were submitted.
+- A **queue** is the line of submitted jobs in front of one of the GPU's engines. The order in which you submit is the
+  queue's *submission order*: the logical order that barriers and semaphores refer to. By itself it is not a promise
+  about timing. The specification says that submission order "does not itself define any execution or memory
+  dependencies", and that apart from a few implicit ordering guarantees and the synchronization you add, submitted
+  command buffers "may overlap or otherwise execute out of order". A job submitted later can finish before an earlier
+  one unless you synchronize them.
 
 In older APIs the driver built command buffers for you, behind the scenes, and decided when to submit them. In Vulkan
 **you** record command buffers and **you** submit them. That is the single biggest idea of the whole API.
@@ -79,7 +83,7 @@ In older APIs the driver built command buffers for you, behind the scenes, and d
 			q: 'When does the GPU execute a command that the application recorded?',
 			options: [
 				{
-					text: 'Immediately, inside the API call, before it returns',
+					text: 'Immediately, inside the API call',
 					why: 'A graphics call is not a function call on the GPU. Inside the call the driver only writes commands into memory; the GPU sees nothing yet.',
 				},
 				{
@@ -87,8 +91,8 @@ In older APIs the driver built command buffers for you, behind the scenes, and d
 					why: 'Work does not wait for the program to end. It runs as soon as it has been submitted and the GPU reaches it, often a frame or two behind the CPU.',
 				},
 				{
-					text: 'At the moment the driver translates the call',
-					why: 'Translation is the recording step: the driver writes the GPU\'s binary commands into a buffer. Nothing is sent to the GPU at that moment.',
+					text: 'Only when the CPU calls vkQueueWaitIdle to wait for it',
+					why: 'Waiting is how the CPU learns that work has finished; it is not what starts the work. The GPU picks submitted work up on its own, whether the CPU waits or not.',
 				},
 				{
 					text: 'Later: after submission, when the GPU gets to it',
@@ -110,7 +114,7 @@ In older APIs the driver built command buffers for you, behind the scenes, and d
 					why: 'It is a small processor running firmware that fetches the command stream from memory, sets up state and hands the work to the rest of the chip.',
 				},
 				{
-					text: 'The kernel-mode driver, on behalf of the GPU',
+					text: 'The GPU\'s kernel-mode driver',
 					why: 'The kernel-mode driver runs on the CPU: it owns the hardware and schedules submissions from all programs, but the commands are read and executed by the GPU itself.',
 				},
 				{
@@ -125,7 +129,7 @@ In older APIs the driver built command buffers for you, behind the scenes, and d
 			q: 'Who records command buffers in Vulkan?',
 			options: [
 				{
-					text: 'The application',
+					text: 'The application itself',
 					why: 'In Vulkan you record command buffers and you submit them: the single biggest idea of the whole API.',
 				},
 				{

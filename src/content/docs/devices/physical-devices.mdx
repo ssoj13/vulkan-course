@@ -20,7 +20,8 @@ chain:
 
 `VkInstance → VkPhysicalDevice → properties / features / limits`
 
-A physical device is built on the instance (found through it) and stands for one real GPU behind one driver.
+A physical device is built on the instance (found through it) and stands for one GPU (or software implementation)
+behind one driver.
 Properties say what it is, features what it could switch on, limits how far it goes. What we read here decides the two
 next steps: its [queue families](lesson:queue-families), and then the logical device, which enables the features we
 picked.
@@ -49,12 +50,15 @@ it: the instance **enumerates** the GPUs that exist, and the handles live as lon
 <Step file="03_physical_devices" region="features" />
 
 **Features** are optional capabilities: anisotropic filtering, geometry shaders, dynamic rendering... A feature that a
-GPU supports is still **off** until you enable it when creating the logical device (lesson 10). This is Vulkan's "say
-everything up front" again: the driver can prepare for exactly what you will use.
+GPU supports is still **off** until you enable it when creating the [logical device](lesson:logical-device). This is
+Vulkan's "say everything up front" again: the driver can prepare for exactly what you will use.
 
 Features introduced in later Vulkan versions live in extra structs (`VkPhysicalDeviceVulkan13Features`,
 `VkPhysicalDeviceVulkan14Features`...). To ask for them we chain those structs onto `VkPhysicalDeviceFeatures2` through
-`pNext` - the same chain trick as in lesson 7. One call fills every struct in the chain.
+`pNext` - the same chain trick as in the [validation lesson](lesson:validation). One call fills every struct in the
+chain. One rule applies: every struct in a `pNext` chain must belong to a core version the device supports or to an
+enabled extension, so the code chains the 1.3 struct only when the device's `apiVersion` is at least 1.3, and the 1.4
+struct only from 1.4.
 
 <Aside type="tip" title="CG analogy">
 Features are like render-farm node capabilities: a node may *have* a GPU and 128 GB of RAM, but a job only gets them
@@ -70,12 +74,17 @@ required for uniform buffer offsets. You cannot change them; your code must resp
 
 ## A real answer
 
-This is the output of step 03 on the machine the course was built on:
+This is the complete output of step 03 on the machine the course was built on (Rust and C++ print the same; the first
+line is the Bandicam layer's warning from the [loader lesson](lesson:loader-and-instance)):
 
 ```txt
+[WARNING][GENERAL] Layer VK_LAYER_bandicam_helper uses API version 1.2 which is older than the application specified API version of 1.4. May cause issues.
+Found 1 GPU(s)
+
 GPU 0: NVIDIA GeForce RTX 3080 Ti
   type:       DISCRETE_GPU
   api:        1.4.351
+  driver:     0x9a100000
   vendor id:  0x10de
   features:
     sampler_anisotropy (1.0): true
@@ -84,10 +93,12 @@ GPU 0: NVIDIA GeForce RTX 3080 Ti
     push_descriptor    (1.4): true
     maintenance5       (1.4): true
   limits:
-    max_image_dimension2_d:           32768
-    max_push_constants_size:          256 bytes
-    min_uniform_buffer_offset_alignment: 64 bytes
-    timestamp_period:                 1 ns/tick
+    max_image_dimension_2d:               32768
+    max_push_constants_size:              256 bytes
+    min_uniform_buffer_offset_alignment:  64 bytes
+    timestamp_period:                     1 ns/tick
+
+Picked: NVIDIA GeForce RTX 3080 Ti
 ```
 
 The driver supports Vulkan 1.4 and our instance asks for 1.4, so we can use 1.4. All five flags above are in fact

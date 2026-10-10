@@ -26,8 +26,9 @@ VKAPI_ATTR vk::Bool32 VKAPI_CALL debugCallback(vk::DebugUtilsMessageSeverityFlag
                                                vk::DebugUtilsMessageTypeFlagsEXT type,
                                                const vk::DebugUtilsMessengerCallbackDataEXT* data, void* /*userData*/) {
     // pMessage is optional in the spec, so check it. Nothing may throw out of here:
-    // exceptions must not unwind through the C loader/layer frames that called
-    // us, so std::println (which can throw) is wrapped and any failure ignored.
+    // the layer calls us through Vulkan's C ABI (VKAPI_CALL), and exceptions must
+    // not unwind through its frames, so std::println (which can throw) is wrapped
+    // and any failure ignored.
     try {
         // Same format as the Rust examples: [LEVEL][KIND] message.
         const char* level = severity == vk::DebugUtilsMessageSeverityFlagBitsEXT::eError     ? "ERROR"
@@ -40,6 +41,24 @@ VKAPI_ATTR vk::Bool32 VKAPI_CALL debugCallback(vk::DebugUtilsMessageSeverityFlag
     } catch (...) {
     }
     return vk::False;
+}
+
+// The VkPhysicalDeviceType names without the VK_PHYSICAL_DEVICE_TYPE_ prefix.
+// vk::to_string would print "DiscreteGpu"; this keeps the output identical to
+// the Rust example, which prints ash's names (DISCRETE_GPU, ...).
+constexpr const char* typeName(vk::PhysicalDeviceType type) {
+    switch (type) {
+    case vk::PhysicalDeviceType::eIntegratedGpu:
+        return "INTEGRATED_GPU";
+    case vk::PhysicalDeviceType::eDiscreteGpu:
+        return "DISCRETE_GPU";
+    case vk::PhysicalDeviceType::eVirtualGpu:
+        return "VIRTUAL_GPU";
+    case vk::PhysicalDeviceType::eCpu:
+        return "CPU";
+    default:
+        return "OTHER";
+    }
 }
 
 int main()
@@ -109,7 +128,7 @@ try {
         // just print the raw number.
         const vk::PhysicalDeviceProperties props = device.getProperties();
         std::println("\nGPU {}: {}", i, props.deviceName.data());
-        std::println("  type:       {}", vk::to_string(props.deviceType));
+        std::println("  type:       {}", typeName(props.deviceType));
         std::println("  api:        {}.{}.{}", VK_API_VERSION_MAJOR(props.apiVersion),
                      VK_API_VERSION_MINOR(props.apiVersion), VK_API_VERSION_PATCH(props.apiVersion));
         std::println("  driver:     {:#x}", props.driverVersion);
@@ -121,18 +140,26 @@ try {
         // when creating the logical device. Newer features live in extra structs
         // (here the Vulkan 1.3 and 1.4 ones) that we chain to the query with
         // pNext; StructureChain does the chaining and getFeatures2 fills
-        // everything in. A struct of a newer core version may only be queried on
-        // a device that supports that version, so the 1.4 struct is queried only
-        // when apiVersion >= 1.4. The chains stay in named variables: their pNext
-        // pointers point into the chain itself, so we read through references
-        // instead of copying a struct out of a temporary chain.
-        const auto chain13 = device.getFeatures2<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan13Features>();
-        const vk::PhysicalDeviceFeatures& features10 = chain13.get<vk::PhysicalDeviceFeatures2>().features;
-        const auto& features13                       = chain13.get<vk::PhysicalDeviceVulkan13Features>();
+        // everything in. Every struct in a pNext chain must belong to a core
+        // version the device supports or to an enabled extension (spec:
+        // "Extending Physical Device Core Functionality"), so the 1.3 struct is
+        // queried only when apiVersion >= 1.3 and the 1.4 one only when >= 1.4.
+        // The chains stay in named variables: their pNext pointers point into
+        // the chain itself, so we read through references instead of copying a
+        // struct out of a temporary chain.
+        const vk::PhysicalDeviceFeatures features10 = device.getFeatures();
         std::println("  features:");
         std::println("    sampler_anisotropy (1.0): {}", features10.samplerAnisotropy == vk::True);
-        std::println("    dynamic_rendering  (1.3): {}", features13.dynamicRendering == vk::True);
-        std::println("    synchronization2   (1.3): {}", features13.synchronization2 == vk::True);
+        if (props.apiVersion >= vk::ApiVersion13) {
+            const auto chain13 =
+                device.getFeatures2<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan13Features>();
+            const auto& features13 = chain13.get<vk::PhysicalDeviceVulkan13Features>();
+            std::println("    dynamic_rendering  (1.3): {}", features13.dynamicRendering == vk::True);
+            std::println("    synchronization2   (1.3): {}", features13.synchronization2 == vk::True);
+        } else {
+            std::println("    dynamic_rendering  (1.3): n/a (device below 1.3)");
+            std::println("    synchronization2   (1.3): n/a (device below 1.3)");
+        }
         if (props.apiVersion >= vk::ApiVersion14) {
             const auto chain14 =
                 device.getFeatures2<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan14Features>();

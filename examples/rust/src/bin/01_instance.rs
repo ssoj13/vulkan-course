@@ -58,8 +58,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for ext in &extensions {
         // `extension_name` is a fixed-size C char array; ash decodes it.
         println!(
-            "  {:?} (rev {})",
-            ext.extension_name_as_c_str()?,
+            "  {} (rev {})",
+            ext.extension_name_as_c_str()?.to_string_lossy(),
             ext.spec_version
         );
     }
@@ -83,7 +83,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // children before parents. The instance has no children yet.
     // SAFETY: no objects created from `instance` are alive, and it is not used afterwards.
     unsafe { instance.destroy_instance(None) };
-    println!("VkInstance destroyed");
     // #endregion
 
     Ok(())

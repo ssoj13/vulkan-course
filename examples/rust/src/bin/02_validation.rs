@@ -17,8 +17,8 @@ use ash::{
 // #region debug-callback
 /// Called by the validation layer for every message it wants to report.
 ///
-/// `extern "system"` gives the function the calling convention the C loader
-/// expects. Returning `FALSE` means "do not abort the Vulkan call that caused
+/// The layer calls it through Vulkan's C ABI (`VKAPI_CALL` in C), and
+/// `extern "system"` gives the function exactly that calling convention. Returning `FALSE` means "do not abort the Vulkan call that caused
 /// this message": the application should always return FALSE; TRUE is
 /// reserved for layer development.
 unsafe extern "system" fn debug_callback(
@@ -122,8 +122,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // #endregion
 
     // #region create-messenger
-    // Extension functions are not part of the core loader table, so ash wraps
-    // them in a small struct that loads their function pointers.
+    // Extension functions are not in `ash::Instance`'s main function table, so
+    // ash wraps them in a small struct that loads their function pointers.
     let debug_utils = debug_utils::Instance::load(&entry, &instance);
     // SAFETY: `messenger_info` is valid and the callback is a valid `extern "system"` fn.
     let messenger = unsafe { debug_utils.create_debug_utils_messenger(&messenger_info, None)? };
@@ -137,7 +137,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         debug_utils.destroy_debug_utils_messenger(messenger, None);
         instance.destroy_instance(None);
     }
-    println!("Cleaned up");
     // #endregion
 
     Ok(())

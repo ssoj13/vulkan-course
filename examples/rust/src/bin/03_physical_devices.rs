@@ -123,35 +123,46 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // #endregion
 
         // #region features
-        // Vulkan 1.0 features are queried directly; newer sets are *chained*
+        // Vulkan 1.0 features have their own query; newer sets are *chained*
         // onto `PhysicalDeviceFeatures2` through `p_next`: the driver walks the
         // chain and fills in every struct it recognises. Each core version
-        // since 1.1 has its own struct; we chain the 1.3 and 1.4 ones. A struct
-        // of a newer core version may only be queried on a device that supports
-        // that version, so the 1.4 struct is chained only when api >= 1.4.
+        // since 1.1 has its own struct; we chain the 1.3 and 1.4 ones. Every
+        // struct in a pNext chain must belong to a core version the device
+        // supports or to an enabled extension (spec: "Extending Physical Device
+        // Core Functionality"), so each one is chained only when the device's
+        // apiVersion reaches its version.
+        let has13 = props.api_version >= vk::API_VERSION_1_3;
         let has14 = props.api_version >= vk::API_VERSION_1_4;
         let mut f13 = vk::PhysicalDeviceVulkan13Features::default();
         let mut f14 = vk::PhysicalDeviceVulkan14Features::default();
-        let mut f2 = vk::PhysicalDeviceFeatures2::default().push(&mut f13);
-        if has14 {
-            f2 = f2.push(&mut f14);
+        if has13 {
+            let mut f2 = vk::PhysicalDeviceFeatures2::default().push(&mut f13);
+            if has14 {
+                f2 = f2.push(&mut f14);
+            }
+            // SAFETY: `pd` came from this instance, and the chain structs outlive the call.
+            unsafe { instance.get_physical_device_features2(pd, &mut f2) };
         }
-        // SAFETY: `pd` came from this instance, and the chain structs outlive the call.
-        unsafe { instance.get_physical_device_features2(pd, &mut f2) };
-        let f10 = f2.features;
+        // SAFETY: `pd` was enumerated from this instance.
+        let f10 = unsafe { instance.get_physical_device_features(pd) };
         println!("  features:");
         println!(
             "    sampler_anisotropy (1.0): {}",
             f10.sampler_anisotropy != 0
         );
-        println!(
-            "    dynamic_rendering  (1.3): {}",
-            f13.dynamic_rendering != 0
-        );
-        println!(
-            "    synchronization2   (1.3): {}",
-            f13.synchronization2 != 0
-        );
+        if has13 {
+            println!(
+                "    dynamic_rendering  (1.3): {}",
+                f13.dynamic_rendering != 0
+            );
+            println!(
+                "    synchronization2   (1.3): {}",
+                f13.synchronization2 != 0
+            );
+        } else {
+            println!("    dynamic_rendering  (1.3): n/a (device below 1.3)");
+            println!("    synchronization2   (1.3): n/a (device below 1.3)");
+        }
         if has14 {
             println!("    push_descriptor    (1.4): {}", f14.push_descriptor != 0);
             println!("    maintenance5       (1.4): {}", f14.maintenance5 != 0);

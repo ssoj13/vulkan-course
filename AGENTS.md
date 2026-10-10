@@ -102,18 +102,25 @@ shader objects, mesh shaders, ray tracing, tile-based mobile GPUs. Capstone: min
 
 ## State (2026-10-10)
 
-- Engine: `github:ssoj13/course-kit#v0.3.1` (public). Bump the tag in package.json for engine changes.
+- Engine: `github:ssoj13/course-kit#v0.3.3` (public). Bump the tag in package.json for engine changes.
 - examples 01-05 in Rust (ash git master, Vulkan 1.4) and C++ (vk::raii, ApiVersion14, C++23 for std::print):
   built and run on RTX 3080 Ti; reviewed by two independent reviewers (code vs spec, lesson facts) and fixed.
-  Both languages print the same output; step 05 chains Vulkan13Features directly onto VkDeviceCreateInfo
-  (ash master's `push()` panics on a struct that already has its own chain).
+  Rust and C++ print identical output except handle addresses (verified 2026-10-10 by diffing real runs; before that
+  01/02/04/05 had drifted). Program output quoted in lessons is pasted from real runs, cuts marked "(shortened)".
+  Step 05 prints only what it needs (first GRAPHICS family), not the whole 03/04 report. Step 03 chains
+  Vulkan13Features only on devices >= 1.3 (a pNext struct must belong to a supported version). Step 05 chains
+  Vulkan13Features directly onto VkDeviceCreateInfo (ash master's `push()` panics on a struct that already has its own chain).
 - Debug messenger: WARNING|ERROR only (INFO = 100+ loader lines). The dev machine has 8 implicit layers (6 from apps,
   2 from the NVIDIA driver); VK_LAYER_bandicam_helper prints one expected warning, used as the live example.
 - ObjectGraph: data `src/data/objects.json`, VUID texts `src/data/vuids.json` (generated: `bun scripts/sync-vuids.ts`),
   simulator `src/lib/objects.ts` (tests in tests/), view `src/components/ObjectGraph{.astro,View.tsx}`.
 - Quizzes: graded on click; each option carries a `why`, each question a `ref` to the section that explains it.
-  `bun run lint` (scripts/lint-content.ts) checks the model, the `#anchor` refs and the longest-option rule for every
-  language before a build; the engine checks them again at build time.
+  `bun run lint` (scripts/lint-content.ts) applies the engine's `quizErrors` (model; the longest and the shortest
+  option may each be the answer in at most a third of a quiz) and checks `#anchor` refs, for every language, before a
+  build; the engine checks again at build time.
+- Queue order wording, course-wide: submission order is the logical order barriers and semaphores refer to; by itself
+  it orders neither start nor finish, even within one queue (exception: batches of one vkQueueSubmit begin in order);
+  between queues there is not even that.
 - Repo `ssoj13/vulkan-course` (public, Pages via Actions). `task.md` (private notes) and `.omh/` are gitignored and
   were never published; the pre-publication local history was deleted.
 

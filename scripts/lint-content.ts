@@ -1,15 +1,15 @@
 /**
- * Checks the lessons of every language before a full build: each <Quiz> must follow the engine's quiz model
- * (course-kit lib/quiz.ts: four options with a `why` each, a valid answer, a `ref`), its `#anchor` refs must be headings
- * of the same page (slugged like Starlight does, with github-slugger), and at most a third of a quiz may have the
- * correct option as the longest. Prints every problem and exits non-zero if there is any.
+ * Checks the lessons of every language before a full build: each <Quiz> must pass the engine's rules (course-kit
+ * lib/quiz.ts `quizErrors`: structure, and no answer given away by option length), and its `#anchor` refs must be
+ * headings of the same page (slugged like Starlight does, with github-slugger). Prints every problem and exits
+ * non-zero if there is any.
  *
  *   bun scripts/lint-content.ts
  */
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import GithubSlugger from 'github-slugger';
-import { correctIsLongest, giveawayLimit, questionErrors, type Question } from 'course-kit/lib/quiz.ts';
+import { quizErrors, type Question } from 'course-kit/lib/quiz.ts';
 
 const docs = join(import.meta.dir, '..', 'src', 'content', 'docs');
 
@@ -48,17 +48,13 @@ for (const file of mdxFiles(docs)) {
 		problems.push(`${where}: quiz is not a JS literal (${e instanceof Error ? e.message : e})`);
 		continue;
 	}
+	for (const err of quizErrors(qs)) problems.push(`${where}: ${err}`);
 	const heads = anchors(src);
 	qs.forEach((q, i) => {
-		for (const err of questionErrors(q)) problems.push(`${where} Q${i + 1}: ${err}`);
-		if (typeof q.ref === 'string' && q.ref.startsWith('#') && !heads.has(q.ref.slice(1))) {
+		if (typeof q?.ref === 'string' && q.ref.startsWith('#') && !heads.has(q.ref.slice(1))) {
 			problems.push(`${where} Q${i + 1}: ref "${q.ref}" is not a heading (have: ${[...heads].join(', ')})`);
 		}
 	});
-	const give = qs.filter((q) => Array.isArray(q.options) && q.options.every((o) => typeof o?.text === 'string') && correctIsLongest(q));
-	if (give.length > giveawayLimit(qs.length)) {
-		problems.push(`${where}: ${give.length}/${qs.length} questions have the correct option as the longest (limit ${giveawayLimit(qs.length)})`);
-	}
 }
 
 if (problems.length) {

@@ -1,6 +1,6 @@
 ---
 title: "Queue families: the GPU's engines"
-description: Graphics, compute, transfer - how queue families map to hardware engines inside the GPU.
+description: Graphics, compute, transfer - how queue families relate to the hardware engines inside the GPU.
 ---
 
 import { Aside } from '@astrojs/starlight/components';
@@ -8,21 +8,29 @@ import MindMap from 'course-kit/components/MindMap.astro';
 import Quiz from 'course-kit/components/Quiz.astro';
 import Step from '../../../components/Step.astro';
 
-In lesson 2 we said work is submitted to a **queue**. A GPU usually offers several kinds of queues, because inside the
-chip there are several independent **engines**: the big graphics/compute engine, copy engines that move memory, video
-encoders and decoders. Vulkan groups queues of the same kind into **queue families**.
+In [talking to the GPU](lesson:talking-to-gpu) we said work is submitted to a **queue**. A GPU usually offers several
+kinds of queues, because inside the chip there are several independent **engines**: the big graphics/compute engine,
+copy engines that move memory, video encoders and decoders. Vulkan groups queues of the same kind into **queue
+families**.
 
 ## Where this fits
 
-This lesson connects the **Vulkan API** layer to the **hardware** engines from lessons 1-2. Before: the
-[physical device](lesson:physical-devices) we picked. After: the logical device, which creates queues from the
-families we choose here. The chain:
+This lesson connects the **Vulkan API** layer to the **hardware** engines from the [GPU](lesson:gpu) and
+[talking to the GPU](lesson:talking-to-gpu) lessons. Before: the [physical device](lesson:physical-devices) we picked.
+After: the [logical device](lesson:logical-device), which creates queues from the families we choose here. The chain:
 
-`VkPhysicalDevice → queue family (a kind of engine) → VkQueue (one line of work) → command processor / engine`
+`VkPhysicalDevice → queue family (queues with the same flags) → VkQueue (one line of work) → command processor / engine`
 
 A queue family is a property of a physical device, read like features and limits; a queue is built on a family and
-belongs to the logical device. Like departments in a studio, each family takes only the kinds of jobs its flags
-allow.
+belongs to the logical device. Like departments in a studio, each family takes the kinds of jobs its flags allow (plus
+copies on graphics and compute families, as we will see).
+
+## What a queue family is
+
+A **queue family** is a group of queues of one GPU with identical capabilities: the same flags, the same timestamp
+support. Its flags reflect a *kind* of engine - "this can draw", "this can only copy" - but Vulkan does not say which
+hardware engine stands behind which family: that mapping is the driver's business, and several families may share one
+engine.
 
 ## Asking for the families
 
@@ -38,7 +46,8 @@ Each family reports:
 
 ## A real GPU
 
-This is what step 04 printed on the RTX 3080 Ti of the development machine:
+This is what step 04 printed on the RTX 3080 Ti of the development machine, rearranged as a table (timestamp bits
+left out):
 
 | family | queues | flags |
 | --- | --- | --- |
@@ -57,8 +66,8 @@ How to read it:
 - **Family 2** computes but cannot draw: **async compute**. Compute work here can overlap with rendering.
 - **Families 3-5** feed the video and optical-flow hardware.
 
-Vulkan does not say which hardware unit backs which family - that is the driver's business - but the flags make the
-intent clear. Other GPUs show different tables: some integrated GPUs have a single family that does everything.
+Vulkan does not say which hardware unit backs which family - that is the driver's business, and several families may
+share one engine - but the flags make the intent clear. Other GPUs show different tables: some integrated GPUs have a single family that does everything.
 
 <Aside type="note" title="Graphics and compute queues can always copy">
 The spec allows a family with `GRAPHICS` or `COMPUTE` to leave out the `TRANSFER` flag: copy commands work on such
@@ -83,11 +92,13 @@ dailies. Each has its own queue of jobs and they work at the same time. Queue fa
 
 ## Underneath
 
-- Each queue you submit to is a stream that the GPU's command processor (lesson 2) or a dedicated engine front end
-  reads from. Multiple queues let independent work overlap instead of waiting in one line.
-- Different queues - even two queues of the same family - run **in parallel and unordered** relative to each other;
-  priorities do not create an order. As soon as two queues touch the same resource, you need synchronization between
-  them - a topic for the synchronization module.
+- Each queue you submit to is a stream that the GPU's command processor ([talking to the GPU](lesson:talking-to-gpu))
+  or a dedicated engine front end reads from. Multiple queues let independent work overlap instead of waiting in one line.
+- Submission order within one queue is the *logical* order that barriers and semaphores refer to; by itself it
+  guarantees neither the order in which work starts nor the order in which it finishes. Between different queues -
+  even two queues of the same family, which **may run in parallel** - there is not even that order, and priorities do
+  not create one. As soon as two pieces of work touch the same resource, you need explicit synchronization - a topic
+  for the synchronization module.
 
 <Quiz
 	questions={[
@@ -95,8 +106,8 @@ dailies. Each has its own queue of jobs and they work at the same time. Queue fa
 			q: 'What is a queue family?',
 			options: [
 				{
-					text: 'Queues with the same capabilities, backed by one engine kind',
-					why: 'Each family is reported by the physical device and groups queues with identical flags, such as the graphics family or a copy-only family.',
+					text: 'Queues of one GPU with identical capabilities',
+					why: 'Each family is reported by the physical device and groups queues with identical flags, such as the graphics family or a copy-only family. The flags reflect a kind of engine, but which engine backs a family is up to the driver, and several families may share one.',
 				},
 				{
 					text: 'All queues of all GPUs in the machine, grouped by vendor',
@@ -112,7 +123,7 @@ dailies. Each has its own queue of jobs and they work at the same time. Queue fa
 				},
 			],
 			answer: 0,
-			ref: '#asking-for-the-families',
+			ref: '#what-a-queue-family-is',
 		},
 		{
 			q: 'Why would you use a family that only has the TRANSFER flag?',
@@ -123,7 +134,7 @@ dailies. Each has its own queue of jobs and they work at the same time. Queue fa
 				},
 				{
 					text: 'To copy on the copy engines while rendering continues',
-					why: 'A dedicated transfer family lets uploads, such as background texture streaming, run on the copy (DMA) engines at the same time as rendering on family 0.',
+					why: 'A dedicated transfer family lets uploads, such as background texture streaming, run on the copy (DMA) engines while family 0 renders, if the hardware overlaps them.',
 				},
 				{
 					text: 'Presenting images to a window requires such a queue',

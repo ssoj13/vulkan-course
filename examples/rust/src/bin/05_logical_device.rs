@@ -149,71 +149,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         chosen.device_name_as_c_str()?.to_string_lossy()
     );
 
-    // Every queue belongs to a family. The GPU reports how many queues each
-    // family has and what they can do; we have to look, because the layout
-    // differs per vendor (NVIDIA, AMD and Intel expose very different sets).
+    // Step 04, reduced to what this step needs: the first family with GRAPHICS
+    // (step 04 explains why that is enough for rendering).
     // SAFETY: `physical_device` was enumerated from this instance.
     let families = unsafe { instance.get_physical_device_queue_family_properties(physical_device) };
-
-    // Flags are a bitmask; a family may have several capabilities at once.
-    let known_flags = [
-        (vk::QueueFlags::GRAPHICS, "GRAPHICS"),
-        (vk::QueueFlags::COMPUTE, "COMPUTE"),
-        (vk::QueueFlags::TRANSFER, "TRANSFER"),
-        (vk::QueueFlags::SPARSE_BINDING, "SPARSE_BINDING"),
-        (vk::QueueFlags::PROTECTED, "PROTECTED"),
-        (vk::QueueFlags::VIDEO_DECODE_KHR, "VIDEO_DECODE"),
-        (vk::QueueFlags::VIDEO_ENCODE_KHR, "VIDEO_ENCODE"),
-        (vk::QueueFlags::OPTICAL_FLOW_NV, "OPTICAL_FLOW"),
-    ];
-    println!("\n{} queue families:", families.len());
-    for (index, family) in families.iter().enumerate() {
-        let flags: Vec<&str> = known_flags
-            .iter()
-            .filter(|(flag, _)| family.queue_flags.contains(*flag))
-            .map(|(_, name)| *name)
-            .collect();
-        // timestamp_valid_bits == 0 means this family cannot write GPU timestamps.
-        println!(
-            "  family {index}: {} queue(s), timestamp bits {}, [{}]",
-            family.queue_count,
-            family.timestamp_valid_bits,
-            flags.join(" | ")
-        );
-    }
-
-    // Pick families by capability. Our main family needs GRAPHICS. Only TRANSFER
-    // is implied by GRAPHICS/COMPUTE (the spec makes that bit optional for such
-    // families); COMPUTE on a graphics family is not implied for every family -
-    // the spec only guarantees that if graphics is supported at all, at least
-    // one family supports graphics AND compute. On desktop GPUs the first
-    // graphics family is that one, which is all we need for rendering.
     let graphics_family = families
         .iter()
         .position(|f| f.queue_flags.contains(vk::QueueFlags::GRAPHICS))
         .ok_or("No graphics queue family")?;
-    println!("\nGraphics family: {graphics_family}");
-
-    // Dedicated queues map to separate DMA / compute hardware, so uploads and
-    // async compute can overlap with rendering. Not every GPU has them.
-    let transfer_only = families.iter().position(|f| {
-        f.queue_flags.contains(vk::QueueFlags::TRANSFER)
-            && !f
-                .queue_flags
-                .intersects(vk::QueueFlags::GRAPHICS | vk::QueueFlags::COMPUTE)
-    });
-    let compute_only = families.iter().position(|f| {
-        f.queue_flags.contains(vk::QueueFlags::COMPUTE)
-            && !f.queue_flags.contains(vk::QueueFlags::GRAPHICS)
-    });
-    match transfer_only {
-        Some(i) => println!("Dedicated transfer family: {i}"),
-        None => println!("No dedicated transfer family"),
-    }
-    match compute_only {
-        Some(i) => println!("Async compute family: {i}"),
-        None => println!("No async compute family"),
-    }
+    println!("Graphics family: {graphics_family}");
 
     // #region queue-create-info
     // Queues are not created one by one: for each family we ask for N queues

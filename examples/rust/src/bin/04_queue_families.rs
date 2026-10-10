@@ -189,10 +189,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // #region find-graphics
     // Pick families by capability. Our main family needs GRAPHICS. Only TRANSFER
     // is implied by GRAPHICS/COMPUTE (the spec makes that bit optional for such
-    // families); COMPUTE on a graphics family is not implied for every family -
-    // the spec only guarantees that if graphics is supported at all, at least
-    // one family supports graphics AND compute. On desktop GPUs the first
-    // graphics family is that one, which is all we need for rendering.
+    // families); COMPUTE on a graphics family is not implied. The spec only
+    // promises: "If an implementation exposes any queue family that supports
+    // graphics operations, at least one queue family of at least one physical
+    // device exposed by the implementation must support both graphics and
+    // compute operations" - per implementation, not per GPU. On desktop GPUs
+    // the first graphics family also has COMPUTE; rendering needs only GRAPHICS.
     let graphics_family = families
         .iter()
         .position(|f| f.queue_flags.contains(vk::QueueFlags::GRAPHICS))

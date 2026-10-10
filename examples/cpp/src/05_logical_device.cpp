@@ -26,8 +26,9 @@ VKAPI_ATTR vk::Bool32 VKAPI_CALL debugCallback(vk::DebugUtilsMessageSeverityFlag
                                                vk::DebugUtilsMessageTypeFlagsEXT type,
                                                const vk::DebugUtilsMessengerCallbackDataEXT* data, void* /*userData*/) {
     // pMessage is optional in the spec, so check it. Nothing may throw out of here:
-    // exceptions must not unwind through the C loader/layer frames that called
-    // us, so std::println (which can throw) is wrapped and any failure ignored.
+    // the layer calls us through Vulkan's C ABI (VKAPI_CALL), and exceptions must
+    // not unwind through its frames, so std::println (which can throw) is wrapped
+    // and any failure ignored.
     try {
         // Same format as the Rust examples: [LEVEL][KIND] message.
         const char* level = severity == vk::DebugUtilsMessageSeverityFlagBitsEXT::eError     ? "ERROR"
@@ -91,6 +92,11 @@ try {
     if (devices.empty()) {
         throw std::runtime_error("No Vulkan-capable GPU found");
     }
+    std::println("Found {} GPU(s)", devices.size());
+    // Step 03 printed every property, feature and limit; here we only list names.
+    for (size_t i = 0; i < devices.size(); ++i) {
+        std::println("GPU {}: {}", i, devices[i].getProperties().deviceName.data());
+    }
     // Eligible = a Vulkan 1.4 device with dynamicRendering and synchronization2
     // (the two features this textbook relies on: dynamic rendering replaces
     // render passes, synchronization2 is the modern barrier API). Among eligible
@@ -138,9 +144,10 @@ try {
         throw std::runtime_error("No GPU supports Vulkan 1.4 with dynamicRendering and synchronization2");
     }
     const vk::raii::PhysicalDevice& physicalDevice = *best;
-    std::println("Picked: {}", physicalDevice.getProperties().deviceName.data());
+    std::println("\nPicked: {}", physicalDevice.getProperties().deviceName.data());
 
-    // ---- Step 04: find the graphics queue family ----
+    // ---- Step 04, reduced to what this step needs: the first family with GRAPHICS ----
+    // (step 04 explains why that is enough for rendering)
     const std::vector<vk::QueueFamilyProperties> families = physicalDevice.getQueueFamilyProperties();
     const auto graphicsIt                                 = std::ranges::find_if(families, [](const auto& f) {
         return static_cast<bool>(f.queueFlags & vk::QueueFlagBits::eGraphics);
@@ -149,7 +156,7 @@ try {
         throw std::runtime_error("GPU has no graphics queue family");
     }
     const auto graphicsFamily = static_cast<uint32_t>(graphicsIt - families.begin());
-    std::println("Graphics queue family: {}", graphicsFamily);
+    std::println("Graphics family: {}", graphicsFamily);
 
     // ---- Step 05: logical device ----
 
@@ -192,14 +199,14 @@ try {
         .pQueueCreateInfos    = &queueInfo,
     };
     vk::raii::Device device(physicalDevice, deviceInfo);
-    std::println("Logical device created");
+    std::println("\nVkDevice created");
     // #endregion
 
     // #region get-queue
     // The queue was created together with the device; here we only fetch its
     // handle by (family index, queue index within the family).
     vk::raii::Queue queue(device, graphicsFamily, 0);
-    std::println("Got graphics queue (family {}, index 0)", graphicsFamily);
+    std::println("Graphics queue: {}", static_cast<const void*>(static_cast<VkQueue>(*queue)));
     // #endregion
 
     // #region cleanup
