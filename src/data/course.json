@@ -1,0 +1,38 @@
+{
+  "id": "vulkan-course",
+  "title": "Vulkan from Zero",
+  "description": "An interactive, visual Vulkan course for graphics people: every object, frame and barrier you can see and step through, with Rust (ash) and C++ (Vulkan-Hpp) code.",
+  "modules": [
+    {
+      "slug": "foundations",
+      "title": "Foundations",
+      "summary": "What a GPU is, how a program gets work onto it, why Vulkan is explicit, and the map of every Vulkan object.",
+      "lessons": [
+        { "slug": "gpu", "title": "What a GPU is", "summary": "Thousands of small cores, its own memory, and why it is fast at pixels and slow at decisions." },
+        { "slug": "talking-to-gpu", "title": "How a program talks to the GPU", "short": "Talking to the GPU", "summary": "Application, driver, command buffers and queues: the path every draw call takes." },
+        { "slug": "why-vulkan", "title": "Why Vulkan exists", "summary": "OpenGL's hidden state machine versus Vulkan's explicit objects, and what you pay and get for it." },
+        { "slug": "object-map", "title": "The map of Vulkan objects", "short": "Object map", "summary": "Every object of a Vulkan program on one map: who creates whom, and in what order." }
+      ]
+    },
+    {
+      "slug": "instance",
+      "title": "Instance",
+      "summary": "Install the tools, create the first Vulkan object and turn on the validation layers that will catch our mistakes.",
+      "lessons": [
+        { "slug": "toolchain", "title": "Toolchain: SDK, Rust and C++ projects", "short": "Toolchain", "summary": "Vulkan SDK, vulkaninfo, vkconfig, and the two example projects: Rust with ash, C++ with Vulkan-Hpp." },
+        { "slug": "loader-and-instance", "title": "The loader and VkInstance", "short": "Loader and instance", "summary": "How the Vulkan loader finds drivers, and what an instance, layers and extensions are." },
+        { "slug": "validation", "title": "Validation layers and the debug messenger", "short": "Validation layers", "summary": "Layers that check every call against the spec, and how their messages reach our code." }
+      ]
+    },
+    {
+      "slug": "devices",
+      "title": "Devices and queues",
+      "summary": "Pick a GPU, learn what it can do, find its engines (queue families) and open a logical device with queues.",
+      "lessons": [
+        { "slug": "physical-devices", "title": "Physical devices: properties, features, limits", "short": "Physical devices", "summary": "Enumerating GPUs and reading what each one is and can do." },
+        { "slug": "queue-families", "title": "Queue families: the GPU's engines", "short": "Queue families", "summary": "Graphics, compute, transfer: how queue families map to hardware engines inside the GPU." },
+        { "slug": "logical-device", "title": "Logical device and queues", "short": "Logical device", "summary": "Opening a VkDevice with the features and queues we chose, and getting VkQueue handles." }
+      ]
+    }
+  ]
+}

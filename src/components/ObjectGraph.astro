@@ -1,0 +1,88 @@
+---
+/**
+ * Vulkan object tree, as a map or as a create/destroy exercise (ObjectGraphView island).
+ *   <ObjectGraph />                                          the whole map
+ *   <ObjectGraph scope={['instance', 'debug-messenger', ...]} mode="build" />   exercise on a subset
+ * objects.json is validated here (bad data fails the build); the layout is computed at build time.
+ */
+import ObjectGraphView from './ObjectGraphView.tsx';
+import { OBJECTS, labelOf, obj, objectErrors } from '../lib/objects';
+import { canvasHeight, layout } from 'course-kit/lib/layout';
+import { graph } from 'course-kit/lib/terms';
+import { resolveLink } from 'course-kit/lib/course';
+
+interface Props {
+	mode?: 'map' | 'build';
+	/** Object ids to show (default: all). Parents outside the scope are left out of the picture. */
+	scope?: string[];
+	caption?: string;
+}
+
+const errs = objectErrors(new Set(graph.terms.map((t) => t.id)));
+if (errs.length) throw new Error(`objects.json is invalid:\n  - ${errs.join('\n  - ')}`);
+
+const { mode = 'map', caption } = Astro.props;
+const scope = Astro.props.scope ?? OBJECTS.map((o) => o.id);
+scope.forEach((id) => obj(id));
+const inScope = new Set(scope);
+
+// Parent -> child, so creation flows top to bottom and the instance sits at the top.
+const edges = scope.flatMap((id) => obj(id).parents.filter((p) => inScope.has(p.id)).map((p) => ({ from: p.id, to: id, optional: p.optional === true })));
+// The device parents most objects; in one rank they would make the map too wide to read. Objects of the later
+// stages hang one rank lower, which turns one long row into two shorter ones.
+const LOWER = new Set(['memory', 'images', 'descriptors', 'pipeline']);
+const placed = layout({
+	terms: scope.map((id) => ({ id, label: labelOf(obj(id)) })),
+	edges: edges.map((e) => ({
+		from: e.from,
+		to: e.to,
+		type: 'built-on' as const,
+		minlen: e.from === 'device' && LOWER.has(obj(e.to).stage) ? 2 : 1,
+	})),
+});
+const nodes = placed.nodes.map((n) => ({ ...n, w: n.w + 24 }));
+const height = canvasHeight({ width: Math.max(...nodes.map((n) => n.x + n.w)), height: placed.height });
+const termHref = Object.fromEntries(scope.flatMap((id) => (obj(id).term ? [[obj(id).term!, resolveLink(`term:${obj(id).term}`)!]] : [])));
+---
+
+<figure class="vk-objgraph not-content">
+	<div style={`min-height:${height + (mode === 'build' ? 330 : 140)}px`}>
+		<ObjectGraphView client:only="react" mode={mode} nodes={nodes} edges={edges} height={height} termHref={termHref} />
+	</div>
+	{caption && <figcaption>{caption}</figcaption>}
+	<details class="vk-objgraph-text">
+		<summary>These objects as text</summary>
+		<ul>
+			{
+				scope.map((id) => {
+					const o = obj(id);
+					return (
+						<li>
+							<b>{labelOf(o)}</b> — {o.call}
+							{o.parents.length > 0 && ` from ${o.parents.map((p) => labelOf(obj(p.id))).join(' + ')}`}
+							{o.destroy && `; released with ${o.destroy}`}. {o.note}
+						</li>
+					);
+				})
+			}
+		</ul>
+	</details>
+</figure>
+
+<style>
+	.vk-objgraph {
+		margin: 1.5rem 0;
+	}
+	figcaption,
+	.vk-objgraph-text summary {
+		margin-top: 0.4rem;
+		font-size: var(--sl-text-sm);
+		color: var(--sl-color-gray-3);
+	}
+	.vk-objgraph-text {
+		font-size: var(--sl-text-sm);
+	}
+	.vk-objgraph-text summary {
+		cursor: pointer;
+	}
+</style>

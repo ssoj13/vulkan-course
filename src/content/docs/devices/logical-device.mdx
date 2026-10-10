@@ -1,0 +1,129 @@
+---
+title: Logical device and queues
+description: Opening a VkDevice with the features and queues we chose, and getting VkQueue handles.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import MindMap from 'course-kit/components/MindMap.astro';
+import Quiz from 'course-kit/components/Quiz.astro';
+import Step from '../../../components/Step.astro';
+import ObjectGraph from '../../../components/ObjectGraph.astro';
+
+We have chosen a GPU and found the queue family that can draw. Now we **open** the GPU: create a **logical device**
+(`VkDevice`). Almost every object from here on - buffers, images, pipelines, command pools - is created from it.
+
+## Physical vs logical
+
+- `VkPhysicalDevice` is the GPU *as it exists*: read-only facts.
+- `VkDevice` is *our session* with that GPU: the queues we asked for, the features we turned on, the extensions we
+  enabled. Two programs on the same GPU each have their own logical device; one program could even open two.
+
+## 1. Which queues
+
+<Step file="05_logical_device" region="queue-create-info" />
+
+Queues are created **together with the device** - there is no `vkCreateQueue`. For each family we want, one
+`VkDeviceQueueCreateInfo` says how many queues and their **priorities** (0.0 to 1.0). Priorities are hints to the
+driver about which queue's work matters more; with a single queue the value does not matter, but it must be given.
+
+## 2. Which features
+
+<Step file="05_logical_device" region="enable-features" />
+
+Here we turn on the two features the course needs everywhere: **dynamic rendering** and **synchronization2**. They
+became core in Vulkan 1.3, so they live in `VkPhysicalDeviceVulkan13Features` even though we target 1.4. We set the
+two flags to true and hang the struct directly onto `VkDeviceCreateInfo` through `pNext` - the specification allows
+the per-version feature structs there, so the `VkPhysicalDeviceFeatures2` wrapper we used for *querying* in lesson 8
+is not needed. Only what we enable is on: being core in 1.4 does not switch an optional feature on by itself.
+
+<Aside type="caution" title="One way or the other">
+`VkDeviceCreateInfo` also has an old `pEnabledFeatures` field for Vulkan 1.0 features. You can use it together with
+the per-version structs, but if you put `VkPhysicalDeviceFeatures2` into the chain (the other common way to enable
+1.0 features), that field must be null (`VUID-VkDeviceCreateInfo-pNext-00373`).
+</Aside>
+
+## 3. Create the device
+
+<Step file="05_logical_device" region="create-device" />
+
+Two things are *not* here on purpose:
+
+- **Device layers** - an old feature, deprecated. Layers are enabled on the instance only.
+- **Device extensions** - none yet. The first one we will need is `VK_KHR_swapchain`, to show images in a window.
+
+## 4. Get the queue
+
+<Step file="05_logical_device" region="get-queue" />
+
+The device already made the queue; we only fetch its handle by family index and queue index.
+
+## 5. Clean up
+
+<Step file="05_logical_device" region="cleanup" />
+
+`vkDeviceWaitIdle` waits until the GPU has finished everything submitted to this device. Destroying a device while the
+GPU still works on its commands is an error, so this wait is the safe way to shut down. We have not submitted anything
+yet, but the habit matters.
+
+## Build it yourself
+
+The whole first section in one exercise. Create the objects in a valid order, then destroy them all without a single
+validation error. Try the wrong order on purpose too - the messages are the real ones from the specification.
+
+<ObjectGraph
+	mode="build"
+	scope={['instance', 'debug-messenger', 'physical-device', 'device', 'queue']}
+	caption="Click an object, then Create or Destroy. Dashed boxes do not exist yet; glowing ones can be created now."
+/>
+
+## The map of this lesson
+
+<MindMap />
+
+## Underneath
+
+- `vkCreateDevice` is where the driver really prepares the GPU for your process. What exactly happens is up to the
+  vendor, but typically it sets up a GPU context and the hardware queues you asked for, allocates internal tables and
+  configures itself for the enabled features - which is why it takes noticeably longer than creating an instance.
+- Device-level functions (everything called with a `VkDevice`, `VkQueue` or `VkCommandBuffer`) can skip the loader's
+  dispatch: bindings like ash and Vulkan-Hpp load them with `vkGetDeviceProcAddr`, which returns the driver's (or
+  layer's) function directly. One less jump per call.
+
+<Quiz
+	questions={[
+		{
+			q: 'How are queues created?',
+			options: [
+				'With vkCreateQueue after the device exists',
+				'Together with the device, described by VkDeviceQueueCreateInfo; vkGetDeviceQueue only returns handles',
+				'By the instance',
+				'Automatically, one per queue family',
+			],
+			answer: 1,
+			explain: 'Queue creation is part of vkCreateDevice; afterwards you only retrieve the handles.',
+		},
+		{
+			q: 'Your chain contains VkPhysicalDeviceFeatures2. What must pEnabledFeatures be?',
+			options: ['A pointer to the same features', 'Null', 'A pointer to VkPhysicalDeviceVulkan13Features', 'It does not matter'],
+			answer: 1,
+			explain: 'VUID-VkDeviceCreateInfo-pNext-00373: with Features2 in the chain, pEnabledFeatures must be NULL.',
+		},
+		{
+			q: 'Why call vkDeviceWaitIdle before destroying the device?',
+			options: [
+				'To make sure the GPU has finished all submitted work that uses the device objects',
+				'To free the queues',
+				'Because the validation layer needs it',
+				'To flush the debug messenger',
+			],
+			answer: 0,
+			explain: 'Objects must not be destroyed while the GPU may still use them; waiting for idle guarantees that.',
+		},
+		{
+			q: 'Where are layers enabled in modern Vulkan?',
+			options: ['On the device', 'On each queue', 'On the instance', 'In the shader'],
+			answer: 2,
+			explain: 'Device layers are deprecated; layers are enabled at instance creation (or through vkconfig).',
+		},
+	]}
+/>

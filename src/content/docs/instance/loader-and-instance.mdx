@@ -1,0 +1,148 @@
+---
+title: The loader and VkInstance
+description: How the Vulkan loader finds drivers, and what an instance, layers and extensions are.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import MindMap from 'course-kit/components/MindMap.astro';
+import Quiz from 'course-kit/components/Quiz.astro';
+import Step from '../../../components/Step.astro';
+
+Our first program creates one object, a `VkInstance`. To understand what that object is, we first need the piece of
+software it connects us to: the **loader**.
+
+## The loader: a switchboard
+
+Your program never talks to the GPU driver directly. It talks to the **Vulkan loader** (`vulkan-1.dll`), a small
+library from Khronos that ships with every driver. At startup the loader:
+
+1. finds the installed **drivers** (one per GPU vendor - a machine can have NVIDIA and Intel at once),
+2. finds the installed **layers** - libraries that can sit between your program and the driver,
+3. routes each of your calls through the enabled layers to the right driver.
+
+```
+your program -> loader -> [layer] -> [layer] -> driver (ICD) -> GPU
+```
+
+## Layers: implicit and explicit
+
+A **layer** sees every call that passes through it. Validation, capture tools (RenderDoc), overlays (Steam, screen
+recorders) and profilers are all layers. There are two kinds:
+
+- **Explicit layers** are loaded only when the application (or `vkconfig`) asks for them by name. The validation layer
+  is explicit.
+- **Implicit layers** are loaded into *every* Vulkan program automatically, because some installed software registered
+  them.
+
+<Aside type="caution" title="A real example from the machine this course was built on">
+On Windows the loader finds layers through the registry (`HKEY_LOCAL_MACHINE\SOFTWARE\Khronos\Vulkan\ImplicitLayers`
+and `...\ExplicitLayers`). On the development machine there were **six** implicit layers: RenderDoc, Bandicam, the Epic
+Games overlay, the Steam overlay, Steam's Fossilize and Nsight Systems. All of them load into every Vulkan program on
+that PC, including ours - and Bandicam's layer even prints a warning that its API version is older than ours. That
+warning is not about our code. Each layer's JSON manifest names an environment variable that disables it, should a
+layer ever get in your way.
+</Aside>
+
+## The instance
+
+A **`VkInstance`** is your program's connection to the loader: "I am this application, I use Vulkan 1.4, and I want
+these layers and these extensions." It is the root of the object tree; everything else is created from it, directly
+or indirectly.
+
+Let us walk through step 01.
+
+### 1. Load the loader
+
+<Step file="01_instance" region="load-loader" />
+
+Before an instance exists, only a handful of **global** functions are available: create an instance, list instance
+extensions and layers, ask the loader version. Rust's `Entry` and C++'s `vk::raii::Context` hold exactly those.
+
+### 2. Say who you are
+
+<Step file="01_instance" region="app-info" />
+
+Everything here is optional except the meaning of `apiVersion`: the **highest** Vulkan version the program is written
+against. Drivers also look at application and engine names to enable per-game fixes.
+
+### 3. See what is available
+
+<Step file="01_instance" region="list-extensions" />
+
+An **extension** is optional API functionality with a name such as `VK_KHR_surface`. *Instance* extensions extend the
+loader and instance (window surfaces, debug messages); *device* extensions, which we meet in lesson 10, extend what a
+GPU can do. An extension must be **enabled at creation time**; listing it only tells you it exists.
+
+### 4. Create the instance
+
+<Step file="01_instance" region="create-instance" />
+
+This is the first appearance of the pattern from lesson 4: fill a `*CreateInfo` struct, pass it to a `create`
+function, get a handle. The bindings fill `sType` for us.
+
+### 5. Clean up
+
+<Step file="01_instance" region="cleanup" />
+
+## The map of this lesson
+
+<MindMap />
+
+## Underneath
+
+- The loader is open source ([KhronosGroup/Vulkan-Loader](https://github.com/KhronosGroup/Vulkan-Loader)). On Windows,
+  current drivers register their driver JSON manifest through the display adapter's own registry keys; the older
+  `HKEY_LOCAL_MACHINE\SOFTWARE\Khronos\Vulkan\Drivers` key is still read too (on the development machine it was empty).
+- Every instance-level call goes through the loader's **trampoline** code, then through each enabled layer, and
+  finally into the driver. Layers are chained: each one calls the next.
+- `vkCreateInstance` itself does not touch the GPU. It only sets up the loader, the layers and each driver's instance
+  state.
+
+<Quiz
+	questions={[
+		{
+			q: 'What does the Vulkan loader do?',
+			options: [
+				'Compiles shaders for the GPU',
+				'Finds installed drivers and layers and routes each call through the enabled layers to the right driver',
+				'Loads textures from disk',
+				'Is the part of the GPU that reads command buffers',
+			],
+			answer: 1,
+			explain: 'The loader is a dispatcher between the application, the layers and one or more drivers.',
+		},
+		{
+			q: 'A screen recorder installed on your PC prints a warning in your Vulkan program. Why can that happen?',
+			options: [
+				'It registered an implicit layer, which the loader inserts into every Vulkan program',
+				'It replaced vulkan-1.dll',
+				'Your program enabled it by name',
+				'It runs inside the GPU firmware',
+			],
+			answer: 0,
+			explain: 'Implicit layers are loaded automatically for all applications; explicit layers only when requested.',
+		},
+		{
+			q: 'What does apiVersion in VkApplicationInfo mean?',
+			options: [
+				'The minimum driver version required',
+				'The version of your application',
+				'The highest Vulkan version the program is written to use',
+				'The version of the loader to download',
+			],
+			answer: 2,
+			explain: 'apiVersion states the highest Vulkan API version the application uses.',
+		},
+		{
+			q: 'You listed VK_EXT_debug_utils among the instance extensions. Can you now call its functions?',
+			options: [
+				'Yes, every listed extension is active',
+				'Only if a GPU supports it',
+				'Only after creating a logical device',
+				'No - an extension must be enabled in the instance create info first',
+			],
+			answer: 3,
+			explain: 'Enumeration only reports availability; the extension must be named in ppEnabledExtensionNames at creation.',
+		},
+	]}
+/>

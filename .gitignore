@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.astro/
+examples/rust/target/
+examples/cpp/build/
+
+task.md
+.omh/

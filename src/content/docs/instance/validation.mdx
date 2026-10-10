@@ -1,0 +1,134 @@
+---
+title: Validation layers and the debug messenger
+description: Layers that check every call against the spec, and how their messages reach our code.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import MindMap from 'course-kit/components/MindMap.astro';
+import Quiz from 'course-kit/components/Quiz.astro';
+import Step from '../../../components/Step.astro';
+
+Lesson 3 said that a Vulkan driver checks nothing. Pass a wrong value and you may get a crash, a black screen, or -
+worst of all - something that works on your GPU and breaks on someone else's. This lesson turns the checks back on.
+
+## The validation layer
+
+`VK_LAYER_KHRONOS_validation` is an explicit layer from the Vulkan SDK. It sits between your program and the driver
+and checks every call against the **valid usage rules** of the specification - thousands of them, each with an id
+such as `VUID-vkDestroyInstance-instance-00629`. When a rule is broken it reports which one, quoting the spec.
+
+It is a development tool: it makes every call much slower. Ship without it.
+
+## Getting its messages: the debug messenger
+
+The layer needs somewhere to send its reports. That is a **debug messenger** (`VkDebugUtilsMessengerEXT`): an object
+that calls a function of ours for every message. It belongs to the instance extension `VK_EXT_debug_utils`, so that
+extension must be enabled too.
+
+Step 02 adds four things to step 01.
+
+### 1. Check that the layer exists
+
+<Step file="02_validation" region="layers-available" />
+
+Layers are installed separately from the driver, so a user's machine may not have this one. Requesting a missing layer
+makes instance creation fail, so we check first and give a helpful error.
+
+### 2. The callback
+
+<Step file="02_validation" region="debug-callback" />
+
+The layer calls this function with a **severity** (verbose, info, warning, error), a **type** (general, validation,
+performance) and the message text. The callback must return `false`; returning `true` is reserved for layer
+development.
+
+### 3. What we want to hear about
+
+<Step file="02_validation" region="messenger-info" />
+
+We ask for warnings and errors only. Info and verbose messages are mostly the loader describing itself - over a
+hundred lines per run - and they would bury the one line that matters.
+
+### 4. Create the instance with the layer, then the messenger
+
+<Step file="02_validation" region="create-with-validation" />
+
+There is a chicken-and-egg problem: the messenger is created *from* the instance, so who reports problems during
+`vkCreateInstance` and `vkDestroyInstance`? The answer is the `pNext` chain from lesson 4: we hang the same messenger
+create info onto the instance create info, and the layer uses it for those two calls.
+
+<Step file="02_validation" region="create-messenger" />
+
+<Step file="02_validation" region="cleanup" />
+
+<Aside type="tip" title="Try it: break a rule on purpose">
+In the Rust program, comment out the `destroy_debug_utils_messenger` line (in C++ the RAII destruction order makes
+this mistake impossible - one reason to like RAII). Run it: when the instance is destroyed with the messenger still
+alive, the layer reports `VUID-vkDestroyInstance-instance-00629` - all child objects of an instance must be destroyed
+before the instance. That id is your search key in the specification.
+</Aside>
+
+This is the real output of that experiment (handles shortened):
+
+```txt
+[ERROR][VALIDATION] vkDestroyInstance(): Object Tracking - For VkInstance 0x17b3..., VkDebugUtilsMessengerEXT
+0x10000000001 has not been destroyed.
+The Vulkan spec states: All child objects that were created with instance or with a VkPhysicalDevice retrieved
+from it, and that can be destroyed or freed, must have been destroyed or freed prior to destroying instance
+(https://docs.vulkan.org/spec/latest/chapters/initialization.html#VUID-vkDestroyInstance-instance-00629)
+```
+
+Read it from the end: the **VUID** names the rule, "The Vulkan spec states" quotes it, and the first line says which
+objects broke it.
+
+## No code? Use vkconfig
+
+The **Vulkan Configurator** (`vkconfig`) can enable the validation layer for any Vulkan program, including ones you
+did not write, and print its messages to a console or file. Handy for checking a tool or a game - and for checking
+your own program without touching the code.
+
+## The map of this lesson
+
+<MindMap />
+
+## Underneath
+
+- The validation layer is one big library that intercepts every Vulkan entry point. It tracks the state of every
+  object (which ones exist, which are in use by the GPU, what layout every image is in), which is why it costs so much
+  time and memory.
+- Besides the core checks it has optional modes: **synchronization validation** (finds missing barriers), **GPU-assisted
+  validation** (instruments shaders to catch out-of-bounds access) and **best practices** (performance advice). They are
+  switched on in vkconfig or through `VkValidationFeaturesEXT`.
+
+<Quiz
+	questions={[
+		{
+			q: 'Why is the validation layer not enabled in a shipped program?',
+			options: [
+				'It is illegal to distribute',
+				'It only works with debug builds of the driver',
+				'It checks every call against the spec and slows the program down a lot',
+				'It disables the GPU',
+			],
+			answer: 2,
+			explain: 'The layer tracks all object state and checks every call; that costs a lot of CPU time and memory.',
+		},
+		{
+			q: 'Why is the messenger create info also chained into the instance create info?',
+			options: [
+				'So that problems in vkCreateInstance and vkDestroyInstance are reported, when the messenger object cannot exist yet',
+				'Because the messenger cannot be created without it',
+				'To make the instance creation faster',
+				'To enable the validation layer',
+			],
+			answer: 0,
+			explain: 'The messenger object is made from the instance; the pNext copy covers the instance creation and destruction calls themselves.',
+		},
+		{
+			q: 'Which extension provides the debug messenger?',
+			options: ['VK_KHR_surface', 'VK_EXT_debug_utils', 'VK_KHR_swapchain', 'VK_LAYER_KHRONOS_validation'],
+			answer: 1,
+			explain: 'VkDebugUtilsMessengerEXT belongs to the instance extension VK_EXT_debug_utils; VK_LAYER_KHRONOS_validation is a layer, not an extension.',
+		},
+	]}
+/>

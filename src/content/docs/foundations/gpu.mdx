@@ -1,0 +1,101 @@
+---
+title: What a GPU is
+description: Thousands of small cores, their own memory, and why a GPU is fast at pixels and slow at decisions.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import MindMap from 'course-kit/components/MindMap.astro';
+import Quiz from 'course-kit/components/Quiz.astro';
+
+Vulkan is a way to give work to a GPU. Before we talk to it, let us see what kind of machine it is, because almost
+every strange rule in Vulkan comes from the shape of this machine.
+
+## Two kinds of processors
+
+A **CPU** has a few big, clever cores (8–24 on a desktop). Each core runs one long, branchy program very fast: it
+predicts branches, reorders instructions, and has large caches so it rarely waits for memory. It is a team of a few
+senior artists who can each handle any shot.
+
+A **GPU** has thousands of small, simple cores. They are bad at decisions and great at doing *the same thing to a lot
+of data*. It is a render farm: each node is modest, but there are thousands of them and they all run the same job.
+
+<Aside type="tip" title="You already think this way">
+A Houdini **Point Wrangle** is GPU thinking. You write one small VEX snippet; Houdini runs it for every point, with
+`@P` and `@ptnum` different each time. A pixel shader is exactly that: one small program, run for every pixel.
+</Aside>
+
+## Lockstep groups
+
+The cores are not independent. They are grouped into bundles that execute **the same instruction at the same time**
+on different data: a *warp* of 32 threads on NVIDIA, a *wavefront* of 32 or 64 on AMD. The groups live inside bigger
+blocks: NVIDIA calls them **SMs** (streaming multiprocessors), AMD calls them **CUs** (compute units).
+
+Lockstep explains why GPUs dislike branches. If half of a warp takes the `if` and half the `else`, the warp runs
+*both* paths one after another, with half its lanes switched off each time. Same work, twice the time.
+
+## Its own memory
+
+A discrete GPU sits on a card with its own memory, **VRAM**. For example, an RTX 3080 Ti has 12 GB of GDDR6X at
+about 912 GB/s; the PCIe 4.0 x16 link to the CPU moves about 32 GB/s. So data that lives in VRAM is cheap for the GPU,
+and data that has to cross from the CPU is expensive. Vulkan makes you decide **where every buffer lives** for exactly
+this reason.
+
+GPUs hide memory latency differently from CPUs: instead of big caches, an SM keeps many warps in flight and switches
+to another one whenever the current one waits for memory. That is why GPUs want *lots* of parallel work.
+
+## What this means for Vulkan
+
+| GPU fact | What Vulkan makes you do |
+| --- | --- |
+| Runs the same program on lots of data | Pack work into big batches (draws, dispatches), not many tiny calls |
+| Has its own memory | Choose memory types, copy data across explicitly |
+| Runs in parallel with the CPU | Synchronize explicitly: the CPU must know when the GPU is done |
+| Is a separate device with its own engines | Submit work to queues, not "call functions on the GPU" |
+
+## The map of this lesson
+
+<MindMap />
+
+## Underneath
+
+- A frame of a game is millions of pixel-shader invocations, grouped into warps and spread over all SMs.
+- The GPU does not fetch work by itself from your program. It reads **command buffers** that the driver prepared in
+  memory. That is the next lesson.
+
+<Quiz
+	questions={[
+		{
+			q: 'Why is a GPU fast at shading pixels?',
+			options: [
+				'Each of its cores is much faster than a CPU core',
+				'It runs the same small program on many pixels at once on thousands of simple cores',
+				'It has larger caches than a CPU',
+				'It predicts branches better than a CPU',
+			],
+			answer: 1,
+			explain: 'GPU cores are simpler and slower than CPU cores; the speed comes from running thousands of them in parallel on the same program.',
+		},
+		{
+			q: 'Half of a warp takes an if-branch and half takes the else-branch. What happens?',
+			options: [
+				'The warp splits into two independent warps',
+				'The GPU picks the faster branch for all threads',
+				'The warp executes both branches one after another, masking off the inactive lanes',
+				'The driver recompiles the shader without the branch',
+			],
+			answer: 2,
+			explain: 'A warp executes one instruction stream in lockstep, so diverging paths run in sequence with some lanes idle.',
+		},
+		{
+			q: 'Why does Vulkan make you choose where a buffer lives?',
+			options: [
+				'Because VRAM is fast for the GPU and data crossing PCIe from the CPU is far slower',
+				'Because VRAM is smaller than a CPU cache',
+				'Because the CPU cannot write to memory at all',
+				'Because OpenGL did it the same way',
+			],
+			answer: 0,
+			explain: 'Device memory is fast for the GPU; host memory reached over PCIe is much slower, so placement matters and Vulkan makes it explicit.',
+		},
+	]}
+/>

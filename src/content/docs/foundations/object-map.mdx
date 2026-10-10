@@ -1,0 +1,119 @@
+---
+title: The map of Vulkan objects
+description: Every object of a Vulkan program on one map - who creates whom, and in what order.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import MindMap from 'course-kit/components/MindMap.astro';
+import Quiz from 'course-kit/components/Quiz.astro';
+import ObjectGraph from '../../../components/ObjectGraph.astro';
+
+A Vulkan program is a tree of **objects**. Learning Vulkan is mostly learning this tree: what each object is, what it
+is made from, and when it must be destroyed. Here is the whole tree. Click any box.
+
+<ObjectGraph caption="Every object of the course. Colors show the part of the course that introduces it." />
+
+## How to read the map
+
+- **An arrow from A to B** means "B is made from A": you pass A when you create B. A device is made from a physical
+  device; a command buffer is made from a command pool.
+- **Top to bottom is creation order.** You cannot create a box before the boxes that point to it.
+- **Bottom to top is destruction order.** Children must be destroyed before their parents. Destroying the device while
+  a buffer made from it is alive is an error.
+
+<Aside type="tip" title="CG analogy">
+It is a Houdini network where every node is created by you and never deleted automatically. Delete an upstream node
+while downstream nodes still reference it and you get broken references - in Vulkan, a crash or garbage on screen.
+</Aside>
+
+## Handles
+
+You never hold a Vulkan object itself. You hold a **handle**: an opaque value that names an object living inside the
+loader or driver (`VkInstance`, `VkDevice`, `VkBuffer`...). There are two kinds:
+
+- **Dispatchable handles** - `VkInstance`, `VkPhysicalDevice`, `VkDevice`, `VkQueue`, `VkCommandBuffer` - are real
+  pointers. The loader uses them to find which driver should receive a call.
+- **Non-dispatchable handles** - everything else - are 64-bit values whose meaning is up to the driver.
+
+## Four ways to get an object
+
+| How | Calls | Who destroys it |
+| --- | --- | --- |
+| create | `vkCreateX` / `vkDestroyX` | you |
+| allocate from a pool | `vkAllocateX` / `vkFreeX` (or reset/destroy the pool) | you, or the pool |
+| enumerate | `vkEnumeratePhysicalDevices` | nobody - it lives as long as its parent |
+| get | `vkGetDeviceQueue`, `vkGetSwapchainImagesKHR` | nobody - its owner does |
+
+## The shape of every create call
+
+Almost every creation looks the same:
+
+```c
+VkFooCreateInfo info = {
+    .sType = VK_STRUCTURE_TYPE_FOO_CREATE_INFO, // which struct this is
+    .pNext = NULL,                              // optional chain of extension structs
+    /* ...the parameters... */
+};
+VkFoo foo;
+VkResult r = vkCreateFoo(parent, &info, NULL /* allocator */, &foo);
+```
+
+- `sType` tells the driver which struct it is looking at; `pNext` lets you hang extra structs onto it (we use that in
+  lessons 7 and 8). The Rust and C++ bindings fill `sType` for you.
+- Every call that can fail returns a `VkResult`. `VK_SUCCESS` is 0; errors are negative.
+
+## The map of this lesson
+
+<MindMap />
+
+## Underneath
+
+- Dispatchable handles start with a pointer to a **dispatch table**. When you call `vkCreateBuffer(device, ...)`, the
+  loader reads that table from `device` and jumps to the right driver's function. That is how several GPUs from
+  different vendors can work in one program.
+- Because the driver does not check anything (lesson 3), using a destroyed handle is undefined behavior: it may work,
+  crash, or corrupt something else. Validation layers catch it.
+
+<Quiz
+	questions={[
+		{
+			q: 'In what order must objects be destroyed?',
+			options: [
+				'In creation order',
+				'Children before the objects they were made from',
+				'Any order, the driver sorts it out',
+				'All at once with vkDestroyInstance',
+			],
+			answer: 1,
+			explain: 'Destroying a parent while its children live is invalid; destroy in reverse creation order.',
+		},
+		{
+			q: 'Which handle is NOT dispatchable?',
+			options: ['VkDevice', 'VkCommandBuffer', 'VkBuffer', 'VkQueue'],
+			answer: 2,
+			explain: 'Instance, physical device, device, queue and command buffer are dispatchable; buffers and all other objects use non-dispatchable handles.',
+		},
+		{
+			q: 'How do you get a VkQueue?',
+			options: [
+				'vkCreateQueue',
+				'vkAllocateQueues from a queue pool',
+				'You get it from the device with vkGetDeviceQueue; the device created it',
+				'vkEnumerateQueues on the instance',
+			],
+			answer: 2,
+			explain: 'Queues are created together with the device; vkGetDeviceQueue only returns handles to them.',
+		},
+		{
+			q: 'What is pNext for?',
+			options: [
+				'Pointing to the next object in creation order',
+				'Chaining extra structs (extensions, newer features) onto a create-info struct',
+				'Linking command buffers together',
+				'Storing the next frame index',
+			],
+			answer: 1,
+			explain: 'pNext builds a linked list of structs, so new versions and extensions can add parameters without changing old structs.',
+		},
+	]}
+/>

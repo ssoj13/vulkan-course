@@ -1,0 +1,22 @@
+---
+/**
+ * One step of the companion programs in both languages: `<Step file="01_instance" region="create-instance" />`
+ * shows examples/rust/src/bin/<file>.rs and examples/cpp/src/<file>.cpp at the same #region as tabs.
+ * Both examples use the same region names (see the README of each example project), so one name addresses both.
+ */
+import CodeTabs from 'course-kit/components/CodeTabs.astro';
+
+interface Props {
+	file: string;
+	region: string;
+}
+
+const { file, region } = Astro.props;
+---
+
+<CodeTabs
+	items={{
+		'Rust (ash)': `examples/rust/src/bin/${file}.rs#${region}`,
+		'C++ (Vulkan-Hpp)': `examples/cpp/src/${file}.cpp#${region}`,
+	}}
+/>

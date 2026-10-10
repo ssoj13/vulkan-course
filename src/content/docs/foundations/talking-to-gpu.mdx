@@ -1,0 +1,90 @@
+---
+title: How a program talks to the GPU
+description: Application, driver, command buffers and queues - the path every draw call takes.
+---
+
+import { Aside, Steps } from '@astrojs/starlight/components';
+import MindMap from 'course-kit/components/MindMap.astro';
+import Quiz from 'course-kit/components/Quiz.astro';
+
+Your program runs on the CPU. The GPU is a separate machine on the other side of a PCIe cable. It cannot call your
+functions and you cannot call its. So how does a "draw" ever reach it?
+
+## The path of one draw
+
+<Steps>
+
+1. **Your application** calls a graphics API function, for example "draw 3 vertices with this pipeline".
+
+2. **The driver** (vendor code from NVIDIA, AMD, Intel...) translates the call into the GPU's own binary command
+   format and writes it into a block of memory. Nothing is sent yet.
+
+3. Many such commands pile up into a **command buffer**: a recorded list of work, like a shot list.
+
+4. The command buffer is **submitted to a queue**. The operating system's kernel-mode driver schedules it for the GPU.
+
+5. On the GPU, the **command processor** (the GPU's front end) reads the commands from memory and hands the work to
+   the shader cores and fixed-function units.
+
+</Steps>
+
+The key word is **later**. The CPU records and submits, then goes on with its life. The GPU executes when it gets
+there, often a frame or two behind. CPU and GPU run *in parallel*, like an artist submitting jobs to a render farm
+and continuing to work while the farm renders.
+
+<Aside type="tip" title="CG analogy: the render queue">
+Submitting a command buffer is like submitting a job to Deadline. You describe the job completely up front (scene,
+frames, settings), drop it in a queue, and get on with your day. The farm picks it up when a node is free. If you
+want the result, you must *check* that the job finished - you cannot just assume it did.
+</Aside>
+
+## Command buffers and queues
+
+- A **command buffer** is the job description: "bind this, draw that, copy this image there".
+- A **queue** is the line of submitted jobs in front of one of the GPU's engines. Jobs in one queue start in the order
+  they were submitted.
+
+In older APIs the driver built command buffers for you, behind the scenes, and decided when to submit them. In Vulkan
+**you** record command buffers and **you** submit them. That is the single biggest idea of the whole API.
+
+## The map of this lesson
+
+<MindMap />
+
+## Underneath
+
+- The driver has two halves: a **user-mode driver** inside your process (it builds the command buffers) and a
+  **kernel-mode driver** in the OS (on Windows, part of the WDDM driver model) that owns the hardware and schedules
+  submissions from all programs.
+- The GPU's command processor is itself a small processor running firmware. It parses the command stream, sets up
+  state and launches work on the shader cores.
+- Because CPU and GPU run in parallel, every resource both of them touch needs a rule about *who uses it when*. Vulkan
+  calls these rules **synchronization**, and we will meet them many times.
+
+<Quiz
+	questions={[
+		{
+			q: 'When does the GPU execute a command that the application recorded?',
+			options: [
+				'Immediately, inside the API call',
+				'Only after the application exits',
+				'At the moment the driver translates the call',
+				'Later, after the command buffer is submitted and the GPU gets to it',
+			],
+			answer: 3,
+			explain: 'Recording only writes commands into memory. Execution happens after submission, asynchronously from the CPU.',
+		},
+		{
+			q: 'What reads command buffers on the GPU side?',
+			options: ['The vertex shader', 'The command processor (GPU front end)', 'The kernel-mode driver', 'The PCIe controller'],
+			answer: 1,
+			explain: 'The command processor fetches and parses the command stream and dispatches the work to the rest of the chip.',
+		},
+		{
+			q: 'Who records command buffers in Vulkan?',
+			options: ['The application', 'The driver, automatically', 'The operating system', 'The GPU firmware'],
+			answer: 0,
+			explain: 'Recording and submitting command buffers explicitly is the core idea of Vulkan; older APIs did this implicitly inside the driver.',
+		},
+	]}
+/>

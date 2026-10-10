@@ -1,0 +1,164 @@
+{
+  "objects": [
+    {
+      "id": "instance", "handle": "VkInstance", "term": "vk-instance", "stage": "instance",
+      "how": "create", "call": "vkCreateInstance", "destroy": "vkDestroyInstance",
+      "parents": [], "onDestroy": "block", "destroyVuid": "VUID-vkDestroyInstance-instance-00629",
+      "note": "The root: our connection to the loader. Created first, destroyed last."
+    },
+    {
+      "id": "debug-messenger", "handle": "VkDebugUtilsMessengerEXT", "term": "debug-messenger", "stage": "instance",
+      "how": "create", "call": "vkCreateDebugUtilsMessengerEXT", "destroy": "vkDestroyDebugUtilsMessengerEXT",
+      "parents": [{ "id": "instance", "param": "instance", "vuid": "VUID-vkCreateDebugUtilsMessengerEXT-instance-parameter" }],
+      "requires": "VK_EXT_debug_utils",
+      "note": "Delivers validation messages to our callback. Its functions exist only if VK_EXT_debug_utils was enabled on the instance."
+    },
+    {
+      "id": "surface", "handle": "VkSurfaceKHR", "stage": "presentation",
+      "how": "create", "call": "vkCreateWin32SurfaceKHR", "destroy": "vkDestroySurfaceKHR",
+      "parents": [{ "id": "instance", "param": "instance", "vuid": "VUID-vkCreateWin32SurfaceKHR-instance-parameter" }],
+      "onDestroy": "block", "destroyVuid": "VUID-vkDestroySurfaceKHR-surface-01266",
+      "note": "The window as Vulkan sees it. Platform-specific creation call (Win32 here)."
+    },
+    {
+      "id": "physical-device", "handle": "VkPhysicalDevice", "term": "vk-physical-device", "stage": "devices",
+      "how": "enumerate", "call": "vkEnumeratePhysicalDevices",
+      "parents": [{ "id": "instance", "param": "instance", "vuid": "VUID-vkEnumeratePhysicalDevices-instance-parameter" }],
+      "note": "Not created: the instance lists the GPUs that exist. Nothing to destroy, it lives as long as the instance."
+    },
+    {
+      "id": "device", "handle": "VkDevice", "term": "vk-device", "stage": "devices",
+      "how": "create", "call": "vkCreateDevice", "destroy": "vkDestroyDevice",
+      "parents": [{ "id": "physical-device", "param": "physicalDevice", "vuid": "VUID-vkCreateDevice-physicalDevice-parameter" }],
+      "onDestroy": "block", "destroyVuid": "VUID-vkDestroyDevice-device-05137",
+      "note": "Our opened session with one GPU. Almost every other object is created from it."
+    },
+    {
+      "id": "queue", "handle": "VkQueue", "term": "vk-queue", "stage": "devices",
+      "how": "get", "call": "vkGetDeviceQueue",
+      "parents": [{ "id": "device", "param": "device", "vuid": "VUID-vkGetDeviceQueue-device-parameter" }],
+      "note": "Not created: the device made its queues at vkCreateDevice; we only fetch handles. Nothing to destroy."
+    },
+    {
+      "id": "swapchain", "handle": "VkSwapchainKHR", "stage": "presentation",
+      "how": "create", "call": "vkCreateSwapchainKHR", "destroy": "vkDestroySwapchainKHR",
+      "parents": [
+        { "id": "device", "param": "device", "vuid": "VUID-vkCreateSwapchainKHR-device-parameter" },
+        { "id": "surface", "param": "surface", "vuid": "VUID-VkSwapchainCreateInfoKHR-surface-parameter" }
+      ],
+      "onDestroy": "free",
+      "note": "A ring of images the window shows in turn. Destroying it also releases its images."
+    },
+    {
+      "id": "swapchain-image", "handle": "VkImage", "label": "VkImage (swapchain)", "isA": "image", "stage": "presentation",
+      "how": "get", "call": "vkGetSwapchainImagesKHR",
+      "parents": [{ "id": "swapchain", "param": "swapchain", "vuid": "VUID-vkGetSwapchainImagesKHR-swapchain-parameter" }],
+      "note": "Images owned by the swapchain: we get handles, the swapchain creates and destroys them."
+    },
+    {
+      "id": "image", "handle": "VkImage", "stage": "images",
+      "how": "create", "call": "vkCreateImage", "destroy": "vkDestroyImage",
+      "parents": [{ "id": "device", "param": "device", "vuid": "VUID-vkCreateImage-device-parameter" }],
+      "note": "Texels with a format and size (textures, depth, render targets). Needs memory bound to it before use."
+    },
+    {
+      "id": "image-view", "handle": "VkImageView", "stage": "presentation",
+      "how": "create", "call": "vkCreateImageView", "destroy": "vkDestroyImageView",
+      "parents": [
+        { "id": "device", "param": "device", "vuid": "VUID-vkCreateImageView-device-parameter" },
+        { "id": "image", "param": "pCreateInfo->image", "vuid": "VUID-VkImageViewCreateInfo-image-parameter" }
+      ],
+      "note": "How to look at an image: which format, mip levels and layers. Shaders and rendering use views, not images."
+    },
+    {
+      "id": "device-memory", "handle": "VkDeviceMemory", "stage": "memory",
+      "how": "allocate", "call": "vkAllocateMemory", "destroy": "vkFreeMemory",
+      "parents": [{ "id": "device", "param": "device", "vuid": "VUID-vkAllocateMemory-device-parameter" }],
+      "note": "A raw block of GPU-visible memory from one memory type. Buffers and images are bound into it."
+    },
+    {
+      "id": "buffer", "handle": "VkBuffer", "stage": "memory",
+      "how": "create", "call": "vkCreateBuffer", "destroy": "vkDestroyBuffer",
+      "parents": [{ "id": "device", "param": "device", "vuid": "VUID-vkCreateBuffer-device-parameter" }],
+      "note": "A linear array of bytes (vertices, indices, uniforms). Needs memory bound to it before use."
+    },
+    {
+      "id": "sampler", "handle": "VkSampler", "stage": "images",
+      "how": "create", "call": "vkCreateSampler", "destroy": "vkDestroySampler",
+      "parents": [{ "id": "device", "param": "device", "vuid": "VUID-vkCreateSampler-device-parameter" }],
+      "note": "Filtering and addressing rules for reading a texture (linear, mipmaps, repeat)."
+    },
+    {
+      "id": "shader-module", "handle": "VkShaderModule", "stage": "pipeline",
+      "how": "create", "call": "vkCreateShaderModule", "destroy": "vkDestroyShaderModule",
+      "parents": [{ "id": "device", "param": "device", "vuid": "VUID-vkCreateShaderModule-device-parameter" }],
+      "note": "Compiled SPIR-V shader code. Only needed until the pipelines using it are created."
+    },
+    {
+      "id": "descriptor-set-layout", "handle": "VkDescriptorSetLayout", "stage": "descriptors",
+      "how": "create", "call": "vkCreateDescriptorSetLayout", "destroy": "vkDestroyDescriptorSetLayout",
+      "parents": [{ "id": "device", "param": "device", "vuid": "VUID-vkCreateDescriptorSetLayout-device-parameter" }],
+      "note": "The shape of a group of shader resources: binding numbers and their types."
+    },
+    {
+      "id": "pipeline-layout", "handle": "VkPipelineLayout", "stage": "pipeline",
+      "how": "create", "call": "vkCreatePipelineLayout", "destroy": "vkDestroyPipelineLayout",
+      "parents": [
+        { "id": "device", "param": "device", "vuid": "VUID-vkCreatePipelineLayout-device-parameter" },
+        { "id": "descriptor-set-layout", "param": "pCreateInfo->pSetLayouts", "vuid": "VUID-VkPipelineLayoutCreateInfo-pSetLayouts-parameter", "optional": true }
+      ],
+      "note": "All resource slots a pipeline can see: its descriptor set layouts plus push constant ranges."
+    },
+    {
+      "id": "pipeline", "handle": "VkPipeline", "stage": "pipeline",
+      "how": "create", "call": "vkCreateGraphicsPipelines", "destroy": "vkDestroyPipeline",
+      "parents": [
+        { "id": "device", "param": "device", "vuid": "VUID-vkCreateGraphicsPipelines-device-parameter" },
+        { "id": "pipeline-layout", "param": "pCreateInfos->layout", "vuid": "VUID-VkGraphicsPipelineCreateInfo-layout-06602" },
+        { "id": "shader-module", "param": "pCreateInfos->pStages->module", "vuid": "VUID-VkPipelineShaderStageCreateInfo-module-parameter" }
+      ],
+      "note": "The whole GPU state for a draw, compiled ahead of time: shaders, vertex format, blending, depth."
+    },
+    {
+      "id": "descriptor-pool", "handle": "VkDescriptorPool", "stage": "descriptors",
+      "how": "create", "call": "vkCreateDescriptorPool", "destroy": "vkDestroyDescriptorPool",
+      "parents": [{ "id": "device", "param": "device", "vuid": "VUID-vkCreateDescriptorPool-device-parameter" }],
+      "onDestroy": "free",
+      "note": "Storage that descriptor sets are allocated from. Destroying it frees all its sets."
+    },
+    {
+      "id": "descriptor-set", "handle": "VkDescriptorSet", "stage": "descriptors",
+      "how": "allocate", "call": "vkAllocateDescriptorSets",
+      "parents": [
+        { "id": "descriptor-pool", "param": "pAllocateInfo->descriptorPool", "vuid": "VUID-VkDescriptorSetAllocateInfo-descriptorPool-parameter" },
+        { "id": "descriptor-set-layout", "param": "pAllocateInfo->pSetLayouts", "vuid": "VUID-VkDescriptorSetAllocateInfo-pSetLayouts-parameter" }
+      ],
+      "note": "The actual resources (buffers, images) plugged into the slots of a layout. Freed with its pool."
+    },
+    {
+      "id": "command-pool", "handle": "VkCommandPool", "stage": "commands",
+      "how": "create", "call": "vkCreateCommandPool", "destroy": "vkDestroyCommandPool",
+      "parents": [{ "id": "device", "param": "device", "vuid": "VUID-vkCreateCommandPool-device-parameter" }],
+      "onDestroy": "free",
+      "note": "Memory for command buffers of one queue family. Destroying it frees all its command buffers."
+    },
+    {
+      "id": "command-buffer", "handle": "VkCommandBuffer", "stage": "commands",
+      "how": "allocate", "call": "vkAllocateCommandBuffers", "destroy": "vkFreeCommandBuffers",
+      "parents": [{ "id": "command-pool", "param": "pAllocateInfo->commandPool", "vuid": "VUID-VkCommandBufferAllocateInfo-commandPool-parameter" }],
+      "note": "A recorded list of GPU commands, submitted to a queue."
+    },
+    {
+      "id": "fence", "handle": "VkFence", "stage": "sync",
+      "how": "create", "call": "vkCreateFence", "destroy": "vkDestroyFence",
+      "parents": [{ "id": "device", "param": "device", "vuid": "VUID-vkCreateFence-device-parameter" }],
+      "note": "GPU -> CPU signal: the CPU waits on it to know a submission finished."
+    },
+    {
+      "id": "semaphore", "handle": "VkSemaphore", "stage": "sync",
+      "how": "create", "call": "vkCreateSemaphore", "destroy": "vkDestroySemaphore",
+      "parents": [{ "id": "device", "param": "device", "vuid": "VUID-vkCreateSemaphore-device-parameter" }],
+      "note": "GPU -> GPU signal: one queue operation waits for another (e.g. render waits for image acquire)."
+    }
+  ]
+}

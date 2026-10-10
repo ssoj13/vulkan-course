@@ -1,0 +1,115 @@
+---
+title: "Queue families: the GPU's engines"
+description: Graphics, compute, transfer - how queue families map to hardware engines inside the GPU.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import MindMap from 'course-kit/components/MindMap.astro';
+import Quiz from 'course-kit/components/Quiz.astro';
+import Step from '../../../components/Step.astro';
+
+In lesson 2 we said work is submitted to a **queue**. A GPU usually offers several kinds of queues, because inside the
+chip there are several independent **engines**: the big graphics/compute engine, copy engines that move memory, video
+encoders and decoders. Vulkan groups queues of the same kind into **queue families**.
+
+## Asking for the families
+
+<Step file="04_queue_families" region="families" />
+
+Each family reports:
+
+- **queueFlags** - what its queues can do: `GRAPHICS`, `COMPUTE`, `TRANSFER`, `SPARSE_BINDING`, video decode/encode...
+- **queueCount** - how many queues of this family you may create.
+- **timestampValidBits** - how many bits of a GPU timestamp are meaningful (0 = no timestamps on this family).
+
+<Step file="04_queue_families" region="print-families" />
+
+## A real GPU
+
+This is what step 04 printed on the RTX 3080 Ti of the development machine:
+
+| family | queues | flags |
+| --- | --- | --- |
+| 0 | 16 | GRAPHICS, COMPUTE, TRANSFER, SPARSE_BINDING |
+| 1 | 2 | TRANSFER, SPARSE_BINDING |
+| 2 | 8 | COMPUTE, TRANSFER, SPARSE_BINDING |
+| 3 | 1 | TRANSFER, SPARSE_BINDING, VIDEO_DECODE |
+| 4 | 1 | TRANSFER, SPARSE_BINDING, VIDEO_ENCODE |
+| 5 | 1 | TRANSFER, SPARSE_BINDING, OPTICAL_FLOW (an NVIDIA extension) |
+
+How to read it:
+
+- **Family 0** is the "do everything" family. Almost every program needs only this one.
+- **Family 1** can only copy. Copies submitted here can run on the GPU's copy (DMA) engines *while* family 0 renders -
+  useful for streaming textures in the background.
+- **Family 2** computes but cannot draw: **async compute**. Compute work here can overlap with rendering.
+- **Families 3-5** feed the video and optical-flow hardware.
+
+Vulkan does not say which hardware unit backs which family - that is the driver's business - but the flags make the
+intent clear. Other GPUs show different tables: some integrated GPUs have a single family that does everything.
+
+<Aside type="note" title="Graphics and compute queues can always copy">
+The spec allows a family with `GRAPHICS` or `COMPUTE` to leave out the `TRANSFER` flag: copy commands work on such
+queues anyway. So never conclude "no transfer support" from a graphics family's flags.
+</Aside>
+
+## Finding the families we need
+
+<Step file="04_queue_families" region="find-graphics" />
+
+For this course we need one family that can draw: the first family with `GRAPHICS`. The dedicated transfer and async
+compute families are printed to show they exist; we use them in the advanced part.
+
+<Aside type="tip" title="CG analogy">
+Think of a studio pipeline with separate departments: lighting renders, a data team moves files, editorial encodes
+dailies. Each has its own queue of jobs and they work at the same time. Queue families are the departments of the GPU.
+</Aside>
+
+## The map of this lesson
+
+<MindMap />
+
+## Underneath
+
+- Each queue you submit to is a stream that the GPU's command processor (lesson 2) or a dedicated engine front end
+  reads from. Multiple queues let independent work overlap instead of waiting in one line.
+- Queues of different families run **in parallel and unordered** relative to each other. As soon as two queues touch
+  the same resource, you need synchronization between them - a topic for the synchronization module.
+
+<Quiz
+	questions={[
+		{
+			q: 'What is a queue family?',
+			options: [
+				'A group of queues with the same capabilities, usually backed by one kind of GPU engine',
+				'All queues of all GPUs in the machine',
+				'A list of command buffers waiting to be recorded',
+				'A Vulkan object you create with vkCreateQueueFamily',
+			],
+			answer: 0,
+			explain: 'Queue families are reported by the physical device; each groups queues with identical flags.',
+		},
+		{
+			q: 'Why would you use a family that only has the TRANSFER flag?',
+			options: [
+				'Because graphics queues cannot copy',
+				'To run copies on the copy engines while rendering continues on the graphics queue',
+				'Because it is required to present images',
+				'To get more validation messages',
+			],
+			answer: 1,
+			explain: 'A dedicated transfer family lets uploads overlap with rendering.',
+		},
+		{
+			q: 'A family reports GRAPHICS and COMPUTE but not TRANSFER. Can it execute copy commands?',
+			options: [
+				'No, never',
+				'Only on integrated GPUs',
+				'Only with an extension',
+				'Yes - graphics and compute families support transfer commands even when the flag is not reported',
+			],
+			answer: 3,
+			explain: 'Reporting TRANSFER separately is optional for graphics or compute families; transfer commands are allowed there.',
+		},
+	]}
+/>

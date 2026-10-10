@@ -1,0 +1,10 @@
+[package]
+name = "vk-examples"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+# crates.io has no release newer than 0.38 (Vulkan 1.3 headers, 2024), so we pin
+# ash master at an exact commit (Vulkan-Headers 1.4.352) for Vulkan 1.4 bindings.
+ash = { git = "https://github.com/ash-rs/ash", rev = "f4c2ca3e4f6b998d5254ad101a32f024d87cdec2" }
