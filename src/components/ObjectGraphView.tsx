@@ -13,8 +13,10 @@ import 'course-kit/components/graph/graph.css';
 import { Frame } from 'course-kit/components/graph/Frame.tsx';
 import { heat, useFlowNodes } from 'course-kit/components/graph/flow.ts';
 import { FIT_ZOOM, alignTop } from 'course-kit/lib/fit';
+import { fmt } from 'course-kit/i18n.mjs';
 import './objects.css';
-import { EMPTY, STAGES, blockers, create, destroy, labelOf, obj, type LogLine, type SimState } from '../lib/objects';
+import { EMPTY, STAGES, blockers, create, destroy, labelOf, noteOf, obj, type LogLine, type SimState } from '../lib/objects';
+import { HOW_KEY, SIM_KEY, STAGE_KEY, courseText } from '../i18n';
 
 export interface ObjNode {
 	id: string;
@@ -25,6 +27,9 @@ export interface ObjNode {
 }
 
 export interface ObjectGraphViewProps {
+	/** Page language and the course's default language (objects.json is written in the default one). */
+	lang: string;
+	defaultLang: string;
 	mode: 'map' | 'build';
 	nodes: ObjNode[];
 	/** Parent -> child pairs among the nodes. */
@@ -37,10 +42,8 @@ export interface ObjectGraphViewProps {
 /** Instance extension the build exercise offers at vkCreateInstance. */
 const DEBUG_UTILS = 'VK_EXT_debug_utils';
 
-const HOW = { create: 'created', allocate: 'allocated', enumerate: 'enumerated', get: 'retrieved' } as const;
-
 type Status = 'map' | 'ghost' | 'alive' | 'dangling' | 'ready';
-type Data = { id: string; w: number; h: number; status: Status } & Record<string, unknown>;
+type Data = { id: string; w: number; h: number; status: Status; note: string; caption: string } & Record<string, unknown>;
 
 function ObjNodeView({ data, selected }: NodeProps<Node<Data>>) {
 	const o = obj(data.id);
@@ -48,22 +51,25 @@ function ObjNodeView({ data, selected }: NodeProps<Node<Data>>) {
 		<div
 			className={`ck-node vk-stage-${STAGES.indexOf(o.stage)} is-${data.status}${selected ? ' is-selected' : ''}`}
 			style={{ width: data.w, height: data.h }}
-			title={o.note}
+			title={data.note}
 		>
 			<Handle type="target" position={Position.Top} isConnectable={false} />
 			<div className="ck-node-head is-code">
 				<span>{labelOf(o)}</span>
 			</div>
-			<div className="ck-node-body">
-				{HOW[o.how]} · {o.stage}
-			</div>
+			<div className="ck-node-body">{data.caption}</div>
 			<Handle type="source" position={Position.Bottom} isConnectable={false} />
 		</div>
 	);
 }
 const nodeTypes = { obj: ObjNodeView };
 
-export default function ObjectGraphView({ mode, nodes, edges, height, termHref }: ObjectGraphViewProps) {
+export default function ObjectGraphView({ lang, defaultLang, mode, nodes, edges, height, termHref }: ObjectGraphViewProps) {
+	const t = courseText(lang);
+	const how = (id: string) => t[HOW_KEY[obj(id).how]];
+	const stage = (id: string) => t[STAGE_KEY[obj(id).stage]];
+	/** A console line in the reader's language: API calls and validation reports stay verbatim. */
+	const line = (l: LogLine) => ('text' in l ? l.text : fmt(t[SIM_KEY[l.msg]], l.vars));
 	const [sel, setSel] = useState<string | null>(mode === 'build' ? 'instance' : null);
 	const [state, setState] = useState<SimState>(EMPTY);
 	const [log, setLog] = useState<LogLine[]>([]);
@@ -83,10 +89,10 @@ export default function ObjectGraphView({ mode, nodes, edges, height, termHref }
 			position: { x: n.x, y: n.y },
 			width: n.w,
 			height: n.h,
-			data: { id: n.id, w: n.w, h: n.h, status: status(n.id) },
+			data: { id: n.id, w: n.w, h: n.h, status: status(n.id), note: noteOf(obj(n.id), lang, defaultLang), caption: `${how(n.id)} · ${stage(n.id)}` },
 			connectable: false,
 		}));
-	}, [nodes, mode, state]);
+	}, [nodes, mode, state, lang, defaultLang]);
 	const { nodes: rfNodes, onNodesChange, reset } = useFlowNodes(initial);
 
 	const rfEdges = useMemo<Edge[]>(
@@ -118,7 +124,7 @@ export default function ObjectGraphView({ mode, nodes, edges, height, termHref }
 
 	return (
 		<div className="ck-graph vk-objects">
-			<Frame height={height} onReset={reset}>
+			<Frame lang={lang} height={height} onReset={reset}>
 				<ReactFlow
 					nodes={rfNodes}
 					edges={heat(rfEdges, sel)}
@@ -144,22 +150,19 @@ export default function ObjectGraphView({ mode, nodes, edges, height, termHref }
 				{o ? (
 					<>
 						<p className="ck-graph-title">
-							<b className="is-code">{labelOf(o)}</b> <span className="ck-badge">{HOW[o.how]}</span>
+							<b className="is-code">{labelOf(o)}</b> <span className="ck-badge">{how(o.id)}</span>
 						</p>
-						<p>{o.note}</p>
+						<p>{noteOf(o, lang, defaultLang)}</p>
 						<p className="ck-muted">
 							<code>{o.call}</code>
-							{o.destroy ? (
-								<>
-									{' '}
-									· released with <code>{o.destroy}</code>
-								</>
-							) : null}
-							{o.parents.length > 0 && <> · made from {o.parents.map((p) => labelOf(obj(p.id)) + (p.optional ? ' (optional)' : '')).join(', ')}</>}
+							{o.destroy ? <> · {fmt(t.releasedWith, { call: o.destroy })}</> : null}
+							{o.parents.length > 0 && (
+								<> · {fmt(t.madeFrom, { parents: o.parents.map((p) => labelOf(obj(p.id)) + (p.optional ? ` ${t.optional}` : '')).join(', ') })}</>
+							)}
 							{o.term && termHref[o.term] ? (
 								<>
 									{' '}
-									· <a href={termHref[o.term]}>glossary</a>
+									· <a href={termHref[o.term]}>{t.glossary}</a>
 								</>
 							) : null}
 						</p>
@@ -167,38 +170,36 @@ export default function ObjectGraphView({ mode, nodes, edges, height, termHref }
 							<div className="lab-row vk-actions">
 								{o.id === 'instance' && !state.alive.includes('instance') && (
 									<label className="vk-check">
-										<input type="checkbox" checked={debugUtils} onChange={(e) => setDebugUtils(e.target.checked)} /> enable {DEBUG_UTILS} + validation layer
+										<input type="checkbox" checked={debugUtils} onChange={(e) => setDebugUtils(e.target.checked)} /> {fmt(t.enableExt, { ext: DEBUG_UTILS })}
 									</label>
 								)}
 								<button type="button" className="lab-button is-primary" onClick={() => apply(create(state, o.id, debugUtils ? [DEBUG_UTILS] : []))}>
-									{o.how === 'enumerate' ? 'Enumerate' : o.how === 'get' ? 'Get' : o.how === 'allocate' ? 'Allocate' : 'Create'}
+									{t[o.how]}
 								</button>
 								<button type="button" className="lab-button" onClick={() => apply(destroy(state, o.id))}>
-									{o.destroy ? (o.how === 'allocate' ? 'Free' : 'Destroy') : 'Destroy?'}
+									{o.destroy ? (o.how === 'allocate' ? t.free : t.destroy) : t.destroyQ}
 								</button>
 							</div>
 						)}
 					</>
 				) : (
-					<p className="ck-muted">Click an object to see what it is, how it is made and what it is made from. Drag boxes to untangle.</p>
+					<p className="ck-muted">{t.hint}</p>
 				)}
 			</div>
 
 			{mode === 'build' && (
 				<div className="vk-console">
 					<div className="lab-row vk-console-head">
-						<span>
-							Created {created}/{ids.length} · validation errors: {errors}
-						</span>
+						<span>{fmt(t.progress, { n: created, total: ids.length, errors })}</span>
 						<button type="button" className="lab-button" onClick={restart}>
-							Start over
+							{t.startOver}
 						</button>
 					</div>
 					<ol className="vk-log" aria-live="polite">
-						{log.length === 0 && <li className="is-info">Pick an object and press Create. Start at the top: that is where the wires start.</li>}
+						{log.length === 0 && <li className="is-info">{t.startHint}</li>}
 						{log.map((l, i) => (
 							<li key={i} className={`is-${l.kind}`}>
-								{l.text}
+								{line(l)}
 							</li>
 						))}
 					</ol>
@@ -206,12 +207,12 @@ export default function ObjectGraphView({ mode, nodes, edges, height, termHref }
 			)}
 
 			<div className="ck-legend" aria-label="Legend">
-				<span className="ck-legend-note">Roots on top; wires run down to the objects made from them.</span>
+				<span className="ck-legend-note">{t.legendNote}</span>
 				<ul>
 					{STAGES.filter((s) => nodes.some((n) => obj(n.id).stage === s)).map((s) => (
 						<li key={s}>
 							<span className={`ck-swatch vk-stage-${STAGES.indexOf(s)}`} aria-hidden="true" />
-							{s}
+							{t[STAGE_KEY[s]]}
 						</li>
 					))}
 				</ul>

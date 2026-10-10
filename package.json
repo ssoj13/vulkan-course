@@ -8,6 +8,7 @@
     "build": "astro build",
     "preview": "astro preview",
     "check": "astro check",
+    "lint": "bun scripts/lint-content.ts",
     "astro": "astro"
   },
   "dependencies": {
@@ -17,7 +18,7 @@
     "@dagrejs/dagre": "^3.1.1",
     "@xyflow/react": "^12.12.0",
     "astro": "^7.3.8",
-    "course-kit": "github:ssoj13/course-kit#v0.2.0",
+    "course-kit": "github:ssoj13/course-kit#v0.3.1",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "sharp": "^0.35.3"
@@ -25,6 +26,7 @@
   "devDependencies": {
     "@types/bun": "^1.4.2",
     "@types/react": "^19.3.0",
-    "@types/react-dom": "^19.3.0"
+    "@types/react-dom": "^19.3.0",
+    "github-slugger": "^2.0.0"
   }
 }

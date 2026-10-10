@@ -27,8 +27,10 @@ jobs:
           bun-version: 1.4.3
       - name: Install site dependencies
         run: bun install --frozen-lockfile
-      - name: JS tests (object model, VUID data)
+      - name: JS tests (object model, VUID data, interface texts)
         run: bun test tests
+      - name: Lesson content lint (quiz model, section links, every language)
+        run: bun run lint
 
   examples-rust:
     runs-on: ubuntu-latest

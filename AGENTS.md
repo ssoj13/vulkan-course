@@ -30,6 +30,27 @@ code (Rust and C++) → what the driver and the GPU actually do.
   1.3.281. Switch to ash 0.39 when it is released. C++: vk::ApiVersion14.
 - Research notes: `notes/research-vulkan-ecosystem.md` (versions, references, sources).
 
+## Writing (every lesson, every language)
+
+The user's standard: serious things explained properly - the big picture, what follows from what, how concepts
+relate, hierarchies of concepts ("mutex -> semaphore -> barrier, cond var, atomics"), mind maps. Each language
+version is AUTHORED for its reader, never translated sentence by sentence: same facts, same code regions, its own
+wording, examples and emphasis.
+
+Lesson shape:
+1. The question the lesson answers (1-3 sentences).
+2. "Where this fits" (ru: "Где мы на карте"): the layer, what came before, what this unlocks, and the concept
+   chain in one line (e.g. GPU -> driver -> loader -> VkInstance -> VkPhysicalDevice -> VkDevice -> VkQueue).
+3. Body: CG analogies; every new term defined as "X is Y built on Z" and linked (`term:` / `<Term>`).
+4. Code through `<Step file region>`: say what the region does and why, not just what it is.
+5. `<MindMap />` of the lesson and "Underneath" (loader, driver, hardware).
+6. Quiz (`course-kit` model): 3-4 questions, each option `{ text, why }` - `why` names the misconception and
+   corrects it (wrong) or states the reason (right), never just "wrong"; `ref` = `#anchor` of the heading that
+   explains it; the correct option is the longest in at most a third of the questions.
+
+Facts: verified against the spec registry (`validusage.json`, `vk.xml`) or real runs on the dev machine (quote
+those as real output); never invented. Check content with `bun run lint` before a build.
+
 ## Core principles
 
 1. Every concept has a place on the object map and in the term graph (`src/data/terms.json`): one source

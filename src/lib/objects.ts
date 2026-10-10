@@ -5,6 +5,7 @@
  * scripts/sync-vuids.ts). Pure module: no DOM, no React, tested with `bun test`.
  */
 import objectsJson from '../data/objects.json';
+import objectsRu from '../data/objects.ru.json';
 import vuidsJson from '../data/vuids.json';
 
 /** Curriculum stages in course order; the map colors objects by the stage that introduces them. */
@@ -59,6 +60,31 @@ export function obj(id: string): VkObject {
 
 export const labelOf = (o: VkObject): string => o.label ?? o.handle;
 
+/**
+ * Translations of the object notes per language (objects.<lang>.json, keyed by object id). objects.json itself is
+ * the course's default language. Handles, calls and VUIDs are API names and stay as they are.
+ */
+export const NOTE_OVERLAYS: Readonly<Record<string, Record<string, { note: string }>>> = { ru: objectsRu };
+
+/** An object's note in a language: the default language reads objects.json, the others their overlay. */
+export function noteOf(o: VkObject, lang: string, defaultLang: string): string {
+	if (lang === defaultLang) return o.note;
+	const n = NOTE_OVERLAYS[lang]?.[o.id]?.note;
+	if (!n) throw new Error(`objects.${lang}.json has no note for "${o.id}"`);
+	return n;
+}
+
+/** Every overlay must translate exactly the objects of objects.json (empty list = complete). */
+export function overlayErrors(): string[] {
+	const errs: string[] = [];
+	const ids = new Set(OBJECTS.map((o) => o.id));
+	for (const [lang, notes] of Object.entries(NOTE_OVERLAYS)) {
+		for (const id of ids) if (!notes[id]?.note?.trim()) errs.push(`objects.${lang}.json: missing note for "${id}"`);
+		for (const id of Object.keys(notes)) if (!ids.has(id)) errs.push(`objects.${lang}.json: unknown object "${id}"`);
+	}
+	return errs;
+}
+
 /** Structural problems of objects.json (empty = valid); `termIds` are the ids of terms.json. */
 export function objectErrors(termIds: ReadonlySet<string>): string[] {
 	const errs: string[] = [];
@@ -98,11 +124,15 @@ export interface SimState {
 }
 
 export type LogKind = 'call' | 'error' | 'warn' | 'info';
-export interface LogLine {
-	kind: LogKind;
-	text: string;
-	vuid?: string;
-}
+
+/** Simulator remarks; the view words them in the reader's language (src/i18n.ts `sim*` texts). */
+export type SimMsg = 'alreadyExists' | 'notLoaded' | 'doesNotExist' | 'backToPool' | 'notDestroyed' | 'stillAlive' | 'released' | 'dangling';
+
+/**
+ * One console line. API calls and validation-layer reports are verbatim `text` (always English, exactly like the
+ * real tools print them); the simulator's own remarks are a `msg` with values, worded by the view.
+ */
+export type LogLine = { kind: LogKind; text: string; vuid?: string } | { kind: LogKind; msg: SimMsg; vars: Record<string, string> };
 
 export interface Step {
 	state: SimState;
@@ -125,13 +155,10 @@ function vuError(vuid: string, call: string): LogLine {
 export function blockers(state: SimState, id: string): LogLine[] {
 	const o = obj(id);
 	const out: LogLine[] = [];
-	if (state.alive.includes(id)) out.push({ kind: 'info', text: `${labelOf(o)} already exists (this exercise keeps one of each).` });
+	if (state.alive.includes(id)) out.push({ kind: 'info', msg: 'alreadyExists', vars: { obj: labelOf(o) } });
 	for (const p of o.parents) if (!p.optional && !liveFor(state, p.id)) out.push(vuError(p.vuid, o.call));
 	if (o.requires && state.alive.includes('instance') && !state.extensions.includes(o.requires)) {
-		out.push({
-			kind: 'error',
-			text: `${o.call} is not available: its function pointer is only loaded when ${o.requires} was enabled in vkCreateInstance.`,
-		});
+		out.push({ kind: 'error', msg: 'notLoaded', vars: { call: o.call, ext: o.requires } });
 	}
 	return out;
 }
@@ -169,14 +196,11 @@ function liveDescendants(state: SimState, id: string): string[] {
 /** Destroys / frees object `id` under the spec's rules. */
 export function destroy(state: SimState, id: string): Step {
 	const o = obj(id);
-	if (!state.alive.includes(id)) return { state, log: [{ kind: 'info', text: `${labelOf(o)} does not exist.` }] };
+	if (!state.alive.includes(id)) return { state, log: [{ kind: 'info', msg: 'doesNotExist', vars: { obj: labelOf(o) } }] };
 	if (!o.destroy) {
-		const owner = o.parents[0] ? labelOf(obj(o.parents[0].id)) : 'its parent';
-		const text =
-			o.how === 'allocate'
-				? `${labelOf(o)} goes back to ${owner} when the pool is reset or destroyed.`
-				: `${labelOf(o)} is not destroyed by the application: it was obtained with ${o.call} and lives as long as ${owner}.`;
-		return { state, log: [{ kind: 'info', text }] };
+		const owner = labelOf(obj(o.parents[0]!.id));
+		const msg: SimMsg = o.how === 'allocate' ? 'backToPool' : 'notDestroyed';
+		return { state, log: [{ kind: 'info', msg, vars: { obj: labelOf(o), owner, call: o.call } }] };
 	}
 	const deps = liveDescendants(state, id);
 	// Only direct children made by the application count for "block": enumerated/retrieved handles go away with the parent.
@@ -184,7 +208,7 @@ export function destroy(state: SimState, id: string): Step {
 	if (o.onDestroy === 'block' && owned.length) {
 		return {
 			state,
-			log: [vuError(o.destroyVuid!, o.destroy), { kind: 'info', text: `Still alive: ${owned.map((d) => labelOf(obj(d))).join(', ')}. Destroy them first.` }],
+			log: [vuError(o.destroyVuid!, o.destroy), { kind: 'info', msg: 'stillAlive', vars: { objs: owned.map((d) => labelOf(obj(d))).join(', ') } }],
 		};
 	}
 	const log: LogLine[] = [{ kind: 'call', text: `${o.destroy}(${labelOf(o)})` }];
@@ -198,12 +222,12 @@ export function destroy(state: SimState, id: string): Step {
 	if (released.length) {
 		alive = alive.filter((a) => !released.includes(a));
 		dangling = dangling.filter((d) => !released.includes(d));
-		log.push({ kind: 'info', text: `Released with it: ${released.map((d) => labelOf(obj(d))).join(', ')}.` });
+		log.push({ kind: 'info', msg: 'released', vars: { objs: released.map((d) => labelOf(obj(d))).join(', ') } });
 	}
 	const orphans = deps.filter((d) => !released.includes(d));
 	if (orphans.length) {
 		dangling = [...dangling, ...orphans.filter((d) => !dangling.includes(d))];
-		log.push({ kind: 'warn', text: `Now dangling (any use is invalid): ${orphans.map((d) => labelOf(obj(d))).join(', ')}.` });
+		log.push({ kind: 'warn', msg: 'dangling', vars: { objs: orphans.map((d) => labelOf(obj(d))).join(', ') } });
 	}
 	return { state: { ...state, alive, dangling, extensions: id === 'instance' ? [] : state.extensions }, log };
 }

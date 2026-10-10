@@ -3,13 +3,16 @@
  * Vulkan object tree, as a map or as a create/destroy exercise (ObjectGraphView island).
  *   <ObjectGraph />                                          the whole map
  *   <ObjectGraph scope={['instance', 'debug-messenger', ...]} mode="build" />   exercise on a subset
- * objects.json is validated here (bad data fails the build); the layout is computed at build time.
+ * objects.json and its translations are validated here (bad data fails the build); the layout is computed at build
+ * time; texts follow the page's language.
  */
 import ObjectGraphView from './ObjectGraphView.tsx';
-import { OBJECTS, labelOf, obj, objectErrors } from '../lib/objects';
+import { NOTE_OVERLAYS, OBJECTS, labelOf, noteOf, obj, objectErrors, overlayErrors } from '../lib/objects';
+import { courseText } from '../i18n';
 import { canvasHeight, layout } from 'course-kit/lib/layout';
-import { graph } from 'course-kit/lib/terms';
-import { resolveLink } from 'course-kit/lib/course';
+import { graphIn } from 'course-kit/lib/terms';
+import { DEFAULT_LANG, LANGUAGES, courseIn, langOf } from 'course-kit/lib/course';
+import { fmt } from 'course-kit/i18n.mjs';
 
 interface Props {
 	mode?: 'map' | 'build';
@@ -18,8 +21,12 @@ interface Props {
 	caption?: string;
 }
 
-const errs = objectErrors(new Set(graph.terms.map((t) => t.id)));
-if (errs.length) throw new Error(`objects.json is invalid:\n  - ${errs.join('\n  - ')}`);
+const v = courseIn(langOf(Astro.url.pathname));
+const t = courseText(v.lang);
+// Every course language other than the default needs a complete translation of the object notes.
+const missingLangs = LANGUAGES.slice(1).filter((l) => !(l.code in NOTE_OVERLAYS)).map((l) => `objects.${l.code}.json`);
+const errs = [...objectErrors(new Set(graphIn(DEFAULT_LANG).terms.map((x) => x.id))), ...overlayErrors(), ...missingLangs.map((f) => `${f} is missing`)];
+if (errs.length) throw new Error(`objects data is invalid:\n  - ${errs.join('\n  - ')}`);
 
 const { mode = 'map', caption } = Astro.props;
 const scope = Astro.props.scope ?? OBJECTS.map((o) => o.id);
@@ -43,16 +50,16 @@ const placed = layout({
 });
 const nodes = placed.nodes;
 const height = canvasHeight({ width: Math.max(...nodes.map((n) => n.x + n.w)), height: placed.height });
-const termHref = Object.fromEntries(scope.flatMap((id) => (obj(id).term ? [[obj(id).term!, resolveLink(`term:${obj(id).term}`)!]] : [])));
+const termHref = Object.fromEntries(scope.flatMap((id) => (obj(id).term ? [[obj(id).term!, v.resolveLink(`term:${obj(id).term}`)!]] : [])));
 ---
 
 <figure class="vk-objgraph not-content">
 	<div style={`min-height:${height + (mode === 'build' ? 330 : 140)}px`}>
-		<ObjectGraphView client:only="react" mode={mode} nodes={nodes} edges={edges} height={height} termHref={termHref} />
+		<ObjectGraphView client:only="react" lang={v.lang} defaultLang={DEFAULT_LANG} mode={mode} nodes={nodes} edges={edges} height={height} termHref={termHref} />
 	</div>
 	{caption && <figcaption>{caption}</figcaption>}
 	<details class="vk-objgraph-text">
-		<summary>These objects as text</summary>
+		<summary>{t.asText}</summary>
 		<ul>
 			{
 				scope.map((id) => {
@@ -60,8 +67,8 @@ const termHref = Object.fromEntries(scope.flatMap((id) => (obj(id).term ? [[obj(
 					return (
 						<li>
 							<b>{labelOf(o)}</b> — {o.call}
-							{o.parents.length > 0 && ` from ${o.parents.map((p) => labelOf(obj(p.id))).join(' + ')}`}
-							{o.destroy && `; released with ${o.destroy}`}. {o.note}
+							{o.parents.length > 0 && `, ${fmt(t.madeFrom, { parents: o.parents.map((p) => labelOf(obj(p.id))).join(' + ') })}`}
+							{o.destroy && `; ${fmt(t.releasedWith, { call: o.destroy })}`}. {noteOf(o, v.lang, DEFAULT_LANG)}
 						</li>
 					);
 				})
