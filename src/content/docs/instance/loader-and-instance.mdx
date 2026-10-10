@@ -11,6 +11,18 @@ import Step from '../../../components/Step.astro';
 Our first program creates one object, a `VkInstance`. To understand what that object is, we first need the piece of
 software it connects us to: the **loader**.
 
+## Where this fits
+
+We move down from the application into the **loader & driver** layer, and create the first object of the **Vulkan
+API** layer. [Lesson 2](lesson:talking-to-gpu) spoke of "the driver" as one piece; here it splits into a loader, layers
+and one driver per vendor. The chain:
+
+`your program → loader → layers → driver (ICD) → GPU`, and on the API side `VkInstance` as the root of the object tree.
+
+The loader is built on the drivers and layers it finds on the machine; the instance is built on the loader: it is your
+program's registered connection to it, with the layers and extensions you chose. Everything that follows hangs off
+it: the [validation layer](lesson:validation) is enabled on it, and the GPUs are found through it.
+
 ## The loader: a switchboard
 
 Your program never talks to the GPU driver directly. It talks to the **Vulkan loader** (`vulkan-1.dll`), a small
@@ -108,46 +120,94 @@ function, get a handle. The bindings fill `sType` for us.
 		{
 			q: 'What does the Vulkan loader do?',
 			options: [
-				'Compiles shaders into the GPU\'s binary format for the driver',
-				'Finds drivers and layers and routes each call through them',
-				'Loads textures from disk into GPU memory at startup',
-				'It is the part of the GPU that reads command buffers',
+				{
+					text: 'Compiles shaders into the GPU\'s binary format for the driver',
+					why: 'Compiling SPIR-V into the GPU\'s own code is the driver\'s job. The loader never looks at shaders; it only routes calls.',
+				},
+				{
+					text: 'Finds drivers and layers and routes each call through them',
+					why: 'The loader is a switchboard: it discovers the installed drivers and layers, then sends each call through the enabled layers to the driver that owns the object.',
+				},
+				{
+					text: 'Loads textures from disk into GPU memory at startup',
+					why: 'Vulkan has no function that loads an image from a file. Loading images and copying them to the GPU is your program\'s work, done with buffers and copy commands later in the course.',
+				},
+				{
+					text: 'It is the part of the GPU that reads command buffers',
+					why: 'That is the command processor, in hardware. The loader is a CPU library, vulkan-1.dll, inside your process.',
+				},
 			],
 			answer: 1,
-			explain: 'The loader is a dispatcher between the application, the layers and one or more drivers.',
+			ref: '#the-loader-a-switchboard',
 		},
 		{
 			q: 'A screen recorder installed on your PC prints a warning in your Vulkan program. Why can that happen?',
 			options: [
-				'It registered an implicit layer, loaded into every program',
-				'It replaced vulkan-1.dll with its own patched version',
-				'Your program enabled its layer by name at instance creation',
-				'It runs inside the GPU firmware and reports from there',
+				{
+					text: 'It registered an implicit layer, loaded into every program',
+					why: 'Implicit layers are registered by installed software and loaded into every Vulkan program automatically; on the development machine Bandicam\'s layer printed exactly such a warning.',
+				},
+				{
+					text: 'It replaced vulkan-1.dll with its own patched version',
+					why: 'No replacement is needed: the loader has an official way to insert third-party code, the layer mechanism. Registering an implicit layer is enough to see every call.',
+				},
+				{
+					text: 'Your program enabled its layer by name at instance creation',
+					why: 'Enabling by name is how explicit layers are loaded, and our program asks for none of the recorder\'s layers. Its layer is implicit, so it loads without being asked.',
+				},
+				{
+					text: 'It runs inside the GPU firmware and reports from there',
+					why: 'GPU firmware cannot print into your program\'s console. The message comes from a layer, a library loaded into your process on the CPU.',
+				},
 			],
 			answer: 0,
-			explain: 'Implicit layers are loaded automatically for all applications; explicit layers only when requested.',
+			ref: '#layers-implicit-and-explicit',
 		},
 		{
 			q: 'What does apiVersion in VkApplicationInfo mean?',
 			options: [
-				'The minimum driver version your program requires to run',
-				'The version number of your own application',
-				'The highest Vulkan version the program uses',
-				'The version of the loader to download on first start',
+				{
+					text: 'The minimum driver version your program requires to run',
+					why: 'It names a Vulkan API version, not a driver version, and it is an upper bound: the version you may use with a GPU is the lower of this and what its driver supports.',
+				},
+				{
+					text: 'The version number of your own application',
+					why: 'That goes into applicationVersion, a separate field of the same struct. apiVersion is about Vulkan itself.',
+				},
+				{
+					text: 'The highest Vulkan version the program uses',
+					why: 'apiVersion is the highest Vulkan version the program is written against; it is the one field of VkApplicationInfo with a real effect.',
+				},
+				{
+					text: 'The version of the loader to download on first start',
+					why: 'Vulkan never downloads anything. The loader comes with the GPU driver, and you can ask its version with a global function before creating an instance.',
+				},
 			],
 			answer: 2,
-			explain: 'apiVersion states the highest Vulkan API version the application uses.',
+			ref: '#2-say-who-you-are',
 		},
 		{
 			q: 'You listed VK_EXT_debug_utils among the instance extensions. Can you now call its functions?',
 			options: [
-				'Yes: every extension the loader lists is already active',
-				'Only if a GPU in the machine supports it as well',
-				'Only after a logical device has been created',
-				'No: it must be enabled in the instance create info',
+				{
+					text: 'Yes: every extension the loader lists is already active',
+					why: 'Listing reports what exists, not what is on. Vulkan turns on only what you ask for, so a listed extension stays off.',
+				},
+				{
+					text: 'Only if a GPU in the machine supports it as well',
+					why: 'VK_EXT_debug_utils is an instance extension: it extends the loader and instance, not a GPU. Device extensions are the ones a GPU must support.',
+				},
+				{
+					text: 'Only after a logical device has been created',
+					why: 'An instance extension is needed from the instance onwards; it is enabled when the instance is created, long before any device exists.',
+				},
+				{
+					text: 'No: it must be enabled in the instance create info',
+					why: 'An extension must be enabled at creation time by naming it in ppEnabledExtensionNames; enumeration only tells you it is available.',
+				},
 			],
 			answer: 3,
-			explain: 'Enumeration only reports availability; the extension must be named in ppEnabledExtensionNames at creation.',
+			ref: '#3-see-what-is-available',
 		},
 	]}
 />

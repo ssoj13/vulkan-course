@@ -13,6 +13,19 @@ is made from, and when it must be destroyed. Here is the whole tree. Click any b
 
 <ObjectGraph caption="Every object of the course. Colors show the part of the course that introduces it." />
 
+## Where this fits
+
+This is the **Vulkan API** layer seen from above, the last concept lesson before code. [Lesson 3](lesson:why-vulkan)
+said Vulkan turns every hidden decision into an object; here are those objects and how they hang together. The
+backbone of the first section of the course:
+
+`VkInstance → VkPhysicalDevice → VkDevice → VkQueue`, and from the device everything else (buffers, images,
+pipelines, command pools → command buffers).
+
+Each object is made from its parent: a physical device is found through an instance, a device is opened on a physical
+device, a queue lives inside a device. That is why the course goes top to bottom: [toolchain](lesson:toolchain), then
+the instance, then devices and queues, one level of the tree per step.
+
 ## How to read the map
 
 - **An arrow from A to B** means "B is made from A": you pass A when you create B. A device is made from a physical
@@ -80,46 +93,94 @@ VkResult r = vkCreateFoo(parent, &info, NULL /* allocator */, &foo);
 		{
 			q: 'In what order must objects be destroyed?',
 			options: [
-				'In creation order: first created, first destroyed',
-				'Children before the objects they were made from',
-				'In any order: the driver sorts out the dependencies',
-				'All at once, with a single vkDestroyInstance call',
+				{
+					text: 'In creation order: first created, first destroyed',
+					why: 'That destroys the parents first, while their children are still alive. The tree is taken down from the leaves: bottom to top on the map.',
+				},
+				{
+					text: 'Children before the objects they were made from',
+					why: 'A child depends on its parent, so the parent must outlive it: destroy in reverse creation order, buffers before the device, the device before the instance.',
+				},
+				{
+					text: 'In any order: the driver sorts out the dependencies',
+					why: 'A Vulkan driver does not track or check this for you. A wrong order is undefined behavior; only the validation layer would report it.',
+				},
+				{
+					text: 'All at once, with a single vkDestroyInstance call',
+					why: 'Destroying the instance does not clean up its children. Destroying it while they are alive breaks a valid usage rule (lesson 7 shows the real report).',
+				},
 			],
 			answer: 1,
-			explain: 'Destroying a parent while its children live is invalid; destroy in reverse creation order.',
+			ref: '#how-to-read-the-map',
 		},
 		{
 			q: 'Which handle is NOT dispatchable?',
 			options: [
-				'VkDevice',
-				'VkCommandBuffer',
-				'VkBuffer',
-				'VkQueue',
+				{
+					text: 'VkDevice',
+					why: 'VkDevice is dispatchable: it is a real pointer whose dispatch table the loader reads to find the right driver.',
+				},
+				{
+					text: 'VkCommandBuffer',
+					why: 'Command buffers are dispatchable, like the instance, physical device, device and queue, because commands recorded into them must reach the right driver.',
+				},
+				{
+					text: 'VkBuffer',
+					why: 'A buffer is always used through its device, which already tells the loader which driver owns it, so its handle can be a plain 64-bit value whose meaning the driver decides.',
+				},
+				{
+					text: 'VkQueue',
+					why: 'Queues are dispatchable: you call vkQueueSubmit with the queue alone, so the handle itself must lead the loader to the driver.',
+				},
 			],
 			answer: 2,
-			explain: 'In core Vulkan, instance, physical device, device, queue and command buffer are dispatchable; buffers and all other core objects use non-dispatchable handles.',
+			ref: '#handles',
 		},
 		{
 			q: 'How do you get a VkQueue?',
 			options: [
-				'vkCreateQueue, after the device has been created',
-				'vkAllocateQueues from a queue pool, like command buffers',
-				'vkGetDeviceQueue: the device already created it',
-				'vkEnumerateQueues on the instance, like physical devices',
+				{
+					text: 'vkCreateQueue, after the device has been created',
+					why: 'There is no vkCreateQueue. Queues are requested in the device create info and come into existence together with the device.',
+				},
+				{
+					text: 'vkAllocateQueues from a queue pool, like command buffers',
+					why: 'Pools exist for command buffers and descriptor sets, not for queues. A queue is part of the device it was requested with.',
+				},
+				{
+					text: 'vkGetDeviceQueue: the device already created it',
+					why: 'This is the "get" row of the table: the device owns the queue, you only fetch its handle by family and index, and nobody destroys it separately.',
+				},
+				{
+					text: 'vkEnumerateQueues on the instance, like physical devices',
+					why: 'Enumeration is how you find GPUs through the instance. Queues belong to a logical device, not to the instance.',
+				},
 			],
 			answer: 2,
-			explain: 'Queues are created together with the device; vkGetDeviceQueue only returns handles to them.',
+			ref: '#four-ways-to-get-an-object',
 		},
 		{
 			q: 'What is pNext for?',
 			options: [
-				'To point to the next object in creation order',
-				'To chain extra structs onto a create-info',
-				'To link several command buffers into one submit',
-				'To store the index of the next frame in flight',
+				{
+					text: 'To point to the next object in creation order',
+					why: 'Creation order is expressed by passing the parent handle to the create call. pNext points to another struct, not to an object.',
+				},
+				{
+					text: 'To chain extra structs onto a create-info',
+					why: 'pNext builds a linked list of structs, so newer versions and extensions can add parameters without changing the old structs.',
+				},
+				{
+					text: 'To link several command buffers into one submit',
+					why: 'A submit takes an array of command buffers in its own fields. pNext only chains additional structs that extend the submit info.',
+				},
+				{
+					text: 'To store the index of the next frame in flight',
+					why: 'Frames in flight are your own bookkeeping, kept in your code. Vulkan structs know nothing about frames.',
+				},
 			],
 			answer: 1,
-			explain: 'pNext builds a linked list of structs, so new versions and extensions can add parameters without changing old structs.',
+			ref: '#the-shape-of-every-create-call',
 		},
 	]}
 />

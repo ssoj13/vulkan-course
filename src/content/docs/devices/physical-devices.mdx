@@ -12,6 +12,19 @@ The instance knows about every GPU in the machine. A laptop may have two (integr
 have several; a CI server may have none but a software renderer. Before we can use one, we pick it - and to pick, we
 ask each one what it is.
 
+## Where this fits
+
+This is the **Vulkan API** layer touching the **hardware** for the first time, but only to read facts: nothing runs on
+the GPU yet. Before: the [instance](lesson:loader-and-instance) with [validation](lesson:validation) watching it. The
+chain:
+
+`VkInstance → VkPhysicalDevice → properties / features / limits`
+
+A physical device is built on the instance (found through it) and stands for one real GPU behind one driver.
+Properties say what it is, features what it could switch on, limits how far it goes. What we read here decides the two
+next steps: its [queue families](lesson:queue-families), and then the logical device, which enables the features we
+picked.
+
 ## Physical devices are found, not created
 
 A **`VkPhysicalDevice`** is a handle to one GPU as the instance sees it. You do not create it and you never destroy
@@ -105,46 +118,94 @@ a discrete card over an integrated one. Real applications often also let the use
 		{
 			q: 'Who destroys a VkPhysicalDevice?',
 			options: [
-				'You, with vkDestroyPhysicalDevice, before the instance',
-				'The logical device, when it is destroyed itself',
-				'Nobody: it lives as long as the instance',
-				'The validation layer, when the program exits',
+				{
+					text: 'You, with vkDestroyPhysicalDevice, before the instance',
+					why: 'There is no vkDestroyPhysicalDevice. You did not create the GPU handle, you only enumerated it, so there is nothing for you to destroy.',
+				},
+				{
+					text: 'The logical device, when it is destroyed itself',
+					why: 'The logical device is made from the physical device, not the other way round. Destroying the child does not touch the parent.',
+				},
+				{
+					text: 'Nobody: it lives as long as the instance',
+					why: 'Physical devices are found, not created: the instance enumerates them and the handles stay valid until the instance is destroyed.',
+				},
+				{
+					text: 'The validation layer, when the program exits',
+					why: 'The validation layer only checks and reports; it never creates or destroys your objects.',
+				},
 			],
 			answer: 2,
-			explain: 'Physical devices are not created by the application, so there is nothing to destroy.',
+			ref: '#physical-devices-are-found-not-created',
 		},
 		{
 			q: 'A GPU reports dynamicRendering = true. Can your program use dynamic rendering now?',
 			options: [
-				'Yes: every supported feature is always switched on',
-				'Only after enabling it when creating the device',
-				'Only if the instance apiVersion is set to 1.0',
-				'Only while the validation layer is enabled',
+				{
+					text: 'Yes: every supported feature is always switched on',
+					why: 'Supported is not enabled. A feature stays off until you ask for it, so the driver can prepare for exactly what you will use.',
+				},
+				{
+					text: 'Only after enabling it when creating the device',
+					why: 'Features are switched on in the logical device\'s create info; only then may your program use them.',
+				},
+				{
+					text: 'Only if the instance apiVersion is set to 1.0',
+					why: 'A lower apiVersion never unlocks anything: dynamic rendering is core since Vulkan 1.3, so asking for 1.0 would rule the core feature out instead of allowing it.',
+				},
+				{
+					text: 'Only while the validation layer is enabled',
+					why: 'The validation layer only checks usage; it does not grant features. Enabling happens on the device and works the same with or without the layer.',
+				},
 			],
 			answer: 1,
-			explain: 'Supported is not enabled: features must be requested in vkCreateDevice.',
+			ref: '#what-can-you-do-if-asked---features',
 		},
 		{
 			q: 'The instance asks for Vulkan 1.4 and an older GPU driver supports only 1.3. Which version can you use with that device?',
 			options: [
-				'1.4',
-				'1.3',
-				'1.0',
-				'Whatever the loader supports',
+				{
+					text: '1.4',
+					why: 'The instance\'s apiVersion is the highest version your program wants, not a promise from the driver. A 1.3 driver cannot provide 1.4 functions.',
+				},
+				{
+					text: '1.3',
+					why: 'The usable version is the lower of the instance apiVersion and the device apiVersion: min(1.4, 1.3) = 1.3.',
+				},
+				{
+					text: '1.0',
+					why: 'There is no fallback to 1.0: the device keeps everything up to the version both sides support, which is 1.3 here.',
+				},
+				{
+					text: 'Whatever the loader supports',
+					why: 'The loader routes calls; it cannot add GPU functionality the driver lacks. The device\'s own apiVersion caps what you can use.',
+				},
 			],
 			answer: 1,
-			explain: 'The usable version is the lower of the application apiVersion and the device apiVersion.',
+			ref: '#what-are-you---properties',
 		},
 		{
 			q: 'How do you query features introduced in Vulkan 1.3 or 1.4?',
 			options: [
-				'With one separate query call for every feature',
-				'By creating a test device and checking for errors',
-				'By chaining per-version structs onto Features2',
-				'They are all listed in VkPhysicalDeviceLimits',
+				{
+					text: 'With one separate query call for every feature',
+					why: 'One call is enough: vkGetPhysicalDeviceFeatures2 fills every struct you chain to it, all features at once.',
+				},
+				{
+					text: 'By creating a test device and checking for errors',
+					why: 'vkCreateDevice would indeed fail with VK_ERROR_FEATURE_NOT_PRESENT, but that is a clumsy detour: features can be read directly, without opening the GPU at all.',
+				},
+				{
+					text: 'By chaining per-version structs onto Features2',
+					why: 'VkPhysicalDeviceVulkan13Features, ...14Features and others are chained through pNext onto VkPhysicalDeviceFeatures2, and one call fills the whole chain.',
+				},
+				{
+					text: 'They are all listed in VkPhysicalDeviceLimits',
+					why: 'Limits are numbers the GPU guarantees, such as the largest image size. Features are on/off capabilities and live in the feature structs.',
+				},
 			],
 			answer: 2,
-			explain: 'Newer feature structs (VkPhysicalDeviceVulkan13Features, ...14Features) are chained via pNext; vkGetPhysicalDeviceFeatures2 fills the whole chain.',
+			ref: '#what-can-you-do-if-asked---features',
 		},
 	]}
 />

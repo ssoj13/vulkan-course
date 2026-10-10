@@ -39,6 +39,23 @@ know from CG.
 	</Card>
 </CardGrid>
 
+## How the pieces stack up
+
+Everything in the course sits on one of four layers, and every lesson starts by saying which:
+
+- **Concept** - ideas such as command buffers, queues and explicit APIs, true for any modern graphics API.
+- **Vulkan API** - the objects you create and the calls you make.
+- **Loader & driver** - the software between your calls and the chip: the Vulkan loader, layers, the vendor driver.
+- **Hardware** - the GPU itself: shader cores, VRAM, the command processor and its engines.
+
+The first section of the course walks this chain from the bottom up, one link per lesson:
+
+`GPU → driver → loader → VkInstance → VkPhysicalDevice → VkDevice → VkQueue`
+
+Each link is built on the one before it: the loader finds the drivers, the instance is your connection to the loader,
+GPUs are found through the instance, a device is opened on one GPU, and queues live inside the device. Everything
+later - windows, pipelines, memory, synchronization - hangs off the device and its queues.
+
 ## Where we are going
 
 This is the map of every object a Vulkan program uses. Do not try to remember it now: by the end of the course each

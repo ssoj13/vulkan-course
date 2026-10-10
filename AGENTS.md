@@ -6,7 +6,7 @@ anything generic (sidebar, links, progress, mind maps, quiz).
 
 ## What this is
 
-Interactive, visualization-first textbook "Vulkan from zero" (English), published on GitHub Pages at
+Interactive, visualization-first textbook "Vulkan from zero" (English + Russian), published on GitHub Pages at
 https://ssoj13.github.io/vulkan-course/ (repo `ssoj13/vulkan-course`). Format: roadmap.sh-style course map,
 concept mind maps everywhere, live scrubbable visualizations of Vulkan objects, frames and synchronization.
 
@@ -16,7 +16,7 @@ code (Rust and C++) → what the driver and the GPU actually do.
 
 ## Decisions (2026-10-10)
 
-- Language: English. Hosting: GitHub Pages. Toolchain: bun 1.4.3.
+- Languages: English (base path) and Russian (`/ru/`), see "Languages" below. Hosting: GitHub Pages. Toolchain: bun 1.4.3.
 - Engine: `course-kit` (separate repo), consumed as a git dependency `github:ssoj13/course-kit#<tag>`;
   local co-development via `bun link`. Everything course-agnostic goes there, never into this repo.
 - Code examples: BOTH Rust (`ash`) and C++ (Vulkan-Hpp), in this repo: `examples/rust` (cargo workspace),
@@ -29,6 +29,16 @@ code (Rust and C++) → what the driver and the GPU actually do.
   f4c2ca3e4f6b998d5254ad101a32f024d87cdec2 (Vulkan-Headers 1.4.352): the last crates.io release 0.38 (2024) stops at
   1.3.281. Switch to ash 0.39 when it is released. C++: vk::ApiVersion14.
 - Research notes: `notes/research-vulkan-ecosystem.md` (versions, references, sources).
+
+## Languages
+
+- `astro.config.mjs` `languages` lists them; the first is the default. Engine texts come from course-kit (`i18n.mjs`).
+- Per language: `src/data/course.<lang>.json`, `terms.<lang>.json` (overlays: texts only, complete or the build
+  fails), `src/data/objects.<lang>.json` (object notes; checked by `overlayErrors()` in tests and in ObjectGraph.astro),
+  lessons under `src/content/docs/<lang>/` with the same slugs.
+- This course's widget texts (ObjectGraph, simulator remarks): `src/i18n.ts` (`courseText(lang)`, parity test
+  `tests/i18n.test.ts`). The simulator returns structured remarks (`SimMsg` + vars); validation reports stay verbatim
+  English (that is what the real layer prints).
 
 ## Writing (every lesson, every language)
 
@@ -92,7 +102,7 @@ shader objects, mesh shaders, ray tracing, tile-based mobile GPUs. Capstone: min
 
 ## State (2026-10-10)
 
-- Engine: `github:ssoj13/course-kit#v0.1.0` (public). Bump the tag in package.json for engine changes.
+- Engine: `github:ssoj13/course-kit#v0.3.1` (public). Bump the tag in package.json for engine changes.
 - examples 01-05 in Rust (ash git master, Vulkan 1.4) and C++ (vk::raii, ApiVersion14, C++23 for std::print):
   built and run on RTX 3080 Ti; reviewed by two independent reviewers (code vs spec, lesson facts) and fixed.
   Both languages print the same output; step 05 chains Vulkan13Features directly onto VkDeviceCreateInfo
@@ -101,7 +111,9 @@ shader objects, mesh shaders, ray tracing, tile-based mobile GPUs. Capstone: min
   2 from the NVIDIA driver); VK_LAYER_bandicam_helper prints one expected warning, used as the live example.
 - ObjectGraph: data `src/data/objects.json`, VUID texts `src/data/vuids.json` (generated: `bun scripts/sync-vuids.ts`),
   simulator `src/lib/objects.ts` (tests in tests/), view `src/components/ObjectGraph{.astro,View.tsx}`.
-- Quizzes: the engine fails the build if more than 1/3 of a quiz has the correct option as the longest.
+- Quizzes: graded on click; each option carries a `why`, each question a `ref` to the section that explains it.
+  `bun run lint` (scripts/lint-content.ts) checks the model, the `#anchor` refs and the longest-option rule for every
+  language before a build; the engine checks them again at build time.
 - Repo `ssoj13/vulkan-course` (public, Pages via Actions). `task.md` (private notes) and `.omh/` are gitignored and
   were never published; the pre-publication local history was deleted.
 
@@ -109,6 +121,8 @@ shader objects, mesh shaders, ray tracing, tile-based mobile GPUs. Capstone: min
 
 - [x] Stage 1: course-kit engine; [x] site on the kit; [x] examples 01-05 both languages; [x] lessons 1-10
 - [x] ObjectGraph map + build modes; [x] two reviewers, findings fixed; [x] CI (tests, clippy/fmt, Pages)
+- [ ] i18n: EN lessons upgraded ("Where this fits", teaching quizzes), RU authored (terms.ru.json, index, 10 lessons),
+  reviewed by independent readers, built, screenshots in both languages, deployed
 - [ ] C++ examples in CI (needs Vulkan SDK headers 1.4.341 with vulkan_raii.hpp on the runner)
 - [ ] Decide with the user: term maps put foundations at the bottom, ObjectGraph puts the root on top
 - [ ] User review, then modules 4+ (presentation, pipeline, commands, sync, memory, descriptors, images, compute)

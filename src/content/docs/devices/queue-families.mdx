@@ -12,6 +12,18 @@ In lesson 2 we said work is submitted to a **queue**. A GPU usually offers sever
 chip there are several independent **engines**: the big graphics/compute engine, copy engines that move memory, video
 encoders and decoders. Vulkan groups queues of the same kind into **queue families**.
 
+## Where this fits
+
+This lesson connects the **Vulkan API** layer to the **hardware** engines from lessons 1-2. Before: the
+[physical device](lesson:physical-devices) we picked. After: the logical device, which creates queues from the
+families we choose here. The chain:
+
+`VkPhysicalDevice → queue family (a kind of engine) → VkQueue (one line of work) → command processor / engine`
+
+A queue family is a property of a physical device, read like features and limits; a queue is built on a family and
+belongs to the logical device. Like departments in a studio, each family takes only the kinds of jobs its flags
+allow.
+
 ## Asking for the families
 
 <Step file="04_queue_families" region="families" />
@@ -82,35 +94,71 @@ dailies. Each has its own queue of jobs and they work at the same time. Queue fa
 		{
 			q: 'What is a queue family?',
 			options: [
-				'Queues with the same capabilities, backed by one engine kind',
-				'All queues of all GPUs in the machine, grouped by vendor',
-				'A list of command buffers waiting to be recorded',
-				'An object made with vkCreateQueueFamily',
+				{
+					text: 'Queues with the same capabilities, backed by one engine kind',
+					why: 'Each family is reported by the physical device and groups queues with identical flags, such as the graphics family or a copy-only family.',
+				},
+				{
+					text: 'All queues of all GPUs in the machine, grouped by vendor',
+					why: 'Queue families belong to one physical device: every GPU reports its own list, and the family index only has meaning for that GPU.',
+				},
+				{
+					text: 'A list of command buffers waiting to be recorded',
+					why: 'Command buffers are recorded by you and then submitted to a queue. A family describes which kind of queues exist, not any work.',
+				},
+				{
+					text: 'An object made with vkCreateQueueFamily',
+					why: 'Families are not objects and there is no such function: you read them as an array from the physical device and refer to them by index.',
+				},
 			],
 			answer: 0,
-			explain: 'Queue families are reported by the physical device; each groups queues with identical flags.',
+			ref: '#asking-for-the-families',
 		},
 		{
 			q: 'Why would you use a family that only has the TRANSFER flag?',
 			options: [
-				'Because graphics queues cannot run any copy commands at all',
-				'To copy on the copy engines while rendering continues',
-				'Presenting images to a window requires such a queue',
-				'To receive more messages from the validation layer',
+				{
+					text: 'Because graphics queues cannot run any copy commands at all',
+					why: 'They can: graphics and compute queues always accept copy commands. The point of a copy-only family is overlap, not ability.',
+				},
+				{
+					text: 'To copy on the copy engines while rendering continues',
+					why: 'A dedicated transfer family lets uploads, such as background texture streaming, run on the copy (DMA) engines at the same time as rendering on family 0.',
+				},
+				{
+					text: 'Presenting images to a window requires such a queue',
+					why: 'Presentation support is asked per family for a given window surface, and the graphics family usually has it. A copy-only family is not required for it.',
+				},
+				{
+					text: 'To receive more messages from the validation layer',
+					why: 'The validation layer reports on every queue the same way. The choice of family changes where work runs, not what gets checked.',
+				},
 			],
 			answer: 1,
-			explain: 'A dedicated transfer family lets uploads overlap with rendering.',
+			ref: '#a-real-gpu',
 		},
 		{
 			q: 'A family reports GRAPHICS and COMPUTE but not TRANSFER. Can it execute copy commands?',
 			options: [
-				'No: copy commands need a family with the TRANSFER flag',
-				'Only on integrated GPUs that share memory with the CPU',
-				'Only after enabling a vendor extension for transfers',
-				'Yes: graphics and compute families can always copy',
+				{
+					text: 'No: copy commands need a family with the TRANSFER flag',
+					why: 'The spec allows graphics and compute families to leave out the TRANSFER flag while still accepting copies, so its absence proves nothing there.',
+				},
+				{
+					text: 'Only on integrated GPUs that share memory with the CPU',
+					why: 'The rule is the same for every GPU type: it comes from the queue capabilities in the spec, not from where the memory sits.',
+				},
+				{
+					text: 'Only after enabling a vendor extension for transfers',
+					why: 'Copy commands are core Vulkan. No extension is needed to copy on a graphics or compute queue.',
+				},
+				{
+					text: 'Yes: graphics and compute families can always copy',
+					why: 'Every command allowed on a transfer queue is also allowed on a graphics or compute queue, so reporting TRANSFER separately for them is optional.',
+				},
 			],
 			answer: 3,
-			explain: 'Reporting TRANSFER separately is optional for graphics or compute families; transfer commands are allowed there.',
+			ref: '#a-real-gpu',
 		},
 	]}
 />

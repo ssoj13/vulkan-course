@@ -11,6 +11,17 @@ Your program runs on the CPU. A discrete GPU is a separate machine on the other 
 GPU shares the chip and memory with the CPU, but is still a separate processor). It cannot call your
 functions and you cannot call its. So how does a "draw" ever reach it?
 
+## Where this fits
+
+[Lesson 1](lesson:gpu) showed the machine; this lesson is the road to it. It spans three layers: your **application**,
+the **driver** (and the operating system under it), and the GPU's **front end** in hardware. The chain of one draw:
+
+`application → driver (user-mode → kernel-mode) → command buffer → queue → command processor → shader cores`
+
+A command buffer is built *by* the driver *from* your calls; a queue is built on top of a hardware engine and feeds it
+command buffers; the command processor is the part of the GPU that reads them. Vulkan's version of this road is the
+subject of the [next lesson](lesson:why-vulkan): it hands the recording and submitting from the driver to you.
+
 ## The path of one draw
 
 <Steps>
@@ -67,35 +78,71 @@ In older APIs the driver built command buffers for you, behind the scenes, and d
 		{
 			q: 'When does the GPU execute a command that the application recorded?',
 			options: [
-				'Immediately, inside the API call, before it returns',
-				'Only after the application exits and the driver flushes',
-				'At the moment the driver translates the call',
-				'Later: after submission, when the GPU gets to it',
+				{
+					text: 'Immediately, inside the API call, before it returns',
+					why: 'A graphics call is not a function call on the GPU. Inside the call the driver only writes commands into memory; the GPU sees nothing yet.',
+				},
+				{
+					text: 'Only after the application exits and the driver flushes',
+					why: 'Work does not wait for the program to end. It runs as soon as it has been submitted and the GPU reaches it, often a frame or two behind the CPU.',
+				},
+				{
+					text: 'At the moment the driver translates the call',
+					why: 'Translation is the recording step: the driver writes the GPU\'s binary commands into a buffer. Nothing is sent to the GPU at that moment.',
+				},
+				{
+					text: 'Later: after submission, when the GPU gets to it',
+					why: 'The CPU records, submits and moves on; the GPU executes when it gets there, in parallel with the CPU, like a render farm picking up a job.',
+				},
 			],
 			answer: 3,
-			explain: 'Recording only writes commands into memory. Execution happens after submission, asynchronously from the CPU.',
+			ref: '#the-path-of-one-draw',
 		},
 		{
 			q: 'What reads command buffers on the GPU side?',
 			options: [
-				'The vertex shader, before it processes any vertex',
-				'The command processor (GPU front end)',
-				'The kernel-mode driver, on behalf of the GPU',
-				'The PCIe controller between the CPU and the GPU',
+				{
+					text: 'The vertex shader, before it processes any vertex',
+					why: 'Shaders are the work, not the reader of work. The front end launches shader threads after it has parsed the commands that ask for them.',
+				},
+				{
+					text: 'The command processor (GPU front end)',
+					why: 'It is a small processor running firmware that fetches the command stream from memory, sets up state and hands the work to the rest of the chip.',
+				},
+				{
+					text: 'The kernel-mode driver, on behalf of the GPU',
+					why: 'The kernel-mode driver runs on the CPU: it owns the hardware and schedules submissions from all programs, but the commands are read and executed by the GPU itself.',
+				},
+				{
+					text: 'The PCIe controller between the CPU and the GPU',
+					why: 'PCIe only moves bytes between CPU and GPU; it does not understand them. Interpreting the commands is the job of the GPU\'s front end.',
+				},
 			],
 			answer: 1,
-			explain: 'The command processor fetches and parses the command stream and dispatches the work to the rest of the chip.',
+			ref: '#underneath',
 		},
 		{
 			q: 'Who records command buffers in Vulkan?',
 			options: [
-				'The application',
-				'The driver, automatically',
-				'The operating system',
-				'The GPU firmware',
+				{
+					text: 'The application',
+					why: 'In Vulkan you record command buffers and you submit them: the single biggest idea of the whole API.',
+				},
+				{
+					text: 'The driver, automatically',
+					why: 'That is how older APIs such as OpenGL work: the driver builds and submits command buffers behind the scenes. Vulkan gives that job to the application.',
+				},
+				{
+					text: 'The operating system',
+					why: 'The OS (through the kernel-mode driver) schedules submitted work for the GPU; it does not decide what goes into a command buffer.',
+				},
+				{
+					text: 'The GPU firmware',
+					why: 'The firmware runs the command processor, which reads and executes command buffers. Writing them happens earlier, on the CPU.',
+				},
 			],
 			answer: 0,
-			explain: 'Recording and submitting command buffers explicitly is the core idea of Vulkan; older APIs did this implicitly inside the driver.',
+			ref: '#command-buffers-and-queues',
 		},
 	]}
 />

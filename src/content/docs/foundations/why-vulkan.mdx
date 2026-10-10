@@ -10,6 +10,17 @@ import Quiz from 'course-kit/components/Quiz.astro';
 Vulkan code is long. A first triangle takes several hundred lines where OpenGL needed a few dozen. This lesson explains
 why that is not an accident, and what you get in exchange.
 
+## Where this fits
+
+This is a **concept** lesson about API design: no code runs yet. [Lesson 2](lesson:talking-to-gpu) showed the road
+from a call to the GPU; here we ask *who drives* on that road. The chain of the idea:
+
+`hidden driver state (OpenGL) → explicit objects (Vulkan) → pipelines, command buffers, sync, memory → validation layers`
+
+Each Vulkan object is built on one decision that OpenGL's driver used to guess: a pipeline holds the state, a command
+buffer holds the work, barriers and fences hold the timing. Once you see that, the [map of Vulkan
+objects](lesson:object-map) in the next lesson reads as a list of those decisions.
+
 ## OpenGL: one big hidden state machine
 
 OpenGL has a single global **context** full of "current" state: the bound texture, the bound buffer, the blend mode,
@@ -78,35 +89,71 @@ same API on Windows, Linux, Android and (through a translation layer) macOS. Tha
 		{
 			q: 'Why can an OpenGL draw call suddenly take much longer than usual?',
 			options: [
-				'Every OpenGL draw call waits until the GPU has finished it',
-				'The driver may compile or validate new state in the draw',
-				'OpenGL cannot use VRAM and streams everything over PCIe',
-				'OpenGL submits one triangle at a time to the GPU',
+				{
+					text: 'Every OpenGL draw call waits until the GPU has finished it',
+					why: 'OpenGL draws are asynchronous too: the driver records them and the GPU runs them later. The occasional slow draw comes from work the driver does on the CPU inside the call.',
+				},
+				{
+					text: 'The driver may compile or validate new state in the draw',
+					why: 'The driver resolves the hidden current state lazily; the first draw with a new combination can trigger a shader compile and full validation, right in the middle of your frame.',
+				},
+				{
+					text: 'OpenGL cannot use VRAM and streams everything over PCIe',
+					why: 'OpenGL drivers do keep buffers and textures in VRAM. The difference is that the driver, not you, decides where they live.',
+				},
+				{
+					text: 'OpenGL submits one triangle at a time to the GPU',
+					why: 'A draw call sends a whole batch of vertices, in OpenGL as in Vulkan. The hitch is not about how triangles are sent but about the hidden driver work around the draw.',
+				},
 			],
 			answer: 1,
-			explain: 'The driver resolves hidden state lazily; a new state combination can trigger compilation and validation inside the draw.',
+			ref: '#opengl-one-big-hidden-state-machine',
 		},
 		{
 			q: 'Where does Vulkan check that your API usage is correct?',
 			options: [
-				'In the driver, on every call, before the GPU sees it',
-				'In the GPU firmware, while it parses command buffers',
-				'In validation layers, enabled during development',
-				'Nowhere: an explicit API makes such mistakes impossible',
+				{
+					text: 'In the driver, on every call, before the GPU sees it',
+					why: 'A Vulkan driver assumes valid usage and skips these checks to stay thin. It still reports runtime failures such as out of memory, but not wrong parameters or wrong order.',
+				},
+				{
+					text: 'In the GPU firmware, while it parses command buffers',
+					why: 'The firmware executes commands; it does not know the API rules. By the time commands reach the GPU, the API calls are long gone.',
+				},
+				{
+					text: 'In validation layers, enabled during development',
+					why: 'Validation layers sit between the application and the driver and check every call against the specification, at a cost you only pay while developing.',
+				},
+				{
+					text: 'Nowhere: an explicit API makes such mistakes impossible',
+					why: 'Explicit means more decisions in your hands, so more room for mistakes: a forgotten barrier, an object destroyed too early. That is exactly why the validation layers exist.',
+				},
 			],
 			answer: 2,
-			explain: 'Vulkan drivers assume valid usage; validation layers are inserted between the app and the driver to check it.',
+			ref: '#underneath',
 		},
 		{
 			q: 'What does a Vulkan pipeline object replace?',
 			options: [
-				'Many small state calls that OpenGL checks at draw time',
-				'The swapchain and the window surface it presents to',
-				'The command buffer and the queue it is submitted to',
-				'The GPU memory allocator and its memory heaps',
+				{
+					text: 'Many small state calls that OpenGL checks at draw time',
+					why: 'A pipeline bakes shaders and fixed-function state into one object built ahead of time, so nothing needs to be compiled or checked at the draw.',
+				},
+				{
+					text: 'The swapchain and the window surface it presents to',
+					why: 'Those are presentation objects that show images in a window. A pipeline describes how to draw, not where the finished image goes.',
+				},
+				{
+					text: 'The command buffer and the queue it is submitted to',
+					why: 'A pipeline does not replace them: it is bound inside a command buffer, which is still submitted to a queue.',
+				},
+				{
+					text: 'The GPU memory allocator and its memory heaps',
+					why: 'Memory is a separate decision in Vulkan: you choose memory types and bind resources to them. A pipeline holds state, not memory.',
+				},
 			],
 			answer: 0,
-			explain: 'A pipeline bakes shaders and fixed-function state into one object built ahead of time.',
+			ref: '#vulkan-say-everything-up-front',
 		},
 	]}
 />

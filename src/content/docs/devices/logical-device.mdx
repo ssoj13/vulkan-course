@@ -12,6 +12,19 @@ import ObjectGraph from '../../../components/ObjectGraph.astro';
 We have chosen a GPU and found the queue family that can draw. Now we **open** the GPU: create a **logical device**
 (`VkDevice`). Almost every object from here on - buffers, images, pipelines, command pools - is created from it.
 
+## Where this fits
+
+This is the last step of the first section and the point where the **Vulkan API** layer reaches into the **driver**
+for real: until now we only read facts, now the driver sets up the GPU for our process. Before: the
+[physical device](lesson:physical-devices) and its [queue families](lesson:queue-families). The whole chain is
+complete:
+
+`GPU → driver → loader → VkInstance → VkPhysicalDevice → VkDevice → VkQueue`
+
+The logical device is built on a physical device plus our choices (features, queues, extensions); a queue is built on
+the device and one queue family. Every later module - presentation, pipelines, commands, memory - creates its objects
+from this device and submits its work to this queue.
+
 ## Physical vs logical
 
 - `VkPhysicalDevice` is the GPU *as it exists*: read-only facts.
@@ -95,46 +108,94 @@ validation error. Try the wrong order on purpose too - the messages are the real
 		{
 			q: 'How are queues created?',
 			options: [
-				'With vkCreateQueue, once the device exists',
-				'With the device, via VkDeviceQueueCreateInfo',
-				'By the instance, one queue for every family',
-				'Automatically, one queue per family, on first use',
+				{
+					text: 'With vkCreateQueue, once the device exists',
+					why: 'There is no vkCreateQueue. Queues cannot be added to a device later; they are all requested when the device is created.',
+				},
+				{
+					text: 'With the device, via VkDeviceQueueCreateInfo',
+					why: 'vkCreateDevice creates the queues described in its VkDeviceQueueCreateInfo entries; afterwards you only fetch their handles with vkGetDeviceQueue.',
+				},
+				{
+					text: 'By the instance, one queue for every family',
+					why: 'The instance knows nothing about queues. Queues belong to a logical device, and you decide how many of each family you want.',
+				},
+				{
+					text: 'Automatically, one queue per family, on first use',
+					why: 'Vulkan creates nothing you did not ask for: a family you did not request in the device create info has no queues in your device.',
+				},
 			],
 			answer: 1,
-			explain: 'Queue creation is part of vkCreateDevice; afterwards you only retrieve the handles.',
+			ref: '#1-which-queues',
 		},
 		{
 			q: 'Your chain contains VkPhysicalDeviceFeatures2. What must pEnabledFeatures be?',
 			options: [
-				'A pointer to the same features',
-				'Null',
-				'A pointer to VkPhysicalDeviceVulkan13Features',
-				'It does not matter',
+				{
+					text: 'A pointer to the same features',
+					why: 'Giving the 1.0 features twice is not allowed: with VkPhysicalDeviceFeatures2 in the chain, pEnabledFeatures must be null (VUID-VkDeviceCreateInfo-pNext-00373).',
+				},
+				{
+					text: 'Null',
+					why: 'VkPhysicalDeviceFeatures2 already carries the 1.0 features, so the old field must stay null (VUID-VkDeviceCreateInfo-pNext-00373).',
+				},
+				{
+					text: 'A pointer to VkPhysicalDeviceVulkan13Features',
+					why: 'pEnabledFeatures points to the 1.0 struct VkPhysicalDeviceFeatures only. The 1.3 struct goes into the pNext chain.',
+				},
+				{
+					text: 'It does not matter',
+					why: 'It matters: a non-null pEnabledFeatures together with VkPhysicalDeviceFeatures2 in the chain breaks a valid usage rule, and the validation layer reports it.',
+				},
 			],
 			answer: 1,
-			explain: 'VUID-VkDeviceCreateInfo-pNext-00373: with Features2 in the chain, pEnabledFeatures must be NULL.',
+			ref: '#2-which-features',
 		},
 		{
 			q: 'Why call vkDeviceWaitIdle before destroying the device?',
 			options: [
-				'So the GPU finishes all work that uses the device objects',
-				'To free the queues before the device is destroyed',
-				'Because the validation layer refuses to unload without it',
-				'To flush the remaining messages of the debug messenger',
+				{
+					text: 'So the GPU finishes all work that uses the device objects',
+					why: 'Objects must not be destroyed while the GPU may still use them, and the GPU runs behind the CPU; waiting for idle guarantees that all submitted work is done.',
+				},
+				{
+					text: 'To free the queues before the device is destroyed',
+					why: 'Queues are never freed separately: they belong to the device and go away with it. The wait is about unfinished GPU work, not about queues.',
+				},
+				{
+					text: 'Because the validation layer refuses to unload without it',
+					why: 'The layer unloads with the instance regardless. The wait exists for the GPU\'s sake: work still in flight must not lose its objects.',
+				},
+				{
+					text: 'To flush the remaining messages of the debug messenger',
+					why: 'The messenger belongs to the instance and calls your callback on the CPU as problems are found; vkDeviceWaitIdle waits for GPU work, not for messages.',
+				},
 			],
 			answer: 0,
-			explain: 'Objects must not be destroyed while the GPU may still use them; waiting for idle guarantees that.',
+			ref: '#5-clean-up',
 		},
 		{
 			q: 'Where are layers enabled in modern Vulkan?',
 			options: [
-				'On the device',
-				'On each queue',
-				'On the instance',
-				'In the shader',
+				{
+					text: 'On the device',
+					why: 'Device layers are an old, deprecated feature. The layer fields of the device create info are left empty.',
+				},
+				{
+					text: 'On each queue',
+					why: 'Queues have no layer settings. A layer sits in the loader\'s call chain and sees calls for all queues alike.',
+				},
+				{
+					text: 'On the instance',
+					why: 'Layers are enabled when the instance is created (or from outside through vkconfig), and then apply to every device made from it.',
+				},
+				{
+					text: 'In the shader',
+					why: 'Shaders run on the GPU and know nothing about layers, which are CPU libraries loaded by the loader.',
+				},
 			],
 			answer: 2,
-			explain: 'Device layers are deprecated; layers are enabled at instance creation (or through vkconfig).',
+			ref: '#3-create-the-device',
 		},
 	]}
 />

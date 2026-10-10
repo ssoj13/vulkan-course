@@ -11,6 +11,18 @@ import Step from '../../../components/Step.astro';
 Lesson 3 said that a Vulkan driver does not check whether you use the API correctly. Pass a wrong value and you may get a crash, a black screen, or -
 worst of all - something that works on your GPU and breaks on someone else's. This lesson turns the checks back on.
 
+## Where this fits
+
+We stay in the **loader & driver** layer, one level above the driver: a layer is a library the loader puts between
+your program and the driver. [Lesson 6](lesson:loader-and-instance) created the instance and listed layers and
+extensions; now we enable one of each. The chain:
+
+`VkInstance → VK_LAYER_KHRONOS_validation (checks) + VK_EXT_debug_utils → VkDebugUtilsMessengerEXT → our callback`
+
+The validation layer is built on the layer mechanism of the loader; the debug messenger is built on an instance
+extension and is a child of the instance. From here on every mistake in the following lessons, starting with
+[physical devices](lesson:physical-devices), arrives as a message instead of a mystery.
+
 ## The validation layer
 
 `VK_LAYER_KHRONOS_validation` is an explicit layer from the Vulkan SDK. It sits between your program and the driver
@@ -106,35 +118,71 @@ your own program without touching the code.
 		{
 			q: 'Why is the validation layer not enabled in a shipped program?',
 			options: [
-				'Its license forbids distributing it with applications',
-				'It only works with debug builds of the GPU driver',
-				'It checks every call and slows the program a lot',
-				'It switches the GPU into a slower diagnostic mode',
+				{
+					text: 'Its license forbids distributing it with applications',
+					why: 'Licensing is not the reason. The layer is a development tool: users do not need its checks, and its cost would slow down every call they make.',
+				},
+				{
+					text: 'It only works with debug builds of the GPU driver',
+					why: 'It works with the ordinary driver users have: it sits above the driver in the loader\'s chain and checks calls before they reach it.',
+				},
+				{
+					text: 'It checks every call and slows the program a lot',
+					why: 'It tracks the state of every object and checks every call against thousands of rules, which costs a lot of CPU time and memory. Ship without it.',
+				},
+				{
+					text: 'It switches the GPU into a slower diagnostic mode',
+					why: 'The core checks run on the CPU, inside the layer, and the GPU works as usual. Only the optional GPU-assisted mode changes what runs on the GPU, by instrumenting shaders.',
+				},
 			],
 			answer: 2,
-			explain: 'The layer tracks all object state and checks every call; that costs a lot of CPU time and memory.',
+			ref: '#the-validation-layer',
 		},
 		{
 			q: 'Why is the messenger create info also chained into the instance create info?',
 			options: [
-				'So vkCreateInstance and vkDestroyInstance are covered too',
-				'Because the messenger cannot be created without it',
-				'To make instance creation faster by sharing the struct',
-				'Because that is how the validation layer is enabled',
+				{
+					text: 'So vkCreateInstance and vkDestroyInstance are covered too',
+					why: 'The messenger object can exist only after the instance and must die before it, so the layer uses the chained copy to report on those two calls themselves.',
+				},
+				{
+					text: 'Because the messenger cannot be created without it',
+					why: 'The messenger is created by its own call from the instance and works without the chained copy; the copy only covers the instance\'s own creation and destruction.',
+				},
+				{
+					text: 'To make instance creation faster by sharing the struct',
+					why: 'Speed has nothing to do with it. The chained copy is there for coverage: without it, problems inside vkCreateInstance and vkDestroyInstance would go unreported.',
+				},
+				{
+					text: 'Because that is how the validation layer is enabled',
+					why: 'The layer is enabled by naming it in the instance\'s list of enabled layers. The messenger only decides where its messages go.',
+				},
 			],
 			answer: 0,
-			explain: 'The messenger object is made from the instance; the pNext copy covers the instance creation and destruction calls themselves.',
+			ref: '#4-create-the-instance-with-the-layer-then-the-messenger',
 		},
 		{
 			q: 'Which extension provides the debug messenger?',
 			options: [
-				'VK_KHR_surface',
-				'VK_EXT_debug_utils',
-				'VK_KHR_swapchain',
-				'VK_LAYER_KHRONOS_validation',
+				{
+					text: 'VK_KHR_surface',
+					why: 'VK_KHR_surface connects Vulkan to a window system so images can be shown; it has nothing to do with messages.',
+				},
+				{
+					text: 'VK_EXT_debug_utils',
+					why: 'VkDebugUtilsMessengerEXT belongs to this instance extension, which is why it must be enabled together with the layer.',
+				},
+				{
+					text: 'VK_KHR_swapchain',
+					why: 'VK_KHR_swapchain is a device extension for presenting images to a window, and we meet it in the presentation module. It does not deliver messages.',
+				},
+				{
+					text: 'VK_LAYER_KHRONOS_validation',
+					why: 'That is a layer, not an extension: it produces the messages, but the object that delivers them to your code comes from VK_EXT_debug_utils.',
+				},
 			],
 			answer: 1,
-			explain: 'VkDebugUtilsMessengerEXT belongs to the instance extension VK_EXT_debug_utils; VK_LAYER_KHRONOS_validation is a layer, not an extension.',
+			ref: '#getting-its-messages-the-debug-messenger',
 		},
 	]}
 />

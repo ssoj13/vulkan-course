@@ -10,6 +10,17 @@ import Quiz from 'course-kit/components/Quiz.astro';
 Vulkan is a way to give work to a GPU. Before we talk to it, let us see what kind of machine it is, because almost
 every strange rule in Vulkan comes from the shape of this machine.
 
+## Where this fits
+
+This is the bottom of the whole stack: the **hardware** layer. Nothing comes before it, and every later layer (the
+driver, the loader, the Vulkan objects) exists only to feed this machine with work. The chain inside the chip:
+
+`GPU → SMs / CUs → warps (lockstep groups) → threads, one per pixel or vertex`, plus `VRAM` next to it.
+
+A GPU is built from SMs, an SM runs warps, a warp is a group of threads that share one instruction stream. Keep that
+picture: when Vulkan later asks for big batches, explicit memory placement and explicit synchronization, the reason is
+always somewhere in this lesson. Next, [how a program gets work onto it](lesson:talking-to-gpu).
+
 ## Two kinds of processors
 
 A **CPU** has a few big, clever cores (8–24 on a desktop). Each core runs one long, branchy program very fast: it
@@ -67,35 +78,71 @@ to another one whenever the current one waits for memory. That is why GPUs want 
 		{
 			q: 'Why is a GPU fast at shading pixels?',
 			options: [
-				'Each of its cores is far faster than any CPU core',
-				'Many simple cores run one program on many pixels',
-				'It has much larger caches than a desktop CPU',
-				'It predicts branches better than CPU cores ever could',
+				{
+					text: 'Each of its cores is far faster than any CPU core',
+					why: 'It is the other way round: a GPU core is simpler than a CPU core and is slower on one long, branchy program. The speed comes from the number of cores, not from each one.',
+				},
+				{
+					text: 'Many simple cores run one program on many pixels',
+					why: 'Shading is the same small program for every pixel, which is exactly the work thousands of simple cores in lockstep groups are built for.',
+				},
+				{
+					text: 'It has much larger caches than a desktop CPU',
+					why: 'Big caches are the CPU\'s way to avoid waiting for memory. A GPU hides memory latency differently: an SM keeps many warps in flight and switches to another one while the current one waits.',
+				},
+				{
+					text: 'It predicts branches better than CPU cores ever could',
+					why: 'Branch prediction is a CPU strength. On a GPU, branches are a weak spot: when the threads of a warp disagree, both paths run one after another.',
+				},
 			],
 			answer: 1,
-			explain: 'GPU cores are simpler and slower than CPU cores; the speed comes from running thousands of them in parallel on the same program.',
+			ref: '#two-kinds-of-processors',
 		},
 		{
 			q: 'Half of a warp takes an if-branch and half takes the else-branch. What happens?',
 			options: [
-				'The warp splits into two independent warps that run at once',
-				'The GPU picks the faster branch for all of the threads',
-				'Both branches run one after another, idle lanes masked off',
-				'The driver recompiles the shader without the branch',
+				{
+					text: 'The warp splits into two independent warps that run at once',
+					why: 'A warp is a fixed hardware group that issues one instruction at a time for all its lanes; it does not split into two warps that run side by side.',
+				},
+				{
+					text: 'The GPU picks the faster branch for all of the threads',
+					why: 'That would give wrong results for half of the threads. The GPU must run the code each thread actually asked for, so both paths are executed.',
+				},
+				{
+					text: 'Both branches run one after another, idle lanes masked off',
+					why: 'The warp runs the if-path with the else-lanes switched off, then the else-path with the if-lanes switched off: same work, about twice the time.',
+				},
+				{
+					text: 'The driver recompiles the shader without the branch',
+					why: 'Shaders are compiled before they run, and which lanes take which path depends on the data of each warp. Divergence is handled by the hardware masking lanes, not by the driver.',
+				},
 			],
 			answer: 2,
-			explain: 'A warp executes one instruction stream in lockstep, so diverging paths run in sequence with some lanes idle.',
+			ref: '#lockstep-groups',
 		},
 		{
 			q: 'Why does Vulkan make you choose where a buffer lives?',
 			options: [
-				'VRAM is fast for the GPU; data crossing PCIe is far slower',
-				'VRAM is smaller than a CPU cache, so it must be shared',
-				'The CPU cannot write to any memory the GPU can read',
-				'OpenGL already made you choose it in exactly the same way',
+				{
+					text: 'VRAM is fast for the GPU; data crossing PCIe is far slower',
+					why: 'On the RTX 3080 Ti, VRAM gives about 912 GB/s and the PCIe 4.0 x16 link about 32 GB/s, so placement decides performance and Vulkan leaves that decision to you.',
+				},
+				{
+					text: 'VRAM is smaller than a CPU cache, so it must be shared',
+					why: 'VRAM is measured in gigabytes (12 GB on an RTX 3080 Ti); caches are megabytes. The choice is about speed of access, not about running out of a tiny memory.',
+				},
+				{
+					text: 'The CPU cannot write to any memory the GPU can read',
+					why: 'It can: some memory is visible to both, and the CPU writes into it directly. Such memory is just slower for the GPU than its own VRAM, which is why the choice matters.',
+				},
+				{
+					text: 'OpenGL already made you choose it in exactly the same way',
+					why: 'OpenGL only took usage hints (such as GL_STATIC_DRAW) and the driver decided where the data went. Making the placement explicit is new in Vulkan.',
+				},
 			],
 			answer: 0,
-			explain: 'Device memory is fast for the GPU; host memory reached over PCIe is much slower, so placement matters and Vulkan makes it explicit.',
+			ref: '#its-own-memory',
 		},
 	]}
 />
