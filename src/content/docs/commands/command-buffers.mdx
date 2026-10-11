@@ -74,8 +74,9 @@ multithreaded renderer gives every thread its own pool.
 
 `vkAllocateCommandBuffers` takes buffers from the pool. **Primary** buffers are submitted to a queue; **secondary**
 buffers are recorded separately and executed from inside a primary one (useful for recording on several threads).
-With one frame in flight, one primary buffer is all we need. Command buffers are not destroyed one by one: they go back
-with their pool.
+With one frame in flight, one primary buffer is all we need. There is no `vkDestroyCommandBuffer`: a command buffer goes
+back to its pool, either on its own with `vkFreeCommandBuffers` or together with all the others when the pool is
+destroyed.
 
 ## 4. Begin recording
 

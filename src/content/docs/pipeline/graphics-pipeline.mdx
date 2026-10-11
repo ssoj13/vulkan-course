@@ -105,7 +105,7 @@ The promise has a counterpart: a dynamic state must be set before the draw that 
 <Step file="08_pipeline" region="create-pipeline" />
 
 `VkGraphicsPipelineCreateInfo` collects everything: the stages, each state block, the dynamic state list and the
-layout. Two members of the old Vulkan 1.0 style stay empty: `renderPass` is null, because the formats of the images we
+layout. One member of the old Vulkan 1.0 style stays empty: `renderPass` is null, because the formats of the images we
 draw into come through the `pNext` chain instead (`VkPipelineRenderingCreateInfo`, see
 [dynamic rendering](lesson:dynamic-rendering#1-the-pipeline-states-formats-only)).
 

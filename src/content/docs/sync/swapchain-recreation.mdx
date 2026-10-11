@@ -15,9 +15,10 @@ presentation engine may still be using?
 
 ## Where this fits
 
-The last lesson of the synchronization module, and the place where synchronization meets the window system. It
-brings the swapchain from [module 4](lesson:swapchain) back, and uses every tool of this module on it: fences, a new
-kind of fence for presents, and `vkDeviceWaitIdle` as the blunt fallback. The chain:
+The last lesson of the synchronization module, and the place where synchronization meets the window system. It works
+on the Vulkan API layer; on the other side of the swapchain stands the presentation engine, part of the loader and
+driver layer. It brings the swapchain from [module 4](lesson:swapchain) back, and uses every tool of this module on
+it: fences, a new kind of fence for presents, and `vkDeviceWaitIdle` as the blunt fallback. The chain:
 
 `window event / OUT_OF_DATE / SUBOPTIMAL → vkCreateSwapchainKHR(oldSwapchain) → the old swapchain is retired → wait until its presents are done (present fences, or vkDeviceWaitIdle) → destroy the old chain`
 

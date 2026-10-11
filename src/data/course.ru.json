@@ -35,7 +35,7 @@
       "summary": "Открываем окно, связываем с ним Vulkan через surface и строим swapchain — кольцо изображений, которые экран показывает по очереди.",
       "lessons": {
         "window-and-surface": { "title": "Окно и его surface", "short": "Окно и surface", "summary": "Vulkan не знает про окна: расширения WSI, VkSurfaceKHR и вопрос к GPU, что он может показать в нашем окне." },
-        "swapchain": { "title": "Swapchain и режимы показа", "short": "Swapchain", "summary": "Кольцо изображений во владении presentation engine: формат, режим показа, размер и число изображений." },
+        "swapchain": { "title": "Swapchain и present mode", "short": "Swapchain", "summary": "Кольцо изображений во владении presentation engine: формат, present mode, размер и число изображений." },
         "image-views": { "title": "Изображения и image view", "short": "Image view", "summary": "Что такое VkImage и почему рендеринг и шейдеры смотрят на изображения через VkImageView." }
       }
     },
@@ -46,7 +46,7 @@
         "shaders-and-spirv": { "title": "Шейдеры, Slang и SPIR-V", "short": "Шейдеры и SPIR-V", "summary": "От исходника шейдера к SPIR-V и к VkShaderModule: единственный двоичный формат шейдеров в Vulkan и путь нашего шейдера треугольника." },
         "graphics-pipeline": { "title": "Объект графического пайплайна", "short": "Графический пайплайн", "summary": "Все стадии от входа вершин до смешивания цветов, зашитые в один VkPipeline, и состояние, оставленное динамическим." },
         "pipeline-layout": { "title": "Pipeline layout", "summary": "Объявление всех ресурсов, которые могут читать шейдеры пайплайна: layout наборов дескрипторов и диапазоны push-констант." },
-        "dynamic-rendering": { "title": "Dynamic rendering", "summary": "Рендеринг в image view, названные прямо при записи команд: attachments, операции load и store и то, что пришло на смену VkRenderPass." }
+        "dynamic-rendering": { "title": "Dynamic rendering", "summary": "Рендеринг в image view, названные прямо при записи команд: аттачменты, операции load и store и то, что пришло на смену VkRenderPass." }
       }
     },
     "commands": {
