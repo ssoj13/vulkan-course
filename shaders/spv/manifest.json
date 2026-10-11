@@ -31,6 +31,17 @@
 			]
 		},
 		{
+			"source": "debug_printf.slang",
+			"sourceSha256": "7745bc61b6519b488fe6251f9353136b22a46b1afc074eab96ae594d6bc88f48",
+			"outputs": [
+				{
+					"file": "debug_printf.spv",
+					"bytes": 1196,
+					"sha256": "9078ff91cc023c80492ad66be4cea3ac6ad78f6542a5b1ec83f3fc2c027f226d"
+				}
+			]
+		},
+		{
 			"source": "device_address.slang",
 			"sourceSha256": "8921f29ee05fa33e093388d08339ef7b6b20b3258ff10242a6a27dc3b64c3606",
 			"outputs": [

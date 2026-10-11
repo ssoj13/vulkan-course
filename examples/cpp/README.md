@@ -68,6 +68,8 @@ as `SHADER_DIR` by CMake), the same file the Rust examples embed. It is compiled
 | 25 | `src/25_compute.cpp` | compute pipelines: SAXPY + groupshared workgroup reduction; LocalSize read from the SPIR-V, compute limits, subgroupSize, ceil-div `dispatch`, COMPUTE -> HOST barrier, HOST_CACHED readback (`--uncached`), timestamps, exact CPU check; no window |
 | 26 | `src/26_particles.cpp` | particles in one STORAGE_BUFFER \| VERTEX_BUFFER buffer: compute `init`/`simulate`, drawn as points in the same command buffer; WAR/RAW barriers across frames in flight (`--count`) |
 | 27 | `src/27_async_compute.cpp` | the simulation on a compute-only queue family: ping-pong buffers, CONCURRENT sharing, two timeline semaphores, timestamps on both queues measure the overlap; `--same-queue` |
+| 28 | `src/28_debug_labels.cpp` | VK_EXT_debug_utils: names on every object, nested command-buffer labels + an inserted label, queue labels around submit + present, messenger prints objects and labels; `--printf` (`shaders/debug_printf.slang`) |
+| 29 | `src/29_gpu_queries.cpp` | timestamps per pass, pipeline statistics vs predictions, host query reset, calibrated timestamps (submit -> GPU start latency); `--frames N`, `--no-stats` |
 
 Lessons embed code by `// #region <name>` ... `// #endregion` markers; the names
 match the Rust examples.
