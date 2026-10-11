@@ -119,12 +119,14 @@ to the next frame, and only the wait-fence of the *next use* of a slot brings th
 <Step file="10_frames_in_flight" region="cleanup" />
 
 With several frames in flight, more than one submission may still be running when the window closes, so one
-`vkDeviceWaitIdle` before destroying anything replaces "wait for the last fence". It waits for all work submitted to
-the queues, which is what destroying the swapchain requires (`VUID-vkDestroySwapchainKHR-swapchain-01282`).
+`vkDeviceWaitIdle` before destroying anything replaces "wait for the last fence". It waits for queue work: our
+submissions and the presents' queue operations (their semaphore waits). It does not wait for the presentation engine;
+present fences (`VK_KHR_swapchain_maintenance1`, in [swapchain recreation](lesson:swapchain-recreation)) exist to know
+when a present's resources can be released.
 
 ## What the program prints
 
-With the defaults (two frames in flight), Rust:
+With the defaults (two frames in flight), Rust, release build:
 
 ```text
 Command pool + 2 primary command buffer(s)
@@ -132,11 +134,11 @@ Sync objects: 2 fence(s), 2 + 3 semaphores (2 frame(s) in flight)
 Simulated work per frame: 2 ms on the CPU, 5000 triangle instances on the GPU
 
 Rendering. Close the window to exit.
-[timing] 1s: 384 frames, 384 fps; fence wait 0.055 ms/frame (2.1% of the time), acquire 0.009 ms/frame
-[timing] 2s: 408 frames, 407 fps; fence wait 0.052 ms/frame (2.1% of the time), acquire 0.009 ms/frame
-[timing] 3s: 369 frames, 369 fps; fence wait 0.053 ms/frame (1.9% of the time), acquire 0.009 ms/frame
+[timing] 1s: 417 frames, 417 fps; fence wait 0.048 ms/frame (2.0% of the time), acquire 0.008 ms/frame
+[timing] 2s: 419 frames, 419 fps; fence wait 0.049 ms/frame (2.0% of the time), acquire 0.008 ms/frame
+[timing] 3s: 427 frames, 427 fps; fence wait 0.047 ms/frame (2.0% of the time), acquire 0.007 ms/frame
 Window closed
-[timing] total with 2 frame(s) in flight: 1557 frames in 4.0 s, 389 fps; fence wait 0.053 ms/frame (2.1% of the time), acquire 0.009 ms/frame
+[timing] total with 2 frame(s) in flight: 1678 frames in 4.0 s, 419 fps; fence wait 0.048 ms/frame (2.0% of the time), acquire 0.008 ms/frame
 ```
 
 (Shortened: the lines before are the setup of step 09.) Lines that start with `[timing]` depend on the machine and the
@@ -145,29 +147,30 @@ warning from the [validation lesson](lesson:validation).
 
 ## The measurement
 
-Each run: 4 seconds, defaults otherwise, validation on, the course machine (RTX 3080 Ti) shared with
-other work. The total lines of all six runs:
+Each run: 4 seconds, defaults otherwise, validation on (synchronization validation off), release builds of both
+languages, the course machine (RTX 3080 Ti). The machine was shared with other work, so the runs alternated (Rust and
+C++, frames 1, 2, 3, five rounds), and the table shows the **medians of 5 runs** per configuration, taken from the
+total lines:
 
 | Frames in flight | fps, Rust / C++ | Fence wait per frame, Rust / C++ | Share of time in the fence wait |
 |---|---|---|---|
-| 1 | 217 / 217 | 1.868 / 1.922 ms | 40.4% / 41.8% |
-| 2 | 389 / 419 | 0.053 / 0.051 ms | 2.1% / 2.1% |
-| 3 | 393 / 395 | 0.053 / 0.061 ms | 2.1% / 2.4% |
+| 1 | 227 / 228 | 2.032 / 2.072 ms | 46.3% / 47.4% |
+| 2 | 419 / 432 | 0.048 / 0.048 ms | 2.0% / 2.1% |
+| 3 | 420 / 429 | 0.047 / 0.046 ms | 2.0% / 2.0% |
 
-(The Rust binary of these runs was a debug build, the C++ one a release build; the work per frame is dominated by the
-fixed 2 ms busy loop and by the GPU, so the two agree closely.)
+The two languages are within 1% of each other with one frame in flight and 2-3% apart with two and three (C++ ahead);
+the shape of the result is the same in both.
 
-Reading the numbers:
+Reading the numbers (Rust; C++ is the same within those few percent):
 
-- **One frame**: 217 fps is 4.6 ms per frame. Of that, 2 ms is the simulated CPU work and 1.87 ms is waiting for the
-  GPU; the remaining ~0.7 ms is the real CPU work of a frame (recording, the validation layer checking every call,
+- **One frame**: 227 fps is 4.41 ms per frame. Of that, 2 ms is the simulated CPU work and 2.03 ms is waiting for the
+  GPU; the remaining ~0.38 ms is the real CPU work of a frame (recording, the validation layer checking every call,
   submit, present). The two sides add up.
-- **Two frames**: 389 fps is 2.6 ms per frame, the CPU's own 2.6 ms (2 ms of work, ~0.5 ms of the rest). The fence wait
-  has dropped from 1.87 ms to 0.05 ms: the GPU's work is now completely hidden behind the CPU's. The frame rate nearly
-  doubled without making anything faster.
-- **Three frames**: no further gain. The CPU is the bottleneck now, and a third slot only lets the CPU run further
-  ahead of a GPU that is already never waited for.
-
+- **Two frames**: 419 fps is 2.39 ms per frame: 2 ms of work, 0.05 ms of fence wait and ~0.34 ms of the rest, the same
+  ~0.35 ms as with one frame. The fence wait has dropped from 2.03 ms to 0.05 ms: the GPU's work is now completely
+  hidden behind the CPU's. The frame rate nearly doubled without making anything faster.
+- **Three frames**: no further gain (420 against 419, well inside the noise). The CPU is the bottleneck now, and a
+  third slot only lets the CPU run further ahead of a GPU that is already never waited for.
 The extra slot is not free either: each frame in flight is one more frame between "the CPU read the input" and "the
 image reaches the screen". That is why two is the usual choice, and why engines that care about latency keep it at two
 or even make it adaptive.
@@ -181,7 +184,7 @@ or even make it adaptive.
 - With one frame in flight the GPU's queue runs dry at the end of every frame: the command processor finishes the
   batch, and there is nothing behind it until the CPU has recorded and submitted the next one. With two, the next
   batch is usually already queued when the current one ends, so the GPU goes from one frame straight to the next.
-- The CPU side of "waiting" is `vkWaitForFences` blocking a thread; the measured 1.87 ms per frame is time the driver
+- The CPU side of "waiting" is `vkWaitForFences` blocking a thread; the measured 2.03 ms per frame is time the driver
   spent letting our thread sleep or spin until the GPU reported the frame complete.
 - MAILBOX lets the GPU render far faster than the display refreshes: a newer frame replaces the one waiting for the
   vblank. With FIFO, the loop would block in the acquire or the present instead, and the frame rate would be capped

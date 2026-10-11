@@ -1027,12 +1027,14 @@ impl Vk {
         // #region cleanup
         // First wait until the GPU is idle: with several frames in flight more
         // than one submission may still be running, and nothing they use may be
-        // destroyed before. The wait covers all work submitted to the queues,
-        // which is what destroying the swapchain needs
-        // (VUID-vkDestroySwapchainKHR-swapchain-01282); it does not wait for the
-        // presentation engine (step 11). `destroy` runs whenever the event loop
-        // ends, also after an error. Then the per-frame objects (the pool frees
-        // the command buffers), then everything from steps 07-08 in reverse order.
+        // destroyed before. vkDeviceWaitIdle waits for the queue work: our
+        // submissions and the presents' queue operations (their semaphore
+        // waits). It does not wait for the presentation engine; present fences
+        // (VK_KHR_swapchain_maintenance1, step 11) exist to know when a
+        // present's resources can be released. `destroy` runs whenever the
+        // event loop ends, also after an error. Then the per-frame objects (the
+        // pool frees the command buffers), then everything from steps 07-08 in
+        // reverse order.
         // SAFETY: plain call on a live device.
         let waited = unsafe { self.device.device_wait_idle() };
         if let Err(e) = &waited {

@@ -933,10 +933,11 @@ try {
     // #region cleanup
     // First wait until the GPU is idle: with several frames in flight more than
     // one submission may still be running, and nothing they use may be
-    // destroyed before. The wait covers all work submitted to the queues, which
-    // is what destroying the swapchain needs
-    // (VUID-vkDestroySwapchainKHR-swapchain-01282); it does not wait for the
-    // presentation engine (step 11). This explicit wait reports an error as an
+    // destroyed before. vkDeviceWaitIdle waits for the queue work: our
+    // submissions and the presents' queue operations (their semaphore waits).
+    // It does not wait for the presentation engine; present fences
+    // (VK_KHR_swapchain_maintenance1, step 11) exist to know when a present's
+    // resources can be released. This explicit wait reports an error as an
     // exception; idleGuard (declared before the loop) also waits on its way out,
     // which covers the paths where a frame threw. Then RAII destroys in reverse
     // order of declaration: the per-frame objects, the pool, then everything

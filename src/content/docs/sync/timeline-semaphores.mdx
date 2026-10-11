@@ -48,10 +48,12 @@ least one semaphore signal operation" meets its criteria. And the host can take 
 fence, there is nothing to reset, and one object covers every frame.
 
 The CPU analogy is an atomic 64-bit counter paired with a condition variable, "sleep until the counter is at least
-*n*". D3D12 programmers know it as `ID3D12Fence`, and the two are close enough that the spec recommends importing a D3D12
-fence handle into a timeline semaphore. Where the analogy breaks: the counter must never be set backwards or to the same
-value, values far apart may exceed the device limit `maxTimelineSemaphoreValueDifference`
-(`VUID-VkSubmitInfo2-semaphore-03883`), and GPU-side waits happen inside the queue, not on any thread.
+*n*". D3D12 programmers know it as `ID3D12Fence`: the issues of `VK_KHR_timeline_semaphore` call D3D12 fence objects
+"semantically close/identical" to it, and `VK_KHR_external_semaphore_win32` can import a D3D12 fence handle into a
+`VkSemaphore`. Where the analogy breaks: the counter must never be set backwards or to the same value, a signaled value
+must not differ from the current value, or from the value of any outstanding wait or signal, by more than the device limit
+`maxTimelineSemaphoreValueDifference` (`VUID-VkSubmitInfo2-semaphore-03883`), and GPU-side waits happen inside the
+queue, not on any thread.
 
 ## Why acquire and present stay binary
 
@@ -106,8 +108,11 @@ One batch, three semaphore operations:
 
 - **wait** on `image_available` (binary) at the stage `BLIT`. Rendering into the offscreen image does not need the
   swapchain image, so it may run before the presentation engine has released it; only barrier 2 and the blit wait.
-  That is the stage-mask precision of the [first lesson](lesson:fences-and-semaphores#semaphores-one-queue-operation-tells-another),
-  now with a real benefit;
+  That holds only because no barrier in front of the rendering has `BLIT` in its source stage: a barrier whose first
+  scope overlaps the wait's stage chains behind the wait, and so does everything it holds back. The
+  [barriers lesson](lesson:barriers-and-layouts#2-the-five-barriers) shows how step 12 keeps it that way. That is the
+  stage-mask precision of the [first lesson](lesson:fences-and-semaphores#semaphores-one-queue-operation-tells-another);
+  whether it buys time on a given machine is a measurement, and on the course machine it did not (same lesson);
 - **signal** `render_finished` (binary) at `BLIT`, for the present;
 - **signal** the timeline with value *n* at `ALL_COMMANDS`: the counter becomes *n* once everything in the batch, and
   everything submitted before it on the queue, has completed. The value of a binary semaphore operation is ignored.
@@ -121,8 +126,9 @@ greater than the last one: the rule "a timeline only grows" is kept by construct
 
 The timeline tells when *our* work is done: waiting for the last frame's number covers every submission. Destroying the
 swapchain, though, also requires the presents to be finished (`VUID-vkDestroySwapchainKHR-swapchain-01282`), and the
-counter knows nothing about the presentation engine. So `vkDeviceWaitIdle` stays. Present fences, the precise answer
-to "is the present done", are part of the [next lesson](lesson:swapchain-recreation).
+counter knows nothing about them. So `vkDeviceWaitIdle` stays: it waits for queue work, the presents' queue operations
+included; it does not wait for the presentation engine. Present fences, which exist to know when a present's
+resources can be released, are part of the [next lesson](lesson:swapchain-recreation).
 
 ## What the program prints
 
@@ -154,17 +160,23 @@ Frame 4: slot 1, the CPU waits until the counter reaches 2, the submit will sign
 [timing] frame 4: the counter read after the wait: 3
 Frame 5: slot 0, the CPU waits until the counter reaches 3, the submit will signal 5
 [timing] frame 5: the counter read after the wait: 4
+[timing] 1s, GPU timestamps of 1825 frames: render 3.8 us avg, 7.0 us max; render done -> blit done 6.7 us avg, 8.2 us max
+[timing] 2s, GPU timestamps of 2056 frames: render 3.8 us avg, 5.2 us max; render done -> blit done 6.7 us avg, 8.2 us max
+[timing] 3s, GPU timestamps of 2144 frames: render 5.3 us avg, 10.7 us max; render done -> blit done 10.4 us avg, 22.5 us max
+[timing] 4s, GPU timestamps of 2134 frames: render 10.5 us avg, 16.6 us max; render done -> blit done 22.8 us avg, 37.9 us max
 Window closed
-[timing] timeline counter at exit: 7853 (7853 frames submitted)
+[timing] timeline counter at exit: 8161 (8161 frames submitted)
 ```
 
 The first five frames print what they wait for and what they signal. The `[timing]` lines are the interesting ones:
 frame 3 waits for 1 but reads 2. "≥ 1" was satisfied, and by the time the CPU looked, the GPU had also finished frame
-2. A fence per slot could not have told us that; a counter tells everything at once. Those lines depend on the moment
-(a busier machine reads exactly the wait value), the rest is identical in C++. With synchronization validation on
-(`VK_KHRONOS_VALIDATION_VALIDATE_SYNC=true`), as in this run, the only message is the bandicam layer warning.
+2. A fence per slot could not have told us that; a counter tells everything at once. Those lines depend on the moment,
+the rest is identical in C++. With synchronization validation on (`VK_KHRONOS_VALIDATION_VALIDATE_SYNC=true`), as in
+this run, the only message is the bandicam layer warning. The once-per-second `[timing]` lines with GPU timestamps
+belong to the [barriers lesson](lesson:barriers-and-layouts#does-the-rendering-really-run-before-the-acquire).
 
-With one frame in flight (`--frames 1`) every frame waits for the one just before it, which is step 09's rhythm:
+With one frame in flight (`--frames 1`) every frame waits for the one just before it, which is step 09's rhythm
+(shortened):
 
 ```text
 Frame 1: slot 0, no earlier frame used this slot, the submit will signal 1
@@ -174,7 +186,7 @@ Frame 3: slot 0, the CPU waits until the counter reaches 2, the submit will sign
 [timing] frame 3: the counter read after the wait: 2
 ```
 
-With three (`--frames 3`) the CPU runs up to three frames ahead:
+With three (`--frames 3`) the CPU runs up to three frames ahead (shortened):
 
 ```text
 Frame 1: slot 0, no earlier frame used this slot, the submit will signal 1
@@ -203,9 +215,10 @@ still reading.
 - A timeline semaphore maps naturally onto how GPUs report progress: a 64-bit value in memory that the command
   processor writes when work completes, and that a waiting queue or the host compares against. On Windows the driver
   model has such progress counters of its own (the same idea as D3D12 fences), and Vulkan can import a D3D12 fence
-  handle into a timeline semaphore.
-- A binary semaphore has to be implemented with extra state (signaled or not, consumed by one wait); the swapchain's
-  acquire and present were built around that model, and that is why they still require it.
+  handle into a `VkSemaphore` (`VK_KHR_external_semaphore_win32`).
+- A binary semaphore carries extra state (signaled or not, consumed by one wait). What the spec requires is only that
+  the swapchain's acquire and present take binary semaphores (the VUIDs above); it gives no reason, and we do not
+  guess one.
 - Waiting on the host with `vkWaitSemaphores` is the same kind of host wait as `vkWaitForFences`: the driver lets our
   thread sleep or spin until the value is reached. The frame rate does not change by switching; the bookkeeping does.
 

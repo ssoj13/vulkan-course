@@ -137,7 +137,7 @@ separate calls may not.
 ## Step 12: render, blit, present
 
 Step 12 renders the triangle into a 400x300 **offscreen** image and then **blits** it (a copy that may scale) onto the
-800x600 swapchain image. Two images, three kinds of work, four hand-overs.
+800x600 swapchain image. Two images, three kinds of work, five barriers.
 
 ### 1. The offscreen image
 
@@ -154,7 +154,7 @@ There is **one** offscreen image for all frames in flight. That is deliberate: i
 between two frames necessary, and it is what real renderers do with big intermediate images they do not want to
 duplicate.
 
-### 2. The four barriers
+### 2. The five barriers
 
 <Step file="12_timeline" region="barriers" />
 
@@ -162,19 +162,20 @@ Each barrier is "after *this* (stage + access), before *that* (stage + access)",
 
 | # | Image | Layout | After (src stage / access) | Before (dst stage / access) | Why |
 |---|---|---|---|---|---|
-| 1 | offscreen | `UNDEFINED → COLOR_ATTACHMENT_OPTIMAL` | `BLIT` / `NONE` | `COLOR_ATTACHMENT_OUTPUT` / `COLOR_ATTACHMENT_WRITE` | WAR: the previous frame's blit still reads this image |
+| 1 | offscreen | `UNDEFINED → COLOR_ATTACHMENT_OPTIMAL` | `COLOR_ATTACHMENT_OUTPUT` / `NONE` | `COLOR_ATTACHMENT_OUTPUT` / `COLOR_ATTACHMENT_WRITE` | WAW with the previous frame's color writes; chained behind barrier 5, so also after the previous frame's blit |
 | 2 | swapchain | `UNDEFINED → TRANSFER_DST_OPTIMAL` | `BLIT` / `NONE` | `BLIT` / `TRANSFER_WRITE` | waits for the acquire: the submit waits on `image_available` at `BLIT` |
 | 3 | offscreen | `COLOR_ATTACHMENT_OPTIMAL → TRANSFER_SRC_OPTIMAL` | `COLOR_ATTACHMENT_OUTPUT` / `COLOR_ATTACHMENT_WRITE` | `BLIT` / `TRANSFER_READ` | RAW: render → copy |
 | 4 | swapchain | `TRANSFER_DST_OPTIMAL → PRESENT_SRC_KHR` | `BLIT` / `TRANSFER_WRITE` | `BLIT` / `NONE` | before `render_finished` is signaled at `BLIT` |
+| 5 | offscreen | none (`TRANSFER_SRC_OPTIMAL` stays) | `BLIT` / `NONE` | `COLOR_ATTACHMENT_OUTPUT` / `NONE` | WAR: the next frame writes the image this blit reads |
 
-Barrier by barrier:
+Barrier by barrier, in the order they run:
 
 1. **Before rendering into the offscreen image.** The old contents do not matter (we clear), so the old layout is
-   `UNDEFINED`. But the image is not idle: the *previous* frame's blit reads it, and that blit may still be running
-   (frames in flight!). This frame's transition and clear are writes; the earlier blit is a read. WAR: an execution
-   dependency is enough, so the source is the stage `BLIT` with access `NONE`. The previous frame's blit is in another
-   command buffer and another submission; the barrier's first scope reaches it anyway, because it is earlier in
-   submission order on the same queue.
+   `UNDEFINED`. But the image is not idle: the *previous* frame wrote it (its rendering) and read it (its blit), and with
+   frames in flight both may still be running. This frame's transition and clear are writes. The source stage is
+   `COLOR_ATTACHMENT_OUTPUT`, and that one stage covers both conflicts, explained in detail
+   [below](#where-two-frames-meet). The previous frame is in another command buffer and another submission; the
+   barrier's first scope reaches it anyway, because it is earlier in submission order on the same queue.
 2. **Before the blit writes the swapchain image.** The image has just been acquired; its old contents do not matter.
    The source stage `BLIT` is the stage at which the submit waits on `image_available`, so the transition is chained
    behind the semaphore wait and cannot start before the presentation engine has released the image.
@@ -184,13 +185,52 @@ Barrier by barrier:
 4. **Before presenting.** The blit's writes are made available; the destination is `BLIT` with no access, the stage at
    which `render_finished` is signaled, so the transition is ordered before the signal. The present needs no access
    mask: the presentation engine makes the writes visible to itself.
+5. **After the blit, for the next frame.** The blit only *reads* the offscreen image, and the next frame will write it.
+   WAR: an execution dependency is enough, so both access masks are `NONE`, and the layout stays. The destination stage
+   `COLOR_ATTACHMENT_OUTPUT` holds back the color output of every later command on the queue: the next frame's barrier 1
+   and its rendering. With old and new layout equal, an image barrier is a pure dependency, no transition.
+
+### Why the WAR protection sits at the end of the frame
+
+The obvious place for "wait for the previous frame's blit" is barrier 1 itself, with `BLIT` as its source stage. An
+earlier version of step 12 did exactly that, and it was correct, but it quietly cancelled the reason the semaphore
+wait is at `BLIT`. Two rules meet here:
+
+- a semaphore wait's second synchronization scope is the wait's stage mask (and logically later stages) of every
+  command in the batch, so `image_available` holds back the `BLIT` stage of this frame's commands;
+- dependencies chain when the second scope of one overlaps the first scope of the next. A barrier at the start of the
+  frame with source stage `BLIT` has a first scope that overlaps the wait's second scope, so it is ordered after the
+  wait, and so is everything in *its* second scope: the transition, the clear and the draw.
+
+So with `BLIT` in barrier 1, the rendering waited for the acquire after all, which is exactly what waiting at `BLIT`
+was meant to avoid. The fix moves the `BLIT` dependency to where the read happens: barrier 5, at the end of the
+frame that blits. Barrier 1 then names only `COLOR_ATTACHMENT_OUTPUT`, a graphics stage that is not logically later
+than `BLIT` (transfer stages have their own order), so its first scope no longer overlaps the wait, and nothing chains
+the rendering to the acquire. The next frame is still ordered after this frame's blit: barrier 5's second scope
+(`COLOR_ATTACHMENT_OUTPUT` of every later command in submission order) overlaps barrier 1's first scope
+(`COLOR_ATTACHMENT_OUTPUT` of every earlier command), so the chain blit → barrier 5 → barrier 1 → transition and clear
+holds across the two submissions.
+
+### Where two frames meet
+
+At barrier 1 of frame N the offscreen image has two earlier users from frame N-1, and the one source stage covers both:
+
+- **WAW with frame N-1's color writes.** Frame N's transition and clear are writes after writes. A WAW conflict needs
+  a memory dependency: the earlier writes must be made available, or they could land after the new ones. Barrier 3 of
+  frame N-1 already made them available (`COLOR_ATTACHMENT_WRITE` in its source access), and barrier 1's source stage
+  `COLOR_ATTACHMENT_OUTPUT` orders frame N's writes after them in execution. Availability is done once; it does not
+  have to be repeated, so the source access of barrier 1 stays `NONE`.
+- **WAR with frame N-1's blit read.** Covered by the chain through barrier 5, as above.
+
+Synchronization validation (next section) tracks exactly these accesses and reports neither conflict.
 
 ### 3. Render into the offscreen image
 
 <Step file="12_timeline" region="render" />
 
 Barrier 1, then the dynamic rendering of the [first triangle](lesson:first-triangle#two-layout-transitions), only
-smaller: render area, viewport and scissor are 400x300.
+smaller: render area, viewport and scissor are 400x300. The query and timestamp calls around it belong to the
+[measurement](#does-the-rendering-really-run-before-the-acquire) at the end of this lesson.
 
 ### 4. Blit to the swapchain image
 
@@ -200,20 +240,22 @@ Barriers 2 and 3 go into **one** `vkCmdPipelineBarrier2` call: they concern diff
 other. Then the blit: the whole 400x300 source onto the whole swapchain image, scaled by 2 with `NEAREST` filtering, so
 each rendered pixel becomes a 2x2 block on screen. `vkCmdBlitImage2` names the layouts the images are in at that moment,
 and they must be the real ones (`VUID-VkBlitImageInfo2-srcImageLayout-00221`, `VUID-VkBlitImageInfo2-dstImageLayout-00226`):
-that is what barriers 2 and 3 arranged. Barrier 4 closes the command buffer.
+that is what barriers 2 and 3 arranged. Barriers 4 and 5, again independent images in one call, close the command
+buffer.
 
 ## Proof: take one stage away
 
 A barrier that is too weak usually *works* on your machine: the timing happens to be right. The Khronos validation
 layer has a mode that tracks every access and every barrier and reports hazards: **synchronization validation**,
-switched on here with the environment variable `VK_KHRONOS_VALIDATION_VALIDATE_SYNC=true`. With it, steps 10-12 run
-without a single message (apart from the bandicam layer's warning).
+switched on here with the environment variable `VK_KHRONOS_VALIDATION_VALIDATE_SYNC=true`. With it, steps 10, 11 and
+12 run without a single message apart from the bandicam layer's warning: both languages, step 10 with the defaults,
+step 11 with `--demo-resize` with and without present fences, step 12 with the barriers above.
 
-Then we removed the source stage `BLIT` from barrier 1, the WAR barrier. The layer reported (handles differ from run to
-run):
+Then we removed the source stage `BLIT` from barrier 5, the WAR barrier at the end of the frame (its source became
+`NONE`). The layer reported (handles differ from run to run):
 
 ```text
-[ERROR][VALIDATION] vkQueueSubmit2(): WRITE_AFTER_READ hazard detected. vkCmdPipelineBarrier2 (from VkCommandBuffer 0x257007310d0 submitted on the current VkQueue 0x257003c14d0) writes to VkImage 0x1b000000001b, which was previously read by vkCmdBlitImage2 (from VkCommandBuffer 0x2570072d8d0 submitted on VkQueue 0x257003c14d0). 
+[ERROR][VALIDATION] vkQueueSubmit2(): WRITE_AFTER_READ hazard detected. vkCmdPipelineBarrier2 (from VkCommandBuffer 0x25b9ab310d0 submitted on the current VkQueue 0x25b9a7d14d0) writes to VkImage 0x1b000000001b, which was previously read by vkCmdBlitImage2 (from VkCommandBuffer 0x25b9ab2d8d0 submitted on VkQueue 0x25b9a7d14d0). 
 The current synchronization defines the destination stage mask as VK_PIPELINE_STAGE_2_BLIT_BIT, but layout transition does not synchronize with these stages.
 Vulkan insight: If the layout transition is done via an image barrier, consider including VK_PIPELINE_STAGE_2_BLIT_BIT in srcStageMask. If the transition occurs as part of the render pass begin operation, consider specifying an external subpass dependency (VK_SUBPASS_EXTERNAL) with srcStageMask that includes VK_PIPELINE_STAGE_2_BLIT_BIT, or perform the transition in a separate image barrier before the render pass begins.
 Vulkan insight: an execution dependency is sufficient to prevent this hazard.
@@ -221,16 +263,54 @@ Vulkan insight: an execution dependency is sufficient to prevent this hazard.
 
 Everything this lesson said is in that message:
 
-- the hazard is **write-after-read**, and the "write" is `vkCmdPipelineBarrier2` itself: the layout transition is a
-  write to the image;
+- the hazard is **write-after-read**, and the "write" is `vkCmdPipelineBarrier2` itself, barrier 1 of the next frame:
+  the layout transition is a write to the image;
 - the read is `vkCmdBlitImage2` from **another command buffer**, the previous frame's: the conflict crosses command
   buffers and submissions on one queue;
-- the fix is a source stage: "consider including `VK_PIPELINE_STAGE_2_BLIT_BIT` in srcStageMask";
+- the fix is a source stage `BLIT` somewhere in the chain. The layer suggests the nearest place, barrier 1's
+  srcStageMask: correct, and exactly the version that chained the rendering to the acquire. Barrier 5 is the other
+  place, and the one step 12 uses;
 - and the last line is the WAR rule: "an execution dependency is sufficient to prevent this hazard". No access mask is
   needed.
-
 Core validation alone does not report this: every call is valid on its own, and only synchronization validation
 tracks which access happened before which.
+
+## Does the rendering really run before the acquire?
+
+The barriers *allow* the GPU to render before the swapchain image is free. Whether it gains anything is a question for
+a measurement, and the tool is the GPU's own clock: **timestamp queries**.
+
+<Step file="12_timeline" region="timestamps" />
+
+Each frame writes three timestamps with `vkCmdWriteTimestamp2` (shown in the render and blit regions above): at
+`TOP_OF_PIPE` when the GPU starts the command buffer, at `COLOR_ATTACHMENT_OUTPUT` after the rendering (written once
+the color writes are done), and at `BLIT` after the blit. A query must be reset before it is written again, hence the
+`vkCmdResetQueryPool` at the start. Once the timeline says a slot's frame is complete, its timestamps are read back:
+
+<Step file="12_timeline" region="read-timestamps" />
+
+The idea: if the GPU ever had to wait for `image_available`, the wait would sit between "render done" and "blit done",
+because only the blit waits. That interval would then be much longer than the blit itself. From the run in the
+[timeline lesson](lesson:timeline-semaphores#what-the-program-prints), Rust, MAILBOX, two frames in flight:
+
+```text
+[timing] 1s, GPU timestamps of 1825 frames: render 3.8 us avg, 7.0 us max; render done -> blit done 6.7 us avg, 8.2 us max
+[timing] 2s, GPU timestamps of 2056 frames: render 3.8 us avg, 5.2 us max; render done -> blit done 6.7 us avg, 8.2 us max
+[timing] 3s, GPU timestamps of 2144 frames: render 5.3 us avg, 10.7 us max; render done -> blit done 10.4 us avg, 22.5 us max
+[timing] 4s, GPU timestamps of 2134 frames: render 10.5 us avg, 16.6 us max; render done -> blit done 22.8 us avg, 37.9 us max
+```
+
+The answer on the course machine is honest and a little disappointing: **not measurable**. "Render done → blit done"
+is the blit's own few microseconds, and its maximum stays within a few times its average; where it grows (seconds 3
+and 4), the rendering grows by the same factor, so the GPU itself ran slower (we did not investigate why), it did not
+wait for the semaphore. For a test we also forced FIFO, where the presentation engine releases images only at the
+display's refresh, with one, two and three frames in flight: in the first two seconds of each run the interval was
+7.5-7.6 µs on average and at most 9.2 µs (later seconds grew together with the rendering, as above). In every frame the acquire semaphore was already signaled by the time the GPU reached the
+blit, so there was nothing to overlap. The timestamps cannot tell us more than that: they do not show when the
+semaphore was signaled, nor whether a driver waits for it before starting the batch at all.
+
+So what does the fix buy? Correctness of the claim, and the permission: on a system where the semaphore is still
+pending when the batch starts, the rendering is now allowed to run. Measure on your target before counting on it.
 
 ## What the program prints
 
@@ -260,24 +340,26 @@ Graphics pipeline created (triangle.spv, dynamic rendering)
   the old contents are declared garbage.
 - Synchronization validation does on the CPU what the spec does on paper: it keeps, for every image region, the last
   write and the reads since, and checks each new access against the barriers in between. That is why it is slow (the
-  frame rate of step 10 dropped from 389 to 336 fps with it) and why it is worth running regularly.
+  frame rate of step 10, medians of 5 alternating release runs on a shared machine, went from 419 to 408 fps in Rust
+  and from 432 to 418 in C++; small here only because the frame is dominated by a 2 ms busy loop) and why it is worth
+  running regularly.
 
 <Quiz
 	questions={[
 		{
-			q: 'Barrier 1 waits for the previous frame\'s blit, which only READ the offscreen image. Why is the source access mask NONE?',
+			q: 'Barrier 5 orders the next frame\'s writes after this frame\'s blit, which only READ the offscreen image. Why are both access masks NONE?',
 			options: [
 				{
 					text: 'A write-after-read conflict needs only an execution dependency',
-					why: 'Right: there are no writes to make available; the later write only has to wait until the read is done, which the source stage BLIT guarantees.',
+					why: 'Right: there are no writes to make available; the later writes only have to wait until the read is done, which the source stage BLIT guarantees.',
 				},
 				{
-					text: 'Access masks are ignored when the old layout is UNDEFINED',
-					why: 'UNDEFINED only allows the old contents to be discarded; the access masks keep their meaning.',
+					text: 'Access masks are ignored when the two layouts are equal',
+					why: 'Equal layouts only mean that no transition happens; the access masks keep their meaning.',
 				},
 				{
-					text: 'The blit belongs to another command buffer, out of the barrier\'s reach',
-					why: 'The barrier\'s first scope is everything earlier in submission order on the queue, including the previous frame\'s command buffer.',
+					text: 'The next frame is another command buffer, out of the barrier\'s reach',
+					why: 'The barrier\'s second scope is everything later in submission order on the queue, including the next frame\'s command buffer.',
 				},
 				{
 					text: 'TRANSFER_READ cannot be combined with the BLIT stage',
@@ -285,7 +367,7 @@ Graphics pipeline created (triangle.spv, dynamic rendering)
 				},
 			],
 			answer: 0,
-			ref: '#2-the-four-barriers',
+			ref: '#2-the-five-barriers',
 		},
 		{
 			q: 'Which pair of operations makes the rendering\'s color writes readable by the blit in barrier 3?',

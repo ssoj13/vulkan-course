@@ -115,6 +115,49 @@ const OFFSCREEN: vk::Extent2D = vk::Extent2D {
 /// How many frames print what they wait for and signal.
 const TRACED_FRAMES: u64 = 5;
 
+/// GPU timestamps per frame: command buffer start, rendering done, blit done.
+const TIMESTAMPS: u32 = 3;
+
+/// The GPU timestamps of the frames read back during one second, reduced to
+/// an average and a maximum per interval, printed once per second.
+struct GpuTimes {
+    /// Nanoseconds per timestamp tick (VkPhysicalDeviceLimits::timestampPeriod).
+    period_ns: f64,
+    /// The bits of a timestamp that count (timestampValidBits of the family).
+    mask: u64,
+    /// The last whole second that was printed.
+    second: u64,
+    frames: u32,
+    /// Command buffer start -> color output done: sum and maximum, in us.
+    render: (f64, f64),
+    /// Color output done -> blit done: sum and maximum, in us.
+    to_blit: (f64, f64),
+}
+
+impl GpuTimes {
+    fn add(&mut self, render: f64, to_blit: f64) {
+        self.frames += 1;
+        self.render = (self.render.0 + render, self.render.1.max(render));
+        self.to_blit = (self.to_blit.0 + to_blit, self.to_blit.1.max(to_blit));
+    }
+
+    fn report(&mut self, second: u64) {
+        let n = f64::from(self.frames.max(1));
+        println!(
+            "[timing] {second}s, GPU timestamps of {} frames: render {:.1} us avg, {:.1} us max; render done -> blit done {:.1} us avg, {:.1} us max",
+            self.frames,
+            self.render.0 / n,
+            self.render.1,
+            self.to_blit.0 / n,
+            self.to_blit.1
+        );
+        self.second = second;
+        self.frames = 0;
+        self.render = (0.0, 0.0);
+        self.to_blit = (0.0, 0.0);
+    }
+}
+
 // #region frame-resources
 /// What the CPU touches while recording one frame: one set per frame in
 /// flight. Compared with step 10 the fence is gone: the timeline semaphore
@@ -160,6 +203,9 @@ struct Vk {
     timeline: vk::Semaphore,
     /// Frames submitted so far = the value the last submit signals.
     frame_number: u64,
+    /// TIMESTAMPS queries per frame in flight.
+    query_pool: vk::QueryPool,
+    gpu: GpuTimes,
     start: Instant,
     window: Window,
 }
@@ -600,6 +646,36 @@ impl Vk {
         // SAFETY: `command_pool` belongs to this device.
         let command_buffers = unsafe { device.allocate_command_buffers(&alloc_info)? };
 
+        // #region timestamps
+        // A query pool of GPU timestamps, TIMESTAMPS per frame in flight. A
+        // timestamp is the value of a GPU tick counter; timestampValidBits of
+        // the queue family says how many of its bits count (0 = no timestamps
+        // on that family), timestampPeriod how many nanoseconds one tick is.
+        // SAFETY: `physical_device` belongs to this instance.
+        let families =
+            unsafe { instance.get_physical_device_queue_family_properties(physical_device) };
+        let valid_bits = families
+            .get(usize::try_from(family)?)
+            .ok_or("queue family out of range")?
+            .timestamp_valid_bits;
+        if valid_bits == 0 {
+            return Err("The graphics queue family has no timestamps".into());
+        }
+        let pool_info = vk::QueryPoolCreateInfo::default()
+            .query_type(vk::QueryType::TIMESTAMP)
+            .query_count(TIMESTAMPS * u32::try_from(args.frames)?);
+        // SAFETY: plain create call on a live device.
+        let query_pool = unsafe { device.create_query_pool(&pool_info, None)? };
+        let gpu = GpuTimes {
+            period_ns: f64::from(chosen.limits.timestamp_period),
+            mask: u64::MAX >> (64 - valid_bits.min(64)),
+            second: 0,
+            frames: 0,
+            render: (0.0, 0.0),
+            to_blit: (0.0, 0.0),
+        };
+        // #endregion
+
         // #region timeline-semaphore
         // A semaphore is binary unless its create info carries a
         // VkSemaphoreTypeCreateInfo with TIMELINE. The counter starts at
@@ -665,6 +741,8 @@ impl Vk {
             render_finished,
             timeline,
             frame_number: 0,
+            query_pool,
+            gpu,
             start: Instant::now(),
             window,
         })
@@ -682,6 +760,7 @@ impl Vk {
         let frame = self.frames.get(slot).ok_or("frame slot out of range")?;
         let cmd = frame.command_buffer;
         let traced = n <= TRACED_FRAMES;
+        let first_query = u32::try_from(slot)? * TIMESTAMPS;
 
         // #region wait-timeline
         // The last frame that used this slot is n - frames in flight. Wait
@@ -710,6 +789,36 @@ impl Vk {
             println!(
                 "Frame {n}: slot {slot}, no earlier frame used this slot, the submit will signal {n}"
             );
+        }
+        // #endregion
+
+        // #region read-timestamps
+        // Frame n - F, the last user of this slot, has completed (the wait
+        // above), so its three timestamps are written and can be read before
+        // they are reset for frame n. Ticks become microseconds through
+        // timestampPeriod (nanoseconds per tick); differences are masked to
+        // timestampValidBits, the bits the counter really has.
+        if n > in_flight {
+            let mut ticks = [0_u64; TIMESTAMPS as usize];
+            // SAFETY: the queries were written by a completed submission.
+            unsafe {
+                device.get_query_pool_results(
+                    self.query_pool,
+                    first_query,
+                    &mut ticks,
+                    vk::QueryResultFlags::TYPE_64 | vk::QueryResultFlags::WAIT,
+                )?;
+            }
+            let us = |from: u64, to: u64| {
+                (to.wrapping_sub(from) & self.gpu.mask) as f64 * self.gpu.period_ns / 1000.0
+            };
+            let [start, rendered, blitted] = ticks;
+            let (render, to_blit) = (us(start, rendered), us(rendered, blitted));
+            self.gpu.add(render, to_blit);
+            let second = self.start.elapsed().as_secs();
+            if second > self.gpu.second {
+                self.gpu.report(second);
+            }
         }
         // #endregion
 
@@ -770,14 +879,16 @@ impl Vk {
         use vk::{AccessFlags2 as A, ImageLayout as L, PipelineStageFlags2 as S};
 
         // #region barriers
-        // Four transitions, each "after THIS, before THAT" (stage + access on
-        // both sides), recorded where the image changes hands:
+        // Five barriers, each "after THIS, before THAT" (stage + access on
+        // both sides), recorded where an image changes hands:
         //
         // 1. Offscreen, UNDEFINED -> COLOR_ATTACHMENT_OPTIMAL, before rendering.
-        //    After: the BLIT of the PREVIOUS frame, which read this same image
-        //    (one offscreen image for all frames in flight). A read followed
-        //    by a write (write-after-read) needs only an execution dependency,
-        //    so the source access is NONE. Before: the color writes.
+        //    After: COLOR_ATTACHMENT_OUTPUT of earlier commands - the previous
+        //    frame's color writes (write-after-write; barrier 3 already made
+        //    them available) and, through barrier 5, the previous frame's blit.
+        //    NOT after BLIT: the submit waits on image_available at BLIT, and a
+        //    source stage BLIT here would chain this barrier, and the whole
+        //    rendering behind it, to the acquire. Before: the color writes.
         // 2. Swapchain image, UNDEFINED -> TRANSFER_DST_OPTIMAL, before the blit.
         //    After: BLIT - the stage the submit waits on image_available at,
         //    so the transition waits for the acquire. Before: the blit's writes.
@@ -788,9 +899,15 @@ impl Vk {
         //    After: the blit's writes. Before: BLIT, the stage render_finished
         //    is signaled at, so the transition happens before the signal; the
         //    present itself needs no access mask.
+        // 5. Offscreen, after the blit, no layout change. After: the blit's
+        //    reads. Before: COLOR_ATTACHMENT_OUTPUT of every later command,
+        //    which includes the NEXT frame's barrier 1 and rendering (one
+        //    offscreen image for all frames in flight). A read followed by a
+        //    write (write-after-read) needs only an execution dependency, so
+        //    both access masks are NONE.
         let to_render = barrier(
             self.offscreen,
-            (S::BLIT, A::NONE),
+            (S::COLOR_ATTACHMENT_OUTPUT, A::NONE),
             (S::COLOR_ATTACHMENT_OUTPUT, A::COLOR_ATTACHMENT_WRITE),
             L::UNDEFINED,
             L::COLOR_ATTACHMENT_OPTIMAL,
@@ -816,12 +933,23 @@ impl Vk {
             L::TRANSFER_DST_OPTIMAL,
             L::PRESENT_SRC_KHR,
         );
+        let after_blit = barrier(
+            self.offscreen,
+            (S::BLIT, A::NONE),
+            (S::COLOR_ATTACHMENT_OUTPUT, A::NONE),
+            L::TRANSFER_SRC_OPTIMAL,
+            L::TRANSFER_SRC_OPTIMAL,
+        );
         // #endregion
 
         // #region render
         // Barrier 1, then the triangle into the offscreen image (400x300, so
         // the viewport and the scissor are 400x300 too), clearing it to the
-        // animated color of step 10.
+        // animated color of step 10. Before it this slot's three queries are
+        // reset (a query must be reset before it is written again) and
+        // timestamp 0 is written at TOP_OF_PIPE: the moment the GPU starts
+        // this command buffer. Timestamp 1, at COLOR_ATTACHMENT_OUTPUT after
+        // the rendering, is written once the color writes are done.
         let t = self.start.elapsed().as_secs_f32();
         let wave = |phase: f32| 0.1 + 0.1 * (t * 1.5 + phase).sin();
         let color_attachment = vk::RenderingAttachmentInfo::default()
@@ -850,8 +978,11 @@ impl Vk {
             min_depth: 0.0,
             max_depth: 1.0,
         };
-        // SAFETY: `cmd` is recording; every handle belongs to this device.
+        // SAFETY: `cmd` is recording; every handle belongs to this device; the
+        // slot's queries are not in use by pending work (wait-timeline).
         unsafe {
+            device.cmd_reset_query_pool(cmd, self.query_pool, first_query, TIMESTAMPS);
+            device.cmd_write_timestamp2(cmd, S::TOP_OF_PIPE, self.query_pool, first_query);
             device.cmd_pipeline_barrier2(
                 cmd,
                 &vk::DependencyInfo::default().image_memory_barriers(&[to_render]),
@@ -862,14 +993,21 @@ impl Vk {
             device.cmd_set_scissor(cmd, 0, &[area]);
             device.cmd_draw(cmd, 3, 1, 0, 0);
             device.cmd_end_rendering(cmd);
+            device.cmd_write_timestamp2(
+                cmd,
+                S::COLOR_ATTACHMENT_OUTPUT,
+                self.query_pool,
+                first_query + 1,
+            );
         }
         // #endregion
 
         // #region blit
         // Barriers 2 and 3 in one call (independent images), the blit, then
-        // barrier 4. The blit copies the whole 400x300 image onto the whole
-        // swapchain image, scaling it; NEAREST keeps the pixels square (2x2
-        // screen pixels each in an 800x600 window).
+        // barriers 4 and 5 in one call. The blit copies the whole 400x300 image
+        // onto the whole swapchain image, scaling it; NEAREST keeps the pixels
+        // square (2x2 screen pixels each in an 800x600 window). Timestamp 2
+        // marks the end of the blit.
         let full = |e: vk::Extent2D| -> Result<[vk::Offset3D; 2], Box<dyn Error>> {
             Ok([
                 vk::Offset3D { x: 0, y: 0, z: 0 },
@@ -902,9 +1040,10 @@ impl Vk {
                 &vk::DependencyInfo::default().image_memory_barriers(&[to_blit_dst, to_blit_src]),
             );
             device.cmd_blit_image2(cmd, &blit_info);
+            device.cmd_write_timestamp2(cmd, S::BLIT, self.query_pool, first_query + 2);
             device.cmd_pipeline_barrier2(
                 cmd,
-                &vk::DependencyInfo::default().image_memory_barriers(&[to_present]),
+                &vk::DependencyInfo::default().image_memory_barriers(&[to_present, after_blit]),
             );
             device.end_command_buffer(cmd)?;
         }
@@ -912,9 +1051,10 @@ impl Vk {
 
         // #region submit
         // One batch, three semaphore operations:
-        // - wait image_available (binary) at BLIT: rendering into the offscreen
-        //   image may run before the swapchain image is ours, only the blit
-        //   (and barrier 2 before it) must wait;
+        // - wait image_available (binary) at BLIT: only barrier 2 (source stage
+        //   BLIT, so it chains to the wait) and the blit must wait. Barrier 1
+        //   has no BLIT in its source stage, so rendering into the offscreen
+        //   image may run before the swapchain image is ours;
         // - signal render_finished (binary) at BLIT, for the present;
         // - signal the timeline with value n at ALL_COMMANDS: the counter
         //   becomes n once everything in the batch has completed. This replaces
@@ -967,10 +1107,12 @@ impl Vk {
     fn destroy(self) -> Result<(), vk::Result> {
         // #region cleanup
         // The timeline tells when OUR work is done: wait for the last frame's
-        // value. Destroying the swapchain also needs every queue operation
-        // that uses it to be complete, which includes the presents
+        // value. Destroying the swapchain also needs the presents to be done
         // (VUID-vkDestroySwapchainKHR-swapchain-01282), so vkDeviceWaitIdle
-        // stays. After it the counter equals the number of submitted frames.
+        // stays: it waits for queue work, the presents' queue operations
+        // included; it does not wait for the presentation engine (present
+        // fences, step 11). After it the counter equals the number of
+        // submitted frames.
         let semaphores = [self.timeline];
         let values = [self.frame_number];
         let wait_info = vk::SemaphoreWaitInfo::default()
@@ -995,6 +1137,7 @@ impl Vk {
         }
         // SAFETY: nothing else uses these objects, and each is destroyed exactly once.
         unsafe {
+            self.device.destroy_query_pool(self.query_pool, None);
             self.device.destroy_semaphore(self.timeline, None);
             for &semaphore in &self.render_finished {
                 self.device.destroy_semaphore(semaphore, None);

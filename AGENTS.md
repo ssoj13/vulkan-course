@@ -222,22 +222,38 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
 
 - examples 10-12 (module 7, 2026-10-11): 10_frames_in_flight (per-slot cmd/fence/acquire semaphore, render_finished per
   image; --frames/--cpu-ms/--draws/--seconds), 11_resize, 12_timeline; CMake STEPS/WINDOW_STEPS include 11, 12.
-  Measured 10 (validation on, 4 s, default 2 ms CPU + 5000 instances, shared machine): Rust/C++ 1 frame 217/217 fps,
-  fence wait 1.87/1.92 ms/frame (40-42% of the time); 2 frames 389/419 fps, 0.05 ms; 3 frames 393/395 fps, 0.05-0.06 ms.
+  Measured 10 (2026-10-11, RELEASE both languages, validation on, sync validation off, 4 s, default 2 ms CPU + 5000
+  instances, shared machine, medians of 5 alternating runs): Rust/C++ 1 frame 227/228 fps, fence wait 2.03/2.07 ms
+  (46-47%); 2 frames 419/432 fps, 0.048 ms; 3 frames 420/429 fps, 0.047/0.046 ms. "Rest" of the CPU frame ~0.35 ms at
+  F=1 and F=2. Sync validation (F=2, 5 alternating pairs): Rust 419 -> 408, C++ 432 -> 418 fps.
   12: timeline counter replaces fences (frame n signals n at ALL_COMMANDS; host waits n - frames); binary
   image_available/render_finished for acquire/present (VUID-vkAcquireNextImageKHR-semaphore-03265,
   VUID-vkQueuePresentKHR-pWaitSemaphores-03267); one offscreen 400x300 B8G8R8A8_SRGB image (memory type 1, DEVICE_LOCAL),
   NEAREST blit to the swapchain; acquire semaphore waited at BLIT, render_finished signaled at BLIT; region `barriers` =
-  4 sync2 barriers (offscreen UNDEFINED->COLOR_ATTACHMENT src BLIT/NONE = WAR on the previous frame's blit read).
-  Sync validation proven live: removing that src BLIT gives "WRITE_AFTER_READ hazard ... vkCmdPipelineBarrier2 writes to
-  VkImage ..., which was previously read by vkCmdBlitImage2" (lesson material). Swapchain usage is TRANSFER_DST +
+  5 sync2 barriers. TRAP (fixed 2026-10-11 after review): a barrier whose srcStageMask overlaps a semaphore wait's
+  stage chains behind that wait, with everything it holds back. The old barrier 1 (offscreen, src BLIT) chained the
+  rendering to the acquire. Now: barrier 1 src COLOR_ATTACHMENT_OUTPUT/NONE (WAW with the previous color writes, made
+  available by barrier 3), barrier 5 at the END of the frame on the offscreen image (BLIT/NONE -> COLOR_ATTACHMENT_OUTPUT/
+  NONE, layout unchanged) = WAR on the blit read, chained to the next frame's barrier 1. Sync validation proven live:
+  removing BLIT from barrier 5 gives "WRITE_AFTER_READ hazard ... vkCmdPipelineBarrier2 writes to VkImage ..., which
+  was previously read by vkCmdBlitImage2" (quoted in the lesson). GPU timestamps (regions `timestamps`,
+  `read-timestamps`, 3 per frame, printed once per second as `[timing]`): render done -> blit done = blit time
+  (~7 us) in MAILBOX and in a forced-FIFO test, i.e. the overlap is NOT measurable on the RTX 3080 Ti; the lesson
+  says so. Swapchain usage is TRANSFER_DST +
   COLOR_ATTACHMENT: with TRANSFER_DST only, VK_LAYER_bandicam_helper creates views/framebuffers on the swapchain images
   and validation reports VUID-VkImageViewCreateInfo-image-04441 + VUID-VkFramebufferCreateInfo-pAttachments-00877
   (gone with VK_LAYER_bandicam_helper_DEBUG_1=1, the layer's disable_environment; VK_LOADER_LAYERS_DISABLE did not
   disable it). Counter values after the host wait are `[timing]` (frame 3 waits for 1, reads 2).
   11: VK_KHR_swapchain_maintenance1 (+ instance VK_KHR_surface_maintenance1 + VK_KHR_get_surface_capabilities2) is used
-  on the dev GPU: present fence per slot, waited with a 1 s timeout (spec silent on fences of a present that returned
-  OUT_OF_DATE; timeout -> vkDeviceWaitIdle, fence abandoned until exit - never triggered in runs); retired chain destroyed
+  on the dev GPU: present fence per slot, waited with a 1 s timeout (spec not explicit on fences of a present that
+  returned OUT_OF_DATE: its queue operations are "still considered to be enqueued"; timeout -> vkDeviceWaitIdle, fence
+  abandoned; at exit a present fence that never signaled is NOT destroyed (VUID-vkDestroyFence-fence-01120), Rust skips
+  the destroy, C++ raii `release()`; never triggered in runs). Wording course-wide: vkDeviceWaitIdle waits for queue
+  work (presents' queue operations included), not for the presentation engine; present fences exist to know when a
+  present's resources can be released. Spec facts checked in vkspec 1.4.365 (all extensions); the core-only spec has
+  "Regarding interaction with vkQueueWaitIdle, vkQueuePresentKHR behaves as if it signals a fence payload ...", absent
+  from the all-extensions build. D3D12: the timeline-semaphore extension issues call D3D12 fences "semantically
+  close/identical"; external_semaphore_win32 imports a D3D12 fence into a VkSemaphore (no "recommends"). Retired chain destroyed
   once frame >= retired_at + FRAMES - 1 has waited its slot's present fence. `--no-present-fences` = vkDeviceWaitIdle
   before each recreation. `--demo-resize`: 1 s 1000x700, 2 s 640x480, 3 s minimize, 4 s restore; 3 recreations in every
   run, all triggered by resize events (no OUT_OF_DATE/SUBOPTIMAL was returned on this machine in these runs). winit
@@ -257,7 +273,7 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
 - [x] Module 7 EN lessons (2026-10-11): sync/{fences-and-semaphores (embeds QueueSync), frames-in-flight,
   barriers-and-layouts, timeline-semaphores, swapchain-recreation}; RU pages are placeholders. Regions shown once:
   10 sync-objects/submit (fences), 10 cli/frame-resources/command-buffers/wait-fence/cpu-work/animate/advance-frame/
-  cleanup (frames), 12 offscreen-image/barriers/render/blit (barriers), 12 pick-device/timeline-semaphore/
+  cleanup (frames), 12 offscreen-image/barriers/render/blit/timestamps/read-timestamps (barriers), 12 pick-device/timeline-semaphore/
   binary-semaphores/frame-resources/wait-timeline/submit/cleanup (timeline), 11 chain/create-chain/recreate/
   instance-extensions/device-extensions/frame-resources/present/wait-present-fence/destroy-retired/recreate-triggers/
   event-loop/cleanup + 12 swapchain-usage (recreation; Bandicam story). Not shown: 10's 09-identical regions, 11 cli/demo,

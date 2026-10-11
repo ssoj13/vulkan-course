@@ -595,10 +595,11 @@ try {
     // false while the window is minimized (nothing created).
     const auto recreate = [&]() -> bool {
         // Without present fences we cannot tell when the presentation engine is
-        // done with the old swapchain: wait until the GPU is idle (all submitted
-        // work and the presents' semaphore waits completed), then destroy it
-        // right away. With present fences the old chain is kept in `retired` and
-        // the frames go on.
+        // done with the old swapchain. The best the core API offers:
+        // vkDeviceWaitIdle, which waits for the queue work (our submissions and
+        // the presents' queue operations, their semaphore waits) but not for the
+        // presentation engine; then destroy it right away. With present fences
+        // the old chain is kept in `retired` and the frames go on.
         if (!presentFences) {
             device.waitIdle();
         }
@@ -638,11 +639,15 @@ try {
 
     // #region wait-present-fence
     // Waits for the present fence of `slot` (from the present frameCount frames
-    // ago) and resets it for this frame's present. The spec does not say whether
-    // the fence of a present that returned VK_ERROR_OUT_OF_DATE_KHR is signaled,
-    // so the wait has a timeout: if it expires, wait for the whole device instead
-    // and retire that fence for good (it is never handed to a present again, and
-    // destroyed only at exit).
+    // ago) and resets it for this frame's present. The spec does not say
+    // explicitly whether the fence of a present that returned
+    // VK_ERROR_OUT_OF_DATE_KHR is signaled, so the wait has a timeout: if it
+    // expires, wait for the whole device instead and retire that fence for good.
+    // It is never handed to a present again, and it may still be pending: it
+    // signals only once the presentation engine has taken its references, which
+    // vkDeviceWaitIdle does not wait for, and destroying a fence a present may
+    // still signal breaks VUID-vkDestroyFence-fence-01120. So it is destroyed at
+    // exit only if it has signaled by then (see cleanup).
     const auto waitPresentFence = [&](size_t slot) {
         Frame& frame = frames.at(slot);
         if (!frame.presentPending) {
@@ -881,19 +886,42 @@ try {
     // #endregion
 
     // #region cleanup
-    // vkDeviceWaitIdle covers our submissions; the present fences cover the
-    // presents of every chain (current and retired), so wait on all that are
-    // pending - with the timeout, as in wait-present-fence. Then RAII destroys
-    // everything in reverse order of declaration.
+    // vkDeviceWaitIdle covers our submissions, the queue work; it does not wait
+    // for the presentation engine. The present fences cover the presents of
+    // every chain (current and retired), so wait on all that may be pending, the
+    // abandoned ones (wait-present-fence) included - with the timeout, as in
+    // wait-present-fence. Then RAII destroys everything in reverse order of
+    // declaration.
     device.waitIdle();
-    std::vector<vk::Fence> pending;
-    for (const Frame& frame : frames) {
+    std::vector<vk::raii::Fence*> pending;
+    for (Frame& frame : frames) {
         if (frame.presentPending) {
-            pending.push_back(*frame.presentFence);
+            pending.push_back(&frame.presentFence);
         }
     }
-    if (!pending.empty() && device.waitForFences(pending, vk::True, presentFenceTimeoutNs) != vk::Result::eSuccess) {
+    for (vk::raii::Fence& fence : abandoned) {
+        pending.push_back(&fence);
+    }
+    std::vector<vk::Fence> pendingHandles;
+    for (const vk::raii::Fence* fence : pending) {
+        pendingHandles.push_back(**fence);
+    }
+    if (!pendingHandles.empty() &&
+        device.waitForFences(pendingHandles, vk::True, presentFenceTimeoutNs) != vk::Result::eSuccess) {
         std::println(stderr, "waiting for the present fences failed");
+    }
+    // A present fence is destroyed only when no present can still signal it: it
+    // was not pending, or it has signaled. The spec offers no way to cancel a
+    // present fence that the presentation engine never signals, and destroying
+    // one a present may still signal breaks VUID-vkDestroyFence-fence-01120.
+    // Such a fence (none in any run on the course machine) is released from its
+    // RAII wrapper and left alive on purpose; the validation layer then reports
+    // it at vkDestroyDevice, the lesser evil of the two.
+    for (vk::raii::Fence* fence : pending) {
+        if (fence->getStatus() != vk::Result::eSuccess) {
+            std::println(stderr, "A present fence never signaled: not destroyed, a present may still signal it");
+            static_cast<void>(fence->release());
+        }
     }
     std::println("[timing] {} frames, {} swapchain recreation(s)", frameIndex, recreations);
     // #endregion

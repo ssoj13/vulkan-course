@@ -70,12 +70,12 @@ you also know where it breaks:
 
 | CPU tool | Closest Vulkan tool | Where the analogy breaks |
 |---|---|---|
-| `std::thread::join`, `future.wait()` | fence | Only the device side signals it (a submission, or a present); the host waits on it and resets it before reuse, but never signals it. And the wait does not make GPU writes visible to the host by itself (that needs a memory dependency of its own, module 8). |
-| `std::binary_semaphore` | binary semaphore | Only queue operations signal and wait, never the host; every signal must be consumed by exactly one wait; and the wait must be submitted after its signal. |
+| `future.wait()`; a manual-reset event (Win32 `SetEvent` / `ResetEvent` + `WaitForSingleObject`) | fence | Not `join`: nothing ends when a fence is signaled, and the same fence is reused, by resetting it. Only the device side sets it (a submission, or a present); the host waits on it and resets it, but never signals it. And the wait does not make GPU writes visible to the host by itself (that needs a memory dependency of its own, module 8). |
+| `std::binary_semaphore`, as a comparison only | binary semaphore | What it is: a GPU→GPU "ready" signal between submits, one queue operation telling another. Where `std::binary_semaphore` breaks: only queue operations (and the presentation engine, at an acquire) signal and wait, never the host; every signal must be consumed by exactly one wait; and the wait must be submitted after its signal. |
 | `std::atomic<uint64_t>` + "wait until it reaches N" | timeline semaphore | Close, including host waits and host signals; the value may only grow ([its own lesson](lesson:timeline-semaphores)). |
-| `std::atomic_thread_fence` (release / acquire) | pipeline barrier | A barrier also *waits for work to finish* in chosen pipeline stages, and it acts on one queue's command stream, not on threads. |
+| `std::atomic_thread_fence` (release / acquire) | pipeline barrier | Only one of a barrier's three parts. A barrier is a rendezvous of pipeline stages (the chosen stages of earlier commands finish before the chosen stages of later ones start), memory visibility (the release / acquire part), and, for an image, a layout transition. It acts on one queue's command stream, not on threads. |
 | `std::mutex` | none | Nothing in Vulkan says "one at a time, in any order". Every tool says "this **before** that": you pick the order. |
-| `std::barrier` (threads meet) | none | A false friend: a pipeline barrier is not a meeting point of many parties, it orders earlier commands before later ones. |
+| `std::barrier` (threads meet) | none | A false friend: a pipeline barrier is a meeting of pipeline stages in one queue, not of threads. It orders earlier commands before later ones; nobody waits for a quorum. |
 
 The ladder underneath all of them is the same one as on the CPU: **order of execution** (happens-before) first, and on
 top of it **order of memory** (writes made visible to later readers). On a CPU the cache hardware keeps memory
@@ -261,8 +261,8 @@ Fences and semaphores are the smallest objects of the tree: both are created fro
 			q: 'Which CPU tool has no counterpart in Vulkan synchronization?',
 			options: [
 				{
-					text: 'Waiting on the host until a task has finished (join)',
-					why: 'That is what a fence is for: the host waits until a submission has completed.',
+					text: 'Waiting on the host for a reusable "done" event',
+					why: 'That is what a fence is for, like future.wait() or a manual-reset event: the host waits until a submission has completed, then resets the fence to use it again. Not join: nothing ends.',
 				},
 				{
 					text: 'A mutex that lets one party in at a time, in any order',

@@ -686,10 +686,12 @@ impl Vk {
     /// Returns `Ok(false)` while the window is minimized (nothing created).
     fn recreate(&mut self) -> Result<bool, Box<dyn Error>> {
         // Without present fences we cannot tell when the presentation engine
-        // is done with the old swapchain: wait until the GPU is idle (all
-        // submitted work and the presents' semaphore waits completed), then
-        // destroy it right away. With present fences the old chain is kept
-        // in `retired` and the frames go on.
+        // is done with the old swapchain. The best the core API offers:
+        // vkDeviceWaitIdle, which waits for the queue work (our submissions
+        // and the presents' queue operations, their semaphore waits) but not
+        // for the presentation engine; then destroy it right away. With
+        // present fences the old chain is kept in `retired` and the frames go
+        // on.
         if !self.present_fences {
             // SAFETY: plain call on a live device.
             unsafe { self.device.device_wait_idle()? };
@@ -756,10 +758,14 @@ impl Vk {
     // #region wait-present-fence
     /// Waits for the present fence of `slot` (from the present FRAMES frames
     /// ago) and resets it for this frame's present. The spec does not say
-    /// whether the fence of a present that returned VK_ERROR_OUT_OF_DATE_KHR
-    /// is signaled, so the wait has a timeout: if it expires, wait for the
-    /// whole device instead and retire that fence for good (it is never handed
-    /// to a present again, and destroyed only at exit).
+    /// explicitly whether the fence of a present that returned
+    /// VK_ERROR_OUT_OF_DATE_KHR is signaled, so the wait has a timeout: if it
+    /// expires, wait for the whole device instead and retire that fence for
+    /// good. It is never handed to a present again, and it may still be
+    /// pending: it signals only once the presentation engine has taken its
+    /// references, which vkDeviceWaitIdle does not wait for, and destroying a
+    /// fence a present may still signal breaks VUID-vkDestroyFence-fence-01120.
+    /// So it is destroyed at exit only if it has signaled by then (see cleanup).
     fn wait_present_fence(&mut self, slot: usize) -> Result<(), Box<dyn Error>> {
         let device = &self.device;
         let frame = self.frames.get_mut(slot).ok_or("frame slot out of range")?;
@@ -1035,9 +1041,11 @@ impl Vk {
     /// Destroys the Vulkan objects in reverse order of creation.
     fn destroy(self) -> Result<(), vk::Result> {
         // #region cleanup
-        // vkDeviceWaitIdle covers our submissions; the present fences cover
-        // the presents of every chain (current and retired), so wait on all
-        // that are pending - with the timeout, as in wait-present-fence.
+        // vkDeviceWaitIdle covers our submissions, the queue work; it does not
+        // wait for the presentation engine. The present fences cover the
+        // presents of every chain (current and retired), so wait on all that
+        // may be pending, the abandoned ones (wait-present-fence) included -
+        // with the timeout, as in wait-present-fence.
         // SAFETY: plain calls on a live device.
         let waited = unsafe { self.device.device_wait_idle() };
         if let Err(e) = &waited {
@@ -1048,6 +1056,7 @@ impl Vk {
             .iter()
             .filter(|f| f.present_pending)
             .map(|f| f.present_fence)
+            .chain(self.abandoned.iter().copied())
             .collect();
         if !pending.is_empty() {
             let timeout = u64::try_from(PRESENT_FENCE_TIMEOUT.as_nanos()).unwrap_or(u64::MAX);
@@ -1067,14 +1076,31 @@ impl Vk {
         self.destroy_chain(&self.chain);
         // SAFETY: nothing else uses these objects, and each is destroyed exactly once.
         unsafe {
-            for &fence in &self.abandoned {
-                self.device.destroy_fence(fence, None);
+            // A present fence is destroyed only when no present can still
+            // signal it: it was not pending, or it has signaled. The spec
+            // offers no way to cancel a present fence that the presentation
+            // engine never signals, and destroying one a present may still
+            // signal breaks VUID-vkDestroyFence-fence-01120. Such a fence (none
+            // in any run on the course machine) is left alive on purpose; the
+            // validation layer then reports it at vkDestroyDevice, the lesser
+            // evil of the two.
+            let present_fences = self
+                .frames
+                .iter()
+                .map(|f| f.present_fence)
+                .filter(|&f| f != vk::Fence::null())
+                .chain(self.abandoned.iter().copied());
+            for fence in present_fences {
+                if pending.contains(&fence) && self.device.get_fence_status(fence) != Ok(true) {
+                    eprintln!(
+                        "A present fence never signaled: not destroyed, a present may still signal it"
+                    );
+                } else {
+                    self.device.destroy_fence(fence, None);
+                }
             }
             for frame in &self.frames {
                 self.device.destroy_fence(frame.in_flight, None);
-                if frame.present_fence != vk::Fence::null() {
-                    self.device.destroy_fence(frame.present_fence, None);
-                }
                 self.device.destroy_semaphore(frame.image_available, None);
             }
             self.device.destroy_command_pool(self.command_pool, None);

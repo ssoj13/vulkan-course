@@ -169,6 +169,38 @@ constexpr vk::Extent2D offscreenExtent{.width = 400, .height = 300};
 // How many frames print what they wait for and signal.
 constexpr uint64_t tracedFrames = 5;
 
+// GPU timestamps per frame: command buffer start, rendering done, blit done.
+constexpr uint32_t timestamps = 3;
+
+// The GPU timestamps of the frames read back during one second, reduced to an
+// average and a maximum per interval, printed once per second.
+struct GpuTimes {
+    double periodNs = 1.0; // nanoseconds per timestamp tick (VkPhysicalDeviceLimits::timestampPeriod)
+    uint64_t mask   = 0;   // the bits of a timestamp that count (timestampValidBits of the family)
+    uint64_t second = 0;   // the last whole second that was printed
+    uint32_t frames = 0;
+    double renderSum = 0.0, renderMax = 0.0; // command buffer start -> color output done, us
+    double blitSum = 0.0, blitMax = 0.0;     // color output done -> blit done, us
+
+    void add(double render, double toBlit) {
+        ++frames;
+        renderSum += render;
+        renderMax = std::max(renderMax, render);
+        blitSum += toBlit;
+        blitMax = std::max(blitMax, toBlit);
+    }
+
+    void report(uint64_t now) {
+        const double n = std::max(frames, 1u);
+        std::println("[timing] {}s, GPU timestamps of {} frames: render {:.1f} us avg, {:.1f} us max; render done -> "
+                     "blit done {:.1f} us avg, {:.1f} us max",
+                     now, frames, renderSum / n, renderMax, blitSum / n, blitMax);
+        second = now;
+        frames = 0;
+        renderSum = renderMax = blitSum = blitMax = 0.0;
+    }
+};
+
 // #region frame-resources
 // What the CPU touches while recording one frame: one set per frame in flight.
 // Compared with step 10 the fence is gone: the timeline semaphore tells when
@@ -546,6 +578,25 @@ try {
                                                         .commandBufferCount = static_cast<uint32_t>(args.frames),
                                                     });
 
+    // #region timestamps
+    // A query pool of GPU timestamps, `timestamps` per frame in flight. A
+    // timestamp is the value of a GPU tick counter; timestampValidBits of the
+    // queue family says how many of its bits count (0 = no timestamps on that
+    // family), timestampPeriod how many nanoseconds one tick is.
+    const uint32_t validBits = physicalDevice.getQueueFamilyProperties().at(family).timestampValidBits;
+    if (validBits == 0) {
+        throw std::runtime_error("The graphics queue family has no timestamps");
+    }
+    vk::raii::QueryPool queryPool(device, vk::QueryPoolCreateInfo{
+                                              .queryType  = vk::QueryType::eTimestamp,
+                                              .queryCount = timestamps * static_cast<uint32_t>(args.frames),
+                                          });
+    GpuTimes gpu{
+        .periodNs = physicalDevice.getProperties().limits.timestampPeriod,
+        .mask     = std::numeric_limits<uint64_t>::max() >> (64 - std::min(validBits, 64u)),
+    };
+    // #endregion
+
     // #region timeline-semaphore
     // A semaphore is binary unless its create info carries a
     // VkSemaphoreTypeCreateInfo with eTimeline. The counter starts at
@@ -595,6 +646,7 @@ try {
         Frame& frame                       = frames.at(slot);
         const vk::raii::CommandBuffer& cmd = frame.commandBuffer;
         const bool traced                  = n <= tracedFrames;
+        const uint32_t firstQuery          = static_cast<uint32_t>(slot) * timestamps;
 
         // #region wait-timeline
         // The last frame that used this slot is n - frames in flight. Wait until
@@ -619,6 +671,30 @@ try {
             }
         } else if (traced) {
             std::println("Frame {}: slot {}, no earlier frame used this slot, the submit will signal {}", n, slot, n);
+        }
+        // #endregion
+
+        // #region read-timestamps
+        // Frame n - F, the last user of this slot, has completed (the wait
+        // above), so its three timestamps are written and can be read before
+        // they are reset for frame n. Ticks become microseconds through
+        // timestampPeriod (nanoseconds per tick); differences are masked to
+        // timestampValidBits, the bits the counter really has.
+        if (n > inFlight) {
+            const auto [result, ticks] = queryPool.getResults<uint64_t>(
+                firstQuery, timestamps, timestamps * sizeof(uint64_t), sizeof(uint64_t),
+                vk::QueryResultFlagBits::e64 | vk::QueryResultFlagBits::eWait);
+            if (result != vk::Result::eSuccess) {
+                throw std::runtime_error("getQueryPoolResults failed");
+            }
+            const auto us = [&](uint64_t from, uint64_t to) {
+                return static_cast<double>((to - from) & gpu.mask) * gpu.periodNs / 1000.0;
+            };
+            gpu.add(us(ticks.at(0), ticks.at(1)), us(ticks.at(1), ticks.at(2)));
+            const auto second = static_cast<uint64_t>(std::chrono::duration<double>(Clock::now() - start).count());
+            if (second > gpu.second) {
+                gpu.report(second);
+            }
         }
         // #endregion
 
@@ -657,14 +733,16 @@ try {
         };
 
         // #region barriers
-        // Four transitions, each "after THIS, before THAT" (stage + access on
-        // both sides), recorded where the image changes hands:
+        // Five barriers, each "after THIS, before THAT" (stage + access on both
+        // sides), recorded where an image changes hands:
         //
         // 1. Offscreen, eUndefined -> eColorAttachmentOptimal, before rendering.
-        //    After: the BLIT of the PREVIOUS frame, which read this same image
-        //    (one offscreen image for all frames in flight). A read followed by
-        //    a write (write-after-read) needs only an execution dependency, so
-        //    the source access is eNone. Before: the color writes.
+        //    After: COLOR_ATTACHMENT_OUTPUT of earlier commands - the previous
+        //    frame's color writes (write-after-write; barrier 3 already made
+        //    them available) and, through barrier 5, the previous frame's blit.
+        //    NOT after BLIT: the submit waits on imageAvailable at BLIT, and a
+        //    source stage BLIT here would chain this barrier, and the whole
+        //    rendering behind it, to the acquire. Before: the color writes.
         // 2. Swapchain image, eUndefined -> eTransferDstOptimal, before the blit.
         //    After: BLIT - the stage the submit waits on imageAvailable at, so
         //    the transition waits for the acquire. Before: the blit's writes.
@@ -675,9 +753,15 @@ try {
         //    After: the blit's writes. Before: BLIT, the stage renderFinished is
         //    signaled at, so the transition happens before the signal; the
         //    present itself needs no access mask.
+        // 5. Offscreen, after the blit, no layout change. After: the blit's
+        //    reads. Before: COLOR_ATTACHMENT_OUTPUT of every later command,
+        //    which includes the NEXT frame's barrier 1 and rendering (one
+        //    offscreen image for all frames in flight). A read followed by a
+        //    write (write-after-read) needs only an execution dependency, so
+        //    both access masks are eNone.
         const vk::ImageMemoryBarrier2 toRender =
-            barrier(*offscreen, {S::eBlit, A::eNone}, {S::eColorAttachmentOutput, A::eColorAttachmentWrite},
-                    L::eUndefined, L::eColorAttachmentOptimal);
+            barrier(*offscreen, {S::eColorAttachmentOutput, A::eNone},
+                    {S::eColorAttachmentOutput, A::eColorAttachmentWrite}, L::eUndefined, L::eColorAttachmentOptimal);
         const vk::ImageMemoryBarrier2 toBlitDst =
             barrier(image, {S::eBlit, A::eNone}, {S::eBlit, A::eTransferWrite}, L::eUndefined, L::eTransferDstOptimal);
         const vk::ImageMemoryBarrier2 toBlitSrc =
@@ -685,12 +769,19 @@ try {
                     L::eColorAttachmentOptimal, L::eTransferSrcOptimal);
         const vk::ImageMemoryBarrier2 toPresent =
             barrier(image, {S::eBlit, A::eTransferWrite}, {S::eBlit, A::eNone}, L::eTransferDstOptimal, L::ePresentSrcKHR);
+        const vk::ImageMemoryBarrier2 afterBlit =
+            barrier(*offscreen, {S::eBlit, A::eNone}, {S::eColorAttachmentOutput, A::eNone}, L::eTransferSrcOptimal,
+                    L::eTransferSrcOptimal);
         // #endregion
 
         // #region render
         // Barrier 1, then the triangle into the offscreen image (400x300, so the
         // viewport and the scissor are 400x300 too), clearing it to the animated
-        // color of step 10.
+        // color of step 10. Before it this slot's three queries are reset (a
+        // query must be reset before it is written again) and timestamp 0 is
+        // written at TOP_OF_PIPE: the moment the GPU starts this command buffer.
+        // Timestamp 1, at COLOR_ATTACHMENT_OUTPUT after the rendering, is
+        // written once the color writes are done.
         const float t   = static_cast<float>(std::chrono::duration<double>(Clock::now() - start).count());
         const auto wave = [t](float phase) { return 0.1f + 0.1f * std::sin(t * 1.5f + phase); };
         const vk::RenderingAttachmentInfo colorAttachment{
@@ -701,6 +792,8 @@ try {
             .clearValue  = vk::ClearColorValue{std::array{wave(0.0f), wave(2.1f), wave(4.2f), 1.0f}},
         };
         const vk::Rect2D area{.offset = {0, 0}, .extent = offscreenExtent};
+        cmd.resetQueryPool(*queryPool, firstQuery, timestamps);
+        cmd.writeTimestamp2(S::eTopOfPipe, *queryPool, firstQuery);
         cmd.pipelineBarrier2(vk::DependencyInfo{.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &toRender});
         cmd.beginRendering(vk::RenderingInfo{
             .renderArea           = area,
@@ -720,13 +813,15 @@ try {
         cmd.setScissor(0, area);
         cmd.draw(3, 1, 0, 0);
         cmd.endRendering();
+        cmd.writeTimestamp2(S::eColorAttachmentOutput, *queryPool, firstQuery + 1);
         // #endregion
 
         // #region blit
         // Barriers 2 and 3 in one call (independent images), the blit, then
-        // barrier 4. The blit copies the whole 400x300 image onto the whole
-        // swapchain image, scaling it; eNearest keeps the pixels square (2x2
-        // screen pixels each in an 800x600 window).
+        // barriers 4 and 5 in one call. The blit copies the whole 400x300 image
+        // onto the whole swapchain image, scaling it; eNearest keeps the pixels
+        // square (2x2 screen pixels each in an 800x600 window). Timestamp 2
+        // marks the end of the blit.
         const auto full = [](vk::Extent2D e) {
             return std::array{vk::Offset3D{0, 0, 0},
                               vk::Offset3D{static_cast<int32_t>(e.width), static_cast<int32_t>(e.height), 1}};
@@ -752,15 +847,21 @@ try {
             .pRegions       = &region,
             .filter         = vk::Filter::eNearest,
         });
-        cmd.pipelineBarrier2(vk::DependencyInfo{.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &toPresent});
+        cmd.writeTimestamp2(S::eBlit, *queryPool, firstQuery + 2);
+        const std::array afterBlitBarriers{toPresent, afterBlit};
+        cmd.pipelineBarrier2(vk::DependencyInfo{
+            .imageMemoryBarrierCount = static_cast<uint32_t>(afterBlitBarriers.size()),
+            .pImageMemoryBarriers    = afterBlitBarriers.data(),
+        });
         cmd.end();
         // #endregion
 
         // #region submit
         // One batch, three semaphore operations:
-        // - wait imageAvailable (binary) at BLIT: rendering into the offscreen
-        //   image may run before the swapchain image is ours, only the blit (and
-        //   barrier 2 before it) must wait;
+        // - wait imageAvailable (binary) at BLIT: only barrier 2 (source stage
+        //   BLIT, so it chains to the wait) and the blit must wait. Barrier 1
+        //   has no BLIT in its source stage, so rendering into the offscreen
+        //   image may run before the swapchain image is ours;
         // - signal renderFinished (binary) at BLIT, for the present;
         // - signal the timeline with value n at ALL_COMMANDS: the counter becomes
         //   n once everything in the batch has completed. This replaces step 10's
@@ -815,10 +916,11 @@ try {
 
     // #region cleanup
     // The timeline tells when OUR work is done: wait for the last frame's value.
-    // Destroying the swapchain also needs every queue operation that uses it to
-    // be complete, which includes the presents
-    // (VUID-vkDestroySwapchainKHR-swapchain-01282), so vkDeviceWaitIdle stays.
-    // After it the counter equals the number of submitted frames. Then RAII
+    // Destroying the swapchain also needs the presents to be done
+    // (VUID-vkDestroySwapchainKHR-swapchain-01282), so vkDeviceWaitIdle stays:
+    // it waits for queue work, the presents' queue operations included; it does
+    // not wait for the presentation engine (present fences, step 11). After it
+    // the counter equals the number of submitted frames. Then RAII
     // destroys everything in reverse order of declaration.
     const vk::Semaphore last = *timeline;
     if (device.waitSemaphores(vk::SemaphoreWaitInfo{.semaphoreCount = 1, .pSemaphores = &last, .pValues = &frameNumber},

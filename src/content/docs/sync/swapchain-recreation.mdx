@@ -84,11 +84,16 @@ chain be destroyed? The rule: "All uses of presentable images acquired from swap
 (`VUID-vkDestroySwapchainKHR-swapchain-01282`). Our rendering into its images is covered by our fences. The present is
 not: by default the presentation engine gives no signal at all when it is done with what a present referred to.
 
-- **Without present fences**, the only certain answer is to wait until the device is idle: `vkDeviceWaitIdle` covers
-  all submitted work, including the presents' semaphore waits, and then the old chain can go at once. Simple and always
-  available; the price is a full stop of the GPU at every recreation.
-- **With present fences**, the old chain is parked in `retired`, the frames go on, and it is destroyed a few frames
-  later, when the fences prove its presents are done. The rendering never stops.
+- **Without present fences**, the best the core API offers is to wait until the device is idle and then destroy the
+  old chain at once. `vkDeviceWaitIdle` waits for queue work, the presents' queue operations (their semaphore waits)
+  included; it does not wait for the presentation engine. (The core specification adds that, "regarding interaction
+  with `vkQueueWaitIdle`", a present "behaves as if it signals a fence payload that is managed by the implementation",
+  described with the same words as a present fence below; in the specification built with all extensions that
+  sentence is replaced by the present fence text.) Simple and always available; the price is a full stop of the GPU at
+  every recreation.
+- **With present fences**, which exist to tell when a present's resources can be released, the old chain is parked in
+  `retired`, the frames go on, and it is destroyed a few frames later, when the fences prove its presents are done. The
+  rendering never stops.
 
 ## 3. Present fences
 
@@ -126,9 +131,17 @@ Before a slot presents again, it waits for its last present fence:
 
 <Step file="11_resize" region="wait-present-fence" />
 
-The timeout is defensive, and the comment says why: the spec does not say whether the fence of a present that returned
-`OUT_OF_DATE` is signaled. If the wait ever times out, the program falls back to `vkDeviceWaitIdle` and never reuses
-that fence. In every run on the course machine the fallback did not trigger.
+The timeout is defensive, and the comment says why. For a present that returned `OUT_OF_DATE` the spec says that its
+queue operations are "still considered to be enqueued" and that its semaphore waits will execute; the present fence
+text says the fence signals "after all such queue operations have completed, and after the presentation engine has
+taken a reference" to the objects it accesses. Nowhere does it say explicitly whether the fence of a rejected present
+is signaled (read literally, a rejected present accesses nothing, so the fence should signal, but that is our reading,
+not a sentence of the spec). If the wait ever times out, the program falls back to `vkDeviceWaitIdle` and never reuses
+that fence. Nor does it destroy it blindly: `vkDeviceWaitIdle` waits for queue work, not for the presentation engine,
+so the fence may still be pending, and destroying a fence a present may still signal breaks
+`VUID-vkDestroyFence-fence-01120`. The spec has no way to cancel such a fence, so at exit the program destroys it only
+if it has signaled by then, and otherwise leaves it alive and says so. In every run on the course machine the fallback
+did not trigger.
 
 ### Which frame frees the old chain
 
@@ -184,8 +197,10 @@ anyway.
 
 <Step file="11_resize" region="cleanup" />
 
-`vkDeviceWaitIdle` covers our submissions. The presents of the current and of any still retired chain are covered by
-their present fences, so those are waited on too, with the same timeout, before the chains are destroyed.
+`vkDeviceWaitIdle` waits for queue work, the presents' queue operations included; it does not wait for the
+presentation engine. The presents of the current and of any still retired chain are covered by their present fences,
+so those are waited on too, the abandoned ones included, with the same timeout, before the chains are destroyed. A
+present fence that still has not signaled is not destroyed (see above).
 
 ## Who else uses the swapchain images
 
@@ -268,8 +283,10 @@ why the code handles all three triggers.
   shared with the compositor, which reads them to build the desktop. A new window size means new images of the new
   size; `oldSwapchain` lets the driver hand over without a black frame.
 - "The presentation engine has taken a reference": the compositor may keep using an image (and the memory behind it)
-  after our present has finished on the queue. That is why destroying a swapchain needs more than our own fences, and
-  why present fences were added as an extension rather than being implied by queue completion.
+  after our present has finished on the queue (the spec: the memory of a swapchain image "will only be freed after that
+  image is no longer used by the presentation engine"). That is why destroying a swapchain needs more than our own
+  fences: `vkDeviceWaitIdle` waits for queue work, it does not wait for the presentation engine, and present fences
+  (`VK_KHR_swapchain_maintenance1`) exist to know when a present's resources can be released.
 - A minimized window has no area to compose into, hence the 0x0 surface. Nothing is wrong with the GPU or the swapchain
   at that moment; there is simply no image size that would be valid.
 
