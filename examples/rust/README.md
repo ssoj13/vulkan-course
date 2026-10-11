@@ -24,7 +24,8 @@ windows are created in `resumed`) and create the Vulkan surface with `ash-window
 taken from the same ash git commit (the crates.io ash-window 0.13 is built against
 crates.io ash 0.38, whose types would not match).
 
-Steps 08+ use the SPIR-V in `../../shaders/spv/`, compiled from `../../shaders/*.slang`.
+Steps 08+ use the SPIR-V in `../../shaders/spv/` (`triangle.spv` for 08-12, `mesh.spv` with vertex input
+for 14-15), compiled from `../../shaders/*.slang`.
 It is committed, and embedded with `include_bytes!`, so building needs no shader compiler.
 After editing a `.slang` file run `bun run sync:shaders` in the repository root (needs the
 Vulkan SDK: slangc + spirv-val); `tests/shaders.test.ts` fails if the .spv is stale.
@@ -51,16 +52,24 @@ cargo run --bin 01_instance
 | `10_frames_in_flight` | One command buffer, fence and acquire semaphore per frame in flight (`--frames 1\|2\|3`); simulated CPU/GPU work (`--cpu-ms`, `--draws`) and fence-wait statistics |
 | `11_resize` | Resizable window: swapchain recreation on resize / OUT_OF_DATE / SUBOPTIMAL with `oldSwapchain`, present fences (`VK_KHR_swapchain_maintenance1`) and a retire list, or `--no-present-fences` (vkDeviceWaitIdle); minimized = paused; `--demo-resize` |
 | `12_timeline` | One timeline semaphore instead of the fences; binary semaphores stay for acquire/present; offscreen 400x300 image blitted to the swapchain with four exact sync2 barriers |
-
-Steps 06-12 keep their window open until you close it; steps 10-12 also take
-`--seconds S` to close it after S seconds. Lines that depend on timing start with
-`[timing]` (drop them to compare the Rust and C++ output). Steps 06-10 and 12 have a
+| `13_memory_types` | Memory heaps and types, memory limits, `vkGetBufferMemoryRequirements` for six buffer usages, the find-memory-type rule (required + preferred flags), allocate/bind/map a HOST_VISIBLE buffer, two buffers in one allocation. No window |
+| `14_vertex_buffer` | Indexed hexagon from a vertex buffer + index buffer in HOST_VISIBLE \| HOST_COHERENT memory; vertex input bindings/attributes (`shaders/mesh.slang`); `vkCmdDrawIndexed`; 2 frames in flight |
+| `15_staging` | The same mesh in DEVICE_LOCAL buffers: staging buffer + `vkCmdCopyBuffer` on the graphics queue (default), on the dedicated transfer queue with a queue family ownership transfer (`--transfer-queue`), or direct CPU writes into DEVICE_LOCAL \| HOST_VISIBLE memory (`--bar`); `--mib N` pads the vertex buffer to measure bandwidth; the upload is timed |
+| `16_allocator` | N buffers (`--count`, default 3000) with one `vkAllocateMemory` each vs. sub-allocated from 64 MiB blocks by a minimal linear allocator in the file; counts and timings; prints `maxMemoryAllocationCount`. No window |
+Steps 06-12, 14 and 15 keep their window open until you close it; steps 10-12, 14 and 15
+also take `--seconds S` to close it after S seconds. Lines that depend on timing start with
+`[timing]` (drop them to compare the Rust and C++ output). Steps 06-10, 12, 14 and 15 have a
 fixed-size window: resizing (and minimizing, which makes the swapchain out of date)
 needs swapchain recreation, which is step 11 - the others stop cleanly with a message.
-Module 8 (memory) continues at step 13.
+
+Step 16 uses its own linear allocator, not the `gpu-allocator` crate: its latest release
+(0.28.0) is built against crates.io ash 0.38, whose types do not match the pinned ash git
+revision. The C++ step 16 uses VMA, so the lines that describe the allocator's internals
+(blocks, offsets) start with `[lib]` and differ between the languages; every other line is
+identical.
 
 ![Step 09](../screenshots/09_triangle.png)
 
-The debug messenger in steps 02-12 reports only `[WARNING]` and `[ERROR]`.
+The debug messenger in steps 02-16 reports only `[WARNING]` and `[ERROR]`.
 A warning from a third-party implicit layer (screen recorders, overlays) is
 not about our code: implicit layers are explained in the loader lesson.

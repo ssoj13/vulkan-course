@@ -260,6 +260,29 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
   delivers a stale Resized (2564x984) right after creation, so 11 compares the window's current inner_size with the
   swapchain extent. VUID for the 0x0 surface: VUID-VkSwapchainCreateInfoKHR-imageExtent-01689. Run with --seconds
   closing the window itself; no `sync:vuids` run yet for the VUIDs named in examples (they are in code comments only).
+- examples 13-16 (module 8, 2026-10-11): 13_memory_types (no window; heaps/types/limits, requirements of 6 usages,
+  find_type = memory.ts `findType` + required/preferred two-pass `choose_type`, allocate/bind/map, two buffers in one
+  allocation), 14_vertex_buffer (indexed hexagon 7 verts/18 u16 indices, HOST_VISIBLE|COHERENT type 3, new
+  `shaders/mesh.slang` with `[[vk::location]]`, FRAMES_IN_FLIGHT = 2, `--seconds`), 15_staging (default: staging type 3
+  -> DEVICE_LOCAL type 1 + vkCmdCopyBuffer on the graphics queue + global barrier COPY/TRANSFER_WRITE ->
+  VERTEX_ATTRIBUTE_INPUT|INDEX_INPUT; `--transfer-queue`: dedicated family 1, release/acquire buffer barriers + binary
+  semaphore at ALL_COMMANDS (spec: the only valid stage without VK_KHR_maintenance8); `--bar`: DEVICE_LOCAL|HOST_VISIBLE|
+  HOST_COHERENT type 5, heap 2; `--mib N` pads the vertex buffer; heap-size check before vkAllocateMemory =
+  VUID-vkAllocateMemory-pAllocateInfo-01713, `--bar --mib 300` fails cleanly), 16_allocator (no window; `--count`,
+  default 3000; raw vkAllocateMemory per buffer vs. sub-allocation). Real facts: maxMemoryAllocationCount =
+  4294967295 on this driver (NOT 4096; the spec minimum is 4096); buffer memoryTypeBits 0b111011; INDEX_BUFFER
+  alignment 4, UNIFORM 64, others 16. Rust 16: own LinearAllocator (64 MiB blocks, bump, reset/destroy only) because
+  gpu-allocator 0.28.0 (latest, also main) needs crates.io ash 0.38; C++ 16: VMA 3.4.0 from vcpkg (`<vk_mem_alloc.h>`;
+  the SDK ships VMA 3.3.0 as `<vma/vk_mem_alloc.h>`, unused), preferredLargeHeapBlockSize 64 MiB, pfnAllocate counter.
+  Lines about allocator internals start with `[lib]` (Rust: 2 blocks = 128 MiB; VMA: 4 blocks 8+16+32+64 MiB = its
+  1/8, 1/4, 1/2 first-block rule); all other stdout identical. Measured (release, validation on, sync off, shared
+  machine): 15 --mib 64: staging CPU memcpy ~6-8 ms (~9-11 GB/s), GPU copy ~5.3-6.7 ms (~10-13 GB/s) on either queue;
+  --bar CPU writes ~15-17 ms (~4 GB/s; one C++ run 67 ms); 176-byte upload: copy round trip ~0.9-1.7 ms, BAR write
+  ~0.02 ms. With VK_KHRONOS_VALIDATION_VALIDATE_SYNC=true the 64 MiB host writes take ~70 ms (sync validation cost,
+  not the hardware). 16 (3000 buffers): raw ~130-170 us per create+allocate+bind, ~330 us per destroy+free; allocator
+  ~3 us and ~2-3 us. Validation does NOT catch a missing post-copy barrier (presumably because a host fence wait sits between upload
+  and draws, which sync validation treats as synchronizing; not confirmed) nor a missing acquire barrier: tried 2026-10-11, both silent - the
+  barriers follow the spec and the Khronos synchronization examples, not a validation message.
 
 ## TODO
 
@@ -285,6 +308,16 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
 - [x] Module 7: review of 10-12 + EN lessons (fixed: barrier 5, release medians, fence analogy), RU lessons (2026-10-11).
 - [ ] Independent review of the RU lessons of modules 4-7 (language + facts vs EN).
 - Step numbering: 10-12 = module 7, so module 8+ examples shift by one vs the course plan (12_vertex_buffer -> 13_...).
+  Module 8 = 13-16 (13_memory_types added), so module 9 starts at 17.
+- [x] Module 8 examples 13-16 (2026-10-11): fmt + clippy -D warnings, C++ /W4 clean (clean rebuild of all 16), run on
+  the RTX 3080 Ti with VK_KHRONOS_VALIDATION_VALIDATE_SYNC=true: only the bandicam warning; stdout identical Rust vs C++
+  without `[timing]`/`[lib]` lines (13; 14; 15 default/--transfer-queue/--bar, also with --mib 64; 16 default and
+  --count 5000). New shader shaders/mesh.slang (+ spv, manifest; tests/shaders.test.ts passes). Details in State
+  "examples 13-16". Logs: scratchpad m8/ (session-local).
+- [ ] Screenshots of 14/15: NOT taken - on 2026-10-11 (module 8 session) the capture of the 14 window was white again (same as
+  10-12). Retake `examples/screenshots/{14_vertex_buffer,15_staging}.png` when the desktop shows Vulkan windows.
+- [ ] Module 8: independent reviews of 13-16 (code vs spec), then the EN lessons memory/{memory-types,
+  vertex-and-index-buffers, staging-uploads, allocators}; embed the buffer-memory lab in memory-types.
 
 - [x] Stage 1: course-kit engine; [x] site on the kit; [x] examples 01-05 both languages; [x] lessons 1-10
 - [x] ObjectGraph map + build modes; [x] two reviewers, findings fixed; [x] CI (tests, clippy/fmt, Pages)

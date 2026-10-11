@@ -3,6 +3,7 @@
   "version-string": "0.1.0",
   "description": "C++ examples of the Vulkan textbook. Vulkan itself comes from the Vulkan SDK, not from vcpkg.",
   "dependencies": [
-    "glfw3"
+    "glfw3",
+    "vulkan-memory-allocator"
   ]
 }

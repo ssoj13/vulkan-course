@@ -13,8 +13,10 @@ Style: Vulkan-Hpp RAII (`vk::raii::*`) with designated initializers
   developer prompt (or any shell where `cl.exe` is on `PATH`).
 - C++23 mode is used only for `std::print`; the code is otherwise plain C++20.
 - [vcpkg](https://vcpkg.io) with `VCPKG_ROOT` set: the presets use its toolchain file, and
-  `vcpkg.json` (manifest mode) builds GLFW 3 for steps 06+ on the first configure. Vulkan
-  itself still comes from the SDK.
+  `vcpkg.json` (manifest mode) builds GLFW 3 (steps 06+) and VMA 3.4.0, the header-only
+  Vulkan Memory Allocator (`vulkan-memory-allocator`, step 16), on the first configure.
+  Vulkan itself still comes from the SDK. Step 16 includes `<vk_mem_alloc.h>` from vcpkg;
+  the SDK's own older copy (`<vma/vk_mem_alloc.h>`, 3.3.0) is not used.
 
 ## Build and run
 
@@ -27,7 +29,7 @@ cmake --build --preset msvc-debug
 `msvc-release` works the same way (`build/msvc-release`). No LTO is used.
 A build directory configured before vcpkg was added needs `cmake --preset <name> --fresh`.
 
-Steps 08+ read `../../shaders/spv/triangle.spv` at run time (the absolute path is baked in
+Steps 08+ read `../../shaders/spv/triangle.spv` (steps 14-15: `mesh.spv`) at run time (the absolute path is baked in
 as `SHADER_DIR` by CMake), the same file the Rust examples embed. It is compiled from
 `../../shaders/triangle.slang` by `bun run sync:shaders` (repository root, needs the Vulkan SDK).
 
@@ -47,15 +49,20 @@ as `SHADER_DIR` by CMake), the same file the Rust examples embed. It is compiled
 | 10 | `src/10_frames_in_flight.cpp` | per-frame command buffer, fence and acquire semaphore (`--frames 1\|2\|3`); simulated CPU/GPU work (`--cpu-ms`, `--draws`), fence-wait statistics |
 | 11 | `src/11_resize.cpp` | resizable window; swapchain recreation (`oldSwapchain`) on resize / OUT_OF_DATE / SUBOPTIMAL; present fences (`VK_KHR_swapchain_maintenance1`) + retire list, or `--no-present-fences`; minimized = paused; `--demo-resize` |
 | 12 | `src/12_timeline.cpp` | timeline semaphore instead of fences; binary acquire/present semaphores; offscreen 400x300 image blitted to the swapchain with exact sync2 barriers |
-
+| 13 | `src/13_memory_types.cpp` | memory heaps and types, memory limits, buffer memory requirements, the find-memory-type rule (required + preferred), allocate/bind/map, two buffers in one allocation; no window |
+| 14 | `src/14_vertex_buffer.cpp` | indexed hexagon from vertex + index buffers in HOST_VISIBLE \| HOST_COHERENT memory; vertex input state; `drawIndexed`; 2 frames in flight |
+| 15 | `src/15_staging.cpp` | DEVICE_LOCAL mesh via staging buffer + `copyBuffer` on the graphics queue, or the transfer queue with a queue family ownership transfer (`--transfer-queue`), or direct BAR writes (`--bar`); `--mib N`; timed upload |
+| 16 | `src/16_allocator.cpp` | N buffers with one `vkAllocateMemory` each vs. VMA (`vmaCreateBuffer`, 64 MiB preferred blocks); counts, VMA statistics, timings; no window |
 Lessons embed code by `// #region <name>` ... `// #endregion` markers; the names
 match the Rust examples.
 
-Steps 06-12 keep their window open until you close it; steps 10-12 also take
-`--seconds S`. Lines that depend on timing start with `[timing]` (drop them to compare
-with the Rust output). Steps 06-10 and 12 have a fixed-size window: resizing (and
-minimizing, which makes the swapchain out of date) needs swapchain recreation, which is
-step 11 - the others stop cleanly with a message. Module 8 (memory) continues at step 13.
+Steps 06-12, 14 and 15 keep their window open until you close it; steps 10-12, 14 and 15
+also take `--seconds S`. Lines that depend on timing start with `[timing]` (drop them to
+compare with the Rust output). Steps 06-10, 12, 14 and 15 have a fixed-size window: resizing
+(and minimizing, which makes the swapchain out of date) needs swapchain recreation, which is
+step 11 - the others stop cleanly with a message. In step 16 the lines about the allocator's
+internals start with `[lib]`: VMA here, a minimal linear allocator in the Rust version (whose
+`gpu-allocator` crate is built against an older ash); all other lines are identical.
 Short enum names (`B8G8R8A8_SRGB`, `MAILBOX`) come from the SDK's `vk_enum_string_helper.h`,
 so both languages print identical output.
 

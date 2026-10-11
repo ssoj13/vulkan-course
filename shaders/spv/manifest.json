@@ -9,6 +9,17 @@
 	],
 	"shaders": [
 		{
+			"source": "mesh.slang",
+			"sourceSha256": "202b6a8142974a6802ff3430ae739df81cd6d47ab1e3ac4356b5d749d4132d41",
+			"outputs": [
+				{
+					"file": "mesh.spv",
+					"bytes": 900,
+					"sha256": "2595bbb87ed9f5d0d37490343672894556d40b41fb3aa5cf3bc9c4670ce1cb3f"
+				}
+			]
+		},
+		{
 			"source": "triangle.slang",
 			"sourceSha256": "c5c06f70ba195c7af80760f50f9163a03d05d2bd636e872eb34cc314cb650071",
 			"outputs": [

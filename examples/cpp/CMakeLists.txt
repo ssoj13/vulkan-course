@@ -15,6 +15,9 @@ find_package(Vulkan REQUIRED)
 # vcpkg.json lists it, the presets point CMAKE_TOOLCHAIN_FILE at vcpkg.
 find_package(glfw3 CONFIG REQUIRED)
 
+# VMA (Vulkan Memory Allocator, step 16) also comes from vcpkg: header-only, 3.4.0.
+find_package(VulkanMemoryAllocator CONFIG REQUIRED)
+
 # Steps 08+ read the SPIR-V compiled from ../../shaders/*.slang (bun run sync:shaders)
 # at run time; the absolute path of shaders/spv is baked in at build time.
 cmake_path(ABSOLUTE_PATH CMAKE_CURRENT_SOURCE_DIR OUTPUT_VARIABLE src_dir)
@@ -34,14 +37,24 @@ set(STEPS
     09_triangle
     10_frames_in_flight
     11_resize
-    12_timeline)
+    12_timeline
+    13_memory_types
+    14_vertex_buffer
+    15_staging
+    16_allocator)
 # Steps that open a window.
 set(WINDOW_STEPS 06_window_surface 07_swapchain 08_pipeline 09_triangle
-                 10_frames_in_flight 11_resize 12_timeline)
+                 10_frames_in_flight 11_resize 12_timeline 14_vertex_buffer
+                 15_staging)
 
 foreach(step IN LISTS STEPS)
     add_executable(${step} src/${step}.cpp)
     target_link_libraries(${step} PRIVATE Vulkan::Vulkan)
+    if(step STREQUAL "16_allocator")
+        # Adds .../include/vma: the code includes <vk_mem_alloc.h>. (The Vulkan SDK
+        # ships an older VMA as <vma/vk_mem_alloc.h>, which we do not use.)
+        target_link_libraries(${step} PRIVATE GPUOpen::VulkanMemoryAllocator)
+    endif()
     if(step IN_LIST WINDOW_STEPS)
         target_link_libraries(${step} PRIVATE glfw)
         target_compile_definitions(${step} PRIVATE SHADER_DIR="${shader_dir}")

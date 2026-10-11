@@ -15,3 +15,7 @@ ash-window = { git = "https://github.com/ash-rs/ash", rev = "f4c2ca3e4f6b998d525
 # Window + event loop (steps 06+): the latest stable release, ApplicationHandler API.
 # It re-exports raw-window-handle 0.6 (`winit::raw_window_handle`), which ash-window uses.
 winit = "=0.30.13"
+# Step 16 (sub-allocation) contains its own minimal linear allocator instead of the
+# gpu-allocator crate: its latest release, 0.28.0, depends on crates.io ash 0.38, whose
+# types are not the types of the ash git revision above (checked 2026-10-11, also on its
+# main branch).
