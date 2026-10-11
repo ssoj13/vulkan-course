@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { TEXT } from '../../src/components/labs/messenger-filter.text';
-import { COURSE, DAB, LOG, SEVERITIES, TYPES, blockedBy, maskErrors, passes, produced, runTotals, snippet, vuidText } from '../../src/lib/labs/messenger-filter';
+import { COURSE, DAB, LOG, SEVERITIES, TYPES, blockedBy, maskErrors, passes, produced, runTotals, snippet } from '../../src/lib/labs/messenger-filter';
 import { textErrors } from '../../src/lib/text';
 
 const bit = (list: readonly { name: string; bit: number }[], ...names: string[]) => list.filter((x) => names.includes(x.name)).reduce((a, x) => a | x.bit, 0);
@@ -68,13 +68,11 @@ describe('filtering', () => {
 		expect(produced(dab, false).filter((m) => m.when === 'dab').map((m) => m.id)).toEqual(['VUID-VkDebugUtilsMessengerCreateInfoEXT-messageType-parameter']);
 		expect(maskErrors(dab)).toEqual(['VUID-VkDebugUtilsMessengerCreateInfoEXT-messageType-parameter']);
 	});
-	test('empty masks break the requiredbitmask rules; every VUID the lab quotes has its registry text', () => {
-		const errs = maskErrors({ severity: 0, type: 0 });
-		expect(errs).toEqual(['VUID-VkDebugUtilsMessengerCreateInfoEXT-messageSeverity-requiredbitmask', 'VUID-VkDebugUtilsMessengerCreateInfoEXT-messageType-requiredbitmask']);
-		for (const v of [...errs, ...maskErrors({ severity: 1, type: 0x8 })]) {
-			expect(LOG.maskVuids).toContain(v);
-			expect(vuidText(v)).toContain('must');
-		}
+	test('empty masks break the requiredbitmask rules', () => {
+		expect(maskErrors({ severity: 0, type: 0 })).toEqual([
+			'VUID-VkDebugUtilsMessengerCreateInfoEXT-messageSeverity-requiredbitmask',
+			'VUID-VkDebugUtilsMessengerCreateInfoEXT-messageType-requiredbitmask',
+		]);
 	});
 });
 

@@ -100,9 +100,62 @@ shader objects, mesh shaders, ray tracing, tile-based mobile GPUs. Capstone: min
 - MemoryHeaps: heaps/types of real GPUs, allocation, staging, ReBAR.
 - DescriptorWiring: shader set/binding ↔ resources.
 
+## Labs (12, 2026-10-10)
+
+Interactive widgets with a full page each (`/labs/<slug>`, `/ru/labs/<slug>`; catalog and sidebar from the engine).
+Manifest: `labs` in `src/data/course.json` / `course.ru.json` (slug, lesson, title, summary). Brief the lab agents
+followed: one question per lab, no fake behavior (rules from the spec/registry, numbers from the data files below or
+labeled illustrative, every simplification stated on the page), scrubbable timelines, keyboard/aria, mobile width,
+authored (not translated) Russian.
+
+Files per lab `<slug>`: model `src/lib/labs/<slug>.ts` (pure, no DOM), view `src/components/labs/<Name>.astro`
+(build-time data checks, text fallback) + `<Name>View.tsx` (React island, `client:only="react"`), texts
+`src/components/labs/<slug>.text.ts` (`TEXT.en/ru`, picked by `pick()` from `src/lib/text.ts`), styles
+`src/components/labs/<slug>.css`, tests `tests/labs/<slug>.test.ts` (model facts + `textErrors`), pages
+`src/content/docs/{,ru/}labs/<slug>.mdx`. Engine primitives: `course-kit/components/lab/{LabFrame,Scrubber,useTimeline}`.
+
+| Lab | Component | Lesson (embedded EN+RU) |
+|---|---|---|
+| warp-divergence | WarpDivergence | foundations/gpu |
+| memory-path | MemoryPath | foundations/gpu |
+| command-path | CommandPath | foundations/talking-to-gpu |
+| gl-vs-vulkan | GlVsVulkan | foundations/why-vulkan |
+| loader-chain | LoaderChain | instance/loader-and-instance |
+| messenger-filter | MessengerFilter | instance/validation |
+| device-picker | DevicePicker | devices/physical-devices |
+| queue-planner | QueuePlanner | devices/queue-families |
+| object-builder | ObjectGraph (`src/components/ObjectGraph*`, model `src/lib/objects.ts`) | devices/logical-device |
+| queue-sync | QueueSync | none yet (module 7) |
+| graphics-pipeline | GraphicsPipeline | none yet (module 5) |
+| buffer-memory | BufferMemory | none yet (module 8) |
+
+Shared modules: `src/lib/labs/memory.ts` (heaps/types of gpu.json and the ONE find-memory-type rule `findType(bits,
+flags)`, used by memory-path and buffer-memory), `src/lib/vuids.ts` (`vuid(id)`: the only way to read a VUID text;
+throws for an id that was never synced).
+
+Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 616.64, SDK 1.4.341.1):
+
+| File | What | Refresh |
+|---|---|---|
+| `src/data/gpu.json` | vulkaninfo snapshot: device, features, limits, queue families, memory heaps/types | `bun run sync:gpu` |
+| `src/data/buffer-requirements.json` | vkGetBufferMemoryRequirements for 63 usage combinations x 5 sizes (memoryTypeBits = 59: type 2 never allowed for buffers) | `bun run sync:buffers` (tools/vk-probe) |
+| `src/data/validation-log.json` | step 02's messages at every severity: totals, leak/dab experiments, exact sample | `bun run sync:validation-log` (tools/vk-probe) |
+| `src/data/dynamic-states.json` | core VkDynamicState values with their version, from vk.xml | `bun run sync:dynamic-states` |
+| `src/data/vuids.json` | registry texts of every `VUID-...` id mentioned anywhere in src/ (scripts/vuid-refs.ts finds them) | `bun run sync:vuids` |
+
+- VUIDs: write the id in a model, data file or lesson, run `bun run sync:vuids`; never paste a VUID text.
+  `tests/vuids.test.ts` fails for an id without its synced text.
+- `tools/vk-probe` (cargo, ash at the examples' pin): binaries `buffer-requirements` and `validation-log`, see its
+  README. Its output is machine-specific by design; handle values in messages change every run (the lesson quotes
+  its own run), `date` is UTC. CI lints it (clippy/fmt) next to examples/rust; running needs a GPU.
+- `REBAR.md`: Resizable BAR on the dev machine (off now: the DEVICE_LOCAL|HOST_VISIBLE heap is 214 MiB). If it is
+  switched on, rerun sync:gpu and sync:buffers, then fix the facts the memory labs, lessons and tests state.
+
 ## State (2026-10-10)
 
-- Engine: `github:ssoj13/course-kit#v0.4.0` (public). Bump the tag in package.json for engine changes.
+- Engine: `github:ssoj13/course-kit#v0.4.1` (public). Bump the tag in package.json for engine changes. v0.4.1 (prepared
+  locally, not released yet) ships `src/*.d.mts` declarations for the engine's .mjs modules; until it is released,
+  `bun run check` passes only with those files copied into node_modules/course-kit/src.
 - examples 01-05 in Rust (ash git master, Vulkan 1.4) and C++ (vk::raii, ApiVersion14, C++23 for std::print):
   built and run on RTX 3080 Ti; reviewed by two independent reviewers (code vs spec, lesson facts) and fixed.
   Rust and C++ print identical output except handle addresses (verified 2026-10-10 by diffing real runs; before that
@@ -110,13 +163,17 @@ shader objects, mesh shaders, ray tracing, tile-based mobile GPUs. Capstone: min
   Step 05 prints only what it needs (first GRAPHICS family), not the whole 03/04 report. Step 03 chains
   Vulkan13Features only on devices >= 1.3 (a pNext struct must belong to a supported version). Step 05 chains
   Vulkan13Features directly onto VkDeviceCreateInfo (ash master's `push()` panics on a struct that already has its own chain).
-- Debug messenger: WARNING|ERROR only (INFO = 100+ loader lines). The dev machine has 8 implicit layers (6 from apps,
+- Debug messenger: WARNING|ERROR only (INFO = 100+ loader lines). The dev machine has 8 registered implicit layers (only NV_optimus, NV_present and bandicam_helper load
+  unconditionally; RenderDoc, EOS, Steam overlay, Fossilize and Nsight need their enable_environment variable) (6 from apps,
   2 from the NVIDIA driver); VK_LAYER_bandicam_helper prints one expected warning, used as the live example.
-- ObjectGraph: data `src/data/objects.json`, VUID texts `src/data/vuids.json` (generated: `bun scripts/sync-vuids.ts`),
+- ObjectGraph: data `src/data/objects.json`, VUID texts via `src/lib/vuids.ts` (`bun run sync:vuids`),
   simulator `src/lib/objects.ts` (tests in tests/), view `src/components/ObjectGraph{.astro,View.tsx}`.
 - GPU snapshot for the device/queue/memory labs: `src/data/gpu.json` (RTX 3080 Ti, driver 616.64) from `bun run sync:gpu`
   (`scripts/sync-gpu.ts`: vulkaninfo `--json=0` for device/features/limits/queues + `--text` for memory heaps/types,
   which the profile JSON lacks); `tests/gpu.test.ts` pins it to the facts the lessons quote. Rerun after a driver update.
+- Type checking: `bun run check` (astro check, TS 6.0.x like the engine) must report 0 errors/warnings/hints;
+  tsconfig `types: ["bun"]` for tests/scripts; engine lib modules are imported with their extension
+  (`course-kit/lib/course.ts`), like the components.
 - Quizzes: graded on click; each option carries a `why`, each question a `ref` to the section that explains it.
   `bun run lint` (scripts/lint-content.ts) applies the engine's `quizErrors` (model; the longest and the shortest
   option may each be the answer in at most a third of a quiz) and checks `#anchor` refs, for every language, before a
@@ -133,6 +190,9 @@ shader objects, mesh shaders, ray tracing, tile-based mobile GPUs. Capstone: min
 - [x] ObjectGraph map + build modes; [x] two reviewers, findings fixed; [x] CI (tests, clippy/fmt, Pages)
 - [x] i18n (2026-10-10, deployed): EN lessons upgraded ("Where this fits", teaching quizzes), RU authored (terms.ru.json, index, 10 lessons),
   reviewed by independent readers, built, screenshots in both languages, deployed
+- [x] 12 labs (2026-10-10); consolidation: tools/vk-probe, VUID single source, shared find-memory-type rule, astro check clean
+- [ ] Release course-kit v0.4.1 (declarations), bump the tag here, then add `bun run check` to the CI test job
+- [ ] Embed queue-sync, graphics-pipeline and buffer-memory in their lessons once modules 5/7/8 exist
 - [ ] C++ examples in CI (needs Vulkan SDK headers 1.4.341 with vulkan_raii.hpp on the runner)
 - [ ] Decide with the user: term maps put foundations at the bottom, ObjectGraph puts the root on top
 - [ ] User review, then modules 4+ (presentation, pipeline, commands, sync, memory, descriptors, images, compute)

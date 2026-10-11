@@ -17,8 +17,9 @@ Pick how much data a frame reads or writes, and a path:
 
 The bar compares one pass over the data with the 16.7 ms of a 60 fps frame. Below it are the real memory heaps and
 types of the course GPU, as `vulkaninfo` reports them, with the type each path would get highlighted. The lab picks it
-the way the Vulkan specification suggests: the first memory type, in index order, that has all the required property
-flags.
+the way the Vulkan specification suggests: the first memory type, in index order, that the buffer's `memoryTypeBits`
+allows and that has all the required property flags. On this GPU every buffer reports `memoryTypeBits` = 59 (measured):
+every type except type 2.
 
 Both bandwidths are theoretical peaks, and the time is simply bytes divided by bandwidth for one pass. Real transfers
 reach less than the peak, and caches and latency are left out, but the ratio of almost 30 between the two links is

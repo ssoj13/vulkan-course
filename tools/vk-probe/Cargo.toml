@@ -1,0 +1,23 @@
+[package]
+name = "vk-probe"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Captures the real Vulkan data the course's labs show (src/data/*.json) on the dev machine."
+
+[lib]
+path = "src/vk_probe.rs"
+
+[[bin]]
+name = "buffer-requirements"
+path = "src/bin/buffer_requirements.rs"
+
+[[bin]]
+name = "validation-log"
+path = "src/bin/validation_log.rs"
+
+[dependencies]
+# Same pin as examples/rust: crates.io has no ash release with Vulkan 1.4 bindings yet.
+ash = { git = "https://github.com/ash-rs/ash", rev = "f4c2ca3e4f6b998d5254ad101a32f024d87cdec2" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

@@ -1,12 +1,13 @@
 /**
  * Model of the buffer-memory lab: the real allocation flow of a VkBuffer on the course GPU.
  * vkCreateBuffer -> vkGetBufferMemoryRequirements (REAL values captured on the dev machine, src/data/
- * buffer-requirements.json) -> pick a memory type with the spec's find-memory-type rule over the REAL memory types
- * (src/data/gpu.json) -> vkAllocateMemory -> vkBindBufferMemory -> map (host-visible) or a staging upload
+ * buffer-requirements.json) -> pick a memory type with the spec's find-memory-type rule (lib/labs/memory.ts) over the
+ * REAL memory types (src/data/gpu.json) -> vkAllocateMemory -> vkBindBufferMemory -> map (host-visible) or a staging upload
  * (device-local only). Pure module: no DOM, no React, tested with `bun test`.
  */
 import gpu from '../../data/gpu.json';
 import reqJson from '../../data/buffer-requirements.json';
+import { DL, GiB, HC, HCACHED, HEAPS, HV, MiB, TYPES, allows, findType, hasFlags, type MemType } from './memory';
 
 export const USAGES = [
 	'VK_BUFFER_USAGE_VERTEX_BUFFER_BIT',
@@ -42,19 +43,6 @@ export function requirements(usage: readonly Usage[], request: number): Req {
 	if (!row || size === undefined) throw new Error(`buffer-memory: no capture for [${usage.join(', ')}] at ${request} bytes`);
 	return { size, alignment: row.alignment, memoryTypeBits: row.memoryTypeBits };
 }
-
-export const DL = 'VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT';
-export const HV = 'VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT';
-export const HC = 'VK_MEMORY_PROPERTY_HOST_COHERENT_BIT';
-export const HCACHED = 'VK_MEMORY_PROPERTY_HOST_CACHED_BIT';
-
-export interface MemType {
-	index: number;
-	heapIndex: number;
-	flags: readonly string[];
-}
-export const TYPES: readonly MemType[] = gpu.memory.types.map((t, index) => ({ index, heapIndex: t.heapIndex, flags: t.propertyFlags }));
-export const HEAPS: readonly { index: number; size: number; flags: readonly string[] }[] = gpu.memory.heaps.map((h, index) => ({ index, ...h }));
 
 /** Limits that decide alignment around buffers and mappings (gpu.json). */
 export const LIMITS = {
@@ -96,39 +84,24 @@ export interface Choice {
 	optimal: boolean;
 }
 
-const has = (t: MemType, flags: readonly string[]) => flags.every((f) => t.flags.includes(f));
-
 /**
- * The spec's find-memory-type rule (chapter "Device Memory", `findProperties`): the first type in index order that is
- * allowed by memoryTypeBits and has the wanted flags; first with the optimal flags, then with the required ones.
- * The spec orders memory types so that this first match is the plainest fitting type.
+ * The spec's find-memory-type rule (`findType`), run the way the spec's sample does: first with the optimal flags,
+ * then, if no allowed type has them, with the required ones.
  */
 export function chooseType(bits: number, p: Placement): Choice {
 	const w = WANT[p];
-	const rows = TYPES.map((type) => ({ type, allowed: (bits & (1 << type.index)) !== 0, hasOptimal: has(type, w.optimal), hasRequired: has(type, w.required) }));
-	const opt = rows.find((r) => r.allowed && r.hasOptimal);
-	const req = rows.find((r) => r.allowed && r.hasRequired);
-	return { rows, picked: (opt ?? req)?.type.index ?? null, optimal: !!opt };
+	const rows = TYPES.map((type) => ({ type, allowed: allows(bits, type), hasOptimal: hasFlags(type, w.optimal), hasRequired: hasFlags(type, w.required) }));
+	const opt = findType(bits, w.optimal);
+	const pick = opt ?? findType(bits, w.required);
+	return { rows, picked: pick?.index ?? null, optimal: !!opt };
 }
 
-/** Real VUID texts quoted by the lab (SDK 1.4.341 validusage.json, markup removed; a test re-checks them against the SDK). */
+/** Valid-usage rules the lab names; their texts come from `vuid()` (src/lib/vuids.ts). */
 export const VUIDS = {
-	copyDst: {
-		id: 'VUID-vkCmdCopyBuffer-dstBuffer-00120',
-		text: 'dstBuffer must have been created with the VK_BUFFER_USAGE_TRANSFER_DST_BIT usage flag set',
-	},
-	bindType: {
-		id: 'VUID-vkBindBufferMemory-memory-01035',
-		text: 'memory must have been allocated using one of the memory types allowed in the memoryTypeBits member of the VkMemoryRequirements structure returned from a call to vkGetBufferMemoryRequirements with buffer',
-	},
-	mapHostVisible: {
-		id: 'VUID-vkMapMemory-memory-00682',
-		text: 'memory must have been created with a memory type that reports VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT',
-	},
-	flushAtom: {
-		id: 'VUID-VkMappedMemoryRange-offset-00687',
-		text: 'offset must be a multiple of VkPhysicalDeviceLimits::nonCoherentAtomSize',
-	},
+	copyDst: 'VUID-vkCmdCopyBuffer-dstBuffer-00120',
+	bindType: 'VUID-vkBindBufferMemory-memory-01035',
+	mapHostVisible: 'VUID-vkMapMemory-memory-00682',
+	flushAtom: 'VUID-VkMappedMemoryRange-offset-00687',
 } as const;
 
 const COPY_ONLY = new Set(['VK_QUEUE_TRANSFER_BIT', 'VK_QUEUE_SPARSE_BINDING_BIT']);
@@ -222,13 +195,10 @@ export const STEP_API: Readonly<Record<FlowStep['kind'], string>> = {
 };
 
 /** Indices of the memory types a memoryTypeBits mask allows. */
-export const typesIn = (bits: number): number[] => TYPES.filter((t) => (bits & (1 << t.index)) !== 0).map((t) => t.index);
+export const typesIn = (bits: number): number[] => TYPES.filter((t) => allows(bits, t)).map((t) => t.index);
 
 /** Vulkan flag without its prefix and `_BIT`, for compact lists: `HOST_VISIBLE`, `VERTEX_BUFFER`. */
 export const short = (f: string): string => f.replace(/^VK_(MEMORY_PROPERTY|MEMORY_HEAP|BUFFER_USAGE|QUEUE)_/, '').replace(/_BIT(_KHR|_NV)?$/, '');
-
-export const MiB = 1024 ** 2;
-export const GiB = 1024 ** 3;
 
 /** Bytes as the lab prints them: exact below 1 KiB-ish sizes, binary units above (like vulkaninfo). */
 export function bytes(n: number): string {

@@ -12,14 +12,10 @@ import { fmt } from 'course-kit/i18n.mjs';
 import {
 	CONSUMER,
 	COPY_FAMILIES,
-	DL,
-	HC,
-	HEAPS,
 	LIMITS,
 	PLACEMENTS,
 	REQUESTS,
 	STEP_API,
-	TYPES,
 	USAGES,
 	VUIDS,
 	WANT,
@@ -33,6 +29,8 @@ import {
 	type Usage,
 	type Which,
 } from '../../lib/labs/buffer-memory';
+import { DL, HC, HEAPS, TYPES } from '../../lib/labs/memory';
+import { vuid } from '../../lib/vuids';
 import reqJson from '../../data/buffer-requirements.json';
 import { pick } from '../../lib/text';
 import { TEXT } from './buffer-memory.text';
@@ -63,7 +61,7 @@ export function stepText(t: T, s: FlowStep): string {
 			const picked = TYPES[s.choice.picked!]!;
 			const parts = [fmt(t['step.choose'], { which: which(s.which), flags: flags(s.choice.optimal ? w.optimal : w.required), type: picked.index, heap: picked.heapIndex })];
 			if (!s.choice.optimal) parts.push(fmt(t.chooseFallback, { optimal: flags(w.optimal), required: flags(w.required) }));
-			parts.push(fmt(t.chooseRule, { vuid: VUIDS.bindType.id }));
+			parts.push(fmt(t.chooseRule, { vuid: VUIDS.bindType }));
 			return parts.join(' ');
 		}
 		case 'allocate':
@@ -79,7 +77,7 @@ export function stepText(t: T, s: FlowStep): string {
 		case 'copy':
 			return s.ok
 				? fmt(t['step.copy'], { request: bytes(s.request), dma: DMA?.index ?? '-', count: DMA?.count ?? 0 })
-				: fmt(t.copyError, { vuid: VUIDS.copyDst.id, text: VUIDS.copyDst.text });
+				: fmt(t.copyError, { vuid: VUIDS.copyDst, text: vuid(VUIDS.copyDst) });
 		case 'sync': {
 			const c = s.consumers.map((u) => CONSUMER[u]!);
 			const list = c.length ? c.map((x) => `${x.stages.map((st) => st.replace('VK_PIPELINE_STAGE_2_', '')).join(' | ')} / ${x.access.replace('VK_ACCESS_2_', '')}`).join(', ') : t.consumersNone;
@@ -228,7 +226,7 @@ export default function BufferMemoryView({ lang }: { lang: string }) {
 						<code>{call(s)}</code>
 					</pre>
 					{s.kind === 'create' && s.which === 'staging' && deviceOnly?.kind === 'allocate' && (
-						<p className="lab-msg">{fmt(t.mapDeviceNote, { type: deviceOnly.type.index, vuid: VUIDS.mapHostVisible.id })}</p>
+						<p className="lab-msg">{fmt(t.mapDeviceNote, { type: deviceOnly.type.index, vuid: VUIDS.mapHostVisible })}</p>
 					)}
 				</div>
 				<div className="bm-side">
@@ -255,7 +253,7 @@ export default function BufferMemoryView({ lang }: { lang: string }) {
 				<ul>
 					<li>{fmt(t.factAlign, { ubo: LIMITS.minUniformBufferOffsetAlignment })}</li>
 					<li>{fmt(t.factMap, { map: LIMITS.minMemoryMapAlignment })}</li>
-					<li>{fmt(t.factAtom, { atom: LIMITS.nonCoherentAtomSize, vuid: VUIDS.flushAtom.id })}</li>
+					<li>{fmt(t.factAtom, { atom: LIMITS.nonCoherentAtomSize, vuid: VUIDS.flushAtom })}</li>
 					<li>{fmt(t.factGran, { gran: LIMITS.bufferImageGranularity })}</li>
 				</ul>
 			</details>

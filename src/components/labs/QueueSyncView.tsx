@@ -10,6 +10,7 @@ import { Scrubber } from 'course-kit/components/lab/Scrubber.tsx';
 import { useTimeline } from 'course-kit/components/lab/useTimeline.ts';
 import { fmt } from 'course-kit/i18n.mjs';
 import { pick } from '../../lib/text';
+import { vuid } from '../../lib/vuids';
 import {
 	MASKS,
 	MAX_DUR,
@@ -321,7 +322,7 @@ export default function QueueSyncView({ lang }: { lang: string }) {
 									</button>
 									{i.vuid ? (
 										<p className="qs-vuid">
-											<code>{i.vuid}</code>: {i.vuidText}
+											<code>{i.vuid}</code>: {vuid(i.vuid)}
 										</p>
 									) : (
 										<p className="qs-vuid is-none">{i.kind === 'race' ? t.noVuidRace : t.noVuidHang}</p>

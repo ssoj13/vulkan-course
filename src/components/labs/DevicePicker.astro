@@ -9,7 +9,7 @@ import gpu from '../../data/gpu.json';
 import { CANDIDATES, STEP03_RULE, hex, pick, pickerErrors, shortType } from '../../lib/labs/device-picker';
 import { pick as pickText } from '../../lib/text';
 import { TEXT } from './device-picker.text';
-import { courseIn, langOf } from 'course-kit/lib/course';
+import { courseIn, langOf } from 'course-kit/lib/course.ts';
 import { fmt } from 'course-kit/i18n.mjs';
 
 const v = courseIn(langOf(Astro.url.pathname));

@@ -7,7 +7,7 @@ import QueuePlannerView from './QueuePlannerView.tsx';
 import { DEFAULT_OPTIONS, DEFAULT_REQS, FAMILIES, plan } from '../../lib/labs/queue-planner';
 import { pick } from '../../lib/text';
 import { TEXT } from './queue-planner.text';
-import { courseIn, langOf } from 'course-kit/lib/course';
+import { courseIn, langOf } from 'course-kit/lib/course.ts';
 import { fmt } from 'course-kit/i18n.mjs';
 
 const v = courseIn(langOf(Astro.url.pathname));

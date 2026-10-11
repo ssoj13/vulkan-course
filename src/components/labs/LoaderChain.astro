@@ -7,7 +7,7 @@ import LoaderChainView from './LoaderChainView.tsx';
 import { CALLS, activeLayers, trace } from '../../lib/labs/loader-chain';
 import { pick } from '../../lib/text';
 import { TEXT } from './loader-chain.text';
-import { courseIn, langOf } from 'course-kit/lib/course';
+import { courseIn, langOf } from 'course-kit/lib/course.ts';
 import { fmt } from 'course-kit/i18n.mjs';
 
 const v = courseIn(langOf(Astro.url.pathname));

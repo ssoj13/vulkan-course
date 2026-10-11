@@ -15,7 +15,6 @@
  * about ignored environment variables). Pure module: no DOM, no React; tested by tests/labs/messenger-filter.test.ts.
  */
 import logJson from '../../data/validation-log.json';
-import vuids from '../../data/vuids.json';
 
 /** VkDebugUtilsMessageSeverityFlagBitsEXT, in vk.xml order. */
 export const SEVERITIES = [
@@ -48,8 +47,6 @@ export interface LogMessage {
 
 interface LogFile {
 	source: string;
-	/** VUIDs the lab quotes about the masks; listed in the data so scripts/sync-vuids.ts copies their texts. */
-	maskVuids: string[];
 	run: { total: number; counts: { severity: Severity; type: MsgType; n: number }[]; extra: Record<When, number> };
 	messages: LogMessage[];
 }
@@ -89,20 +86,13 @@ export function runTotals(k: Masks, leak: boolean): { got: number; of: number } 
 	return { got: base + extra.filter((m) => passes(m, k)).length, of: LOG.run.total + extra.length };
 }
 
-/** Valid-usage problems of the masks themselves, as VUIDs (texts in vuids.json). */
+/** Valid-usage problems of the masks themselves, as VUIDs (texts via `vuid()` from src/lib/vuids.ts). */
 export function maskErrors(k: Masks): string[] {
 	const errs: string[] = [];
 	if (k.severity === 0) errs.push('VUID-VkDebugUtilsMessengerCreateInfoEXT-messageSeverity-requiredbitmask');
 	if (k.type === 0) errs.push('VUID-VkDebugUtilsMessengerCreateInfoEXT-messageType-requiredbitmask');
 	if ((k.type & DAB) !== 0) errs.push('VUID-VkDebugUtilsMessengerCreateInfoEXT-messageType-parameter');
 	return errs;
-}
-
-/** The registry text of a VUID (plain text, synced by scripts/sync-vuids.ts). */
-export function vuidText(vuid: string): string {
-	const t = (vuids as Record<string, string>)[vuid];
-	if (!t) throw new Error(`${vuid} missing from vuids.json (run scripts/sync-vuids.ts)`);
-	return t;
 }
 
 export const hex = (n: number) => `0x${n.toString(16).padStart(4, '0')}`;

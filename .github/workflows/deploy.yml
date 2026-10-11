@@ -31,12 +31,18 @@ jobs:
         run: bun test tests
       - name: Lesson content lint (quiz model, section links, every language)
         run: bun run lint
+      - name: Type check (astro check, 0 errors and warnings)
+        run: bun run check
 
-  examples-rust:
+  rust:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # The lesson examples and the probes that capture src/data (tools/vk-probe/README.md).
+        crate: [examples/rust, tools/vk-probe]
     defaults:
       run:
-        working-directory: examples/rust
+        working-directory: ${{ matrix.crate }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -57,7 +63,7 @@ jobs:
           package-manager: bun@1.4.3
 
   deploy:
-    needs: [test, examples-rust, build]
+    needs: [test, rust, build]
     runs-on: ubuntu-latest
     permissions:
       pages: write

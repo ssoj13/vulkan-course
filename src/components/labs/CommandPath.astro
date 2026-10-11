@@ -7,7 +7,7 @@ import CommandPathView from './CommandPathView.tsx';
 import { FRAMES, percent, simulate, type InFlight } from '../../lib/labs/command-path';
 import { pick } from '../../lib/text';
 import { TEXT } from './command-path.text';
-import { courseIn, langOf } from 'course-kit/lib/course';
+import { courseIn, langOf } from 'course-kit/lib/course.ts';
 import { fmt } from 'course-kit/i18n.mjs';
 
 const v = courseIn(langOf(Astro.url.pathname));

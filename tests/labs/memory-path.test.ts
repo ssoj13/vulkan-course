@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import gpu from '../../src/data/gpu.json';
-import { BW, FRAME_MS, GiB, HEAPS, MiB, NODES, PATH, PATHS, SIZES, TYPES, bytes, findType, shortFlag, transfer } from '../../src/lib/labs/memory-path';
+import { BUFFER_TYPE_BITS, BW, FRAME_MS, NODES, PATH, PATHS, SIZES, bytes, shortFlag, transfer } from '../../src/lib/labs/memory-path';
+import { DL, GiB, HEAPS, MiB, TYPES, findType } from '../../src/lib/labs/memory';
 import { textErrors } from '../../src/lib/text';
 import { TEXT } from '../../src/components/labs/memory-path.text';
 
@@ -12,13 +13,23 @@ describe('memory-path model', () => {
 		expect(TYPES.map((t) => t.heapIndex)).toEqual(gpu.memory.types.map((t) => t.heapIndex));
 	});
 
-	test('find-memory-type: the first type, in index order, with every required flag', () => {
+	test('find-memory-type: the first type, in index order, allowed by memoryTypeBits and with every required flag', () => {
 		for (const p of PATHS) {
-			const t = findType(PATH[p].need)!;
+			const t = findType(BUFFER_TYPE_BITS, PATH[p].need)!;
 			expect(PATH[p].need.every((f) => t.flags.includes(f))).toBe(true);
-			for (const earlier of TYPES.slice(0, t.index)) expect(PATH[p].need.every((f) => earlier.flags.includes(f))).toBe(false);
+			expect(BUFFER_TYPE_BITS & (1 << t.index)).not.toBe(0);
+			for (const earlier of TYPES.slice(0, t.index))
+				expect((BUFFER_TYPE_BITS & (1 << earlier.index)) !== 0 && PATH[p].need.every((f) => earlier.flags.includes(f))).toBe(false);
 		}
-		expect(findType(['VK_MEMORY_PROPERTY_PROTECTED_BIT'])).toBeNull();
+		expect(findType(BUFFER_TYPE_BITS, ['VK_MEMORY_PROPERTY_PROTECTED_BIT'])).toBeNull();
+		// The mask decides too: with only type 2 allowed, DEVICE_LOCAL lands there; with no type allowed, nowhere.
+		expect(findType(1 << 2, [DL])?.index).toBe(2);
+		expect(findType(0, [DL])).toBeNull();
+	});
+
+	test('buffers use the real memoryTypeBits: 59, so type 2 is never picked', () => {
+		expect(BUFFER_TYPE_BITS).toBe(59);
+		for (const p of PATHS) expect(transfer(p, MiB).type.index).not.toBe(2);
 	});
 
 	test('each path lands where it should on the course GPU', () => {

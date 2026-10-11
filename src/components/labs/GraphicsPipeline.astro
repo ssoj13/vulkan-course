@@ -9,7 +9,7 @@ import GraphicsPipelineView from './GraphicsPipelineView.tsx';
 import { STAGES, dynErrors, dynamicOf, shortState, versionOf } from '../../lib/labs/graphics-pipeline';
 import { pick } from '../../lib/text';
 import { TEXT } from './graphics-pipeline.text';
-import { courseIn, langOf } from 'course-kit/lib/course';
+import { courseIn, langOf } from 'course-kit/lib/course.ts';
 
 const errs = dynErrors();
 if (errs.length) throw new Error(`graphics-pipeline: dynamic states out of sync with dynamic-states.json:\n  - ${errs.join('\n  - ')}`);

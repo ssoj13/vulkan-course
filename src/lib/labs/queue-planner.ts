@@ -122,15 +122,11 @@ export interface RolePlan {
 	withGraphics: boolean;
 }
 
-/** Valid-usage texts quoted by the lab, verbatim from the SDK's validusage.json (1.4.341; checked by the tests). */
-export const VUIDS = {
-	'VUID-VkDeviceCreateInfo-queueFamilyIndex-02802':
-		'The queueFamilyIndex member of each element of pQueueCreateInfos must be unique within pQueueCreateInfos , except that two members can share the same queueFamilyIndex if one describes protected-capable queues and one describes queues that are not protected-capable',
-	'VUID-VkDeviceQueueCreateInfo-queueCount-00382':
-		'queueCount must be less than or equal to the queueCount member of the VkQueueFamilyProperties structure, as returned by vkGetPhysicalDeviceQueueFamilyProperties in the pQueueFamilyProperties[queueFamilyIndex]',
-	'VUID-VkDeviceQueueCreateInfo-pQueuePriorities-00383': 'Each element of pQueuePriorities must be between 0.0 and 1.0 inclusive',
-} as const;
-export type Vuid = keyof typeof VUIDS;
+/** Valid-usage rules a plan can break; their texts come from `vuid()` (src/lib/vuids.ts). */
+export type Vuid =
+	| 'VUID-VkDeviceCreateInfo-queueFamilyIndex-02802'
+	| 'VUID-VkDeviceQueueCreateInfo-queueCount-00382'
+	| 'VUID-VkDeviceQueueCreateInfo-pQueuePriorities-00383';
 
 export type PlanError =
 	| { kind: 'noFamily'; role: Role }

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { TEXT } from '../../src/components/labs/loader-chain.text';
-import { CALLS, IMPLICIT_LAYERS, VALIDATION, activeLayers, implicitActive, trace, type Setup } from '../../src/lib/labs/loader-chain';
+import { CALLS, IMPLICIT_LAYERS, VALIDATION, activeLayers, implicitActive, layerNode, trace, type Setup } from '../../src/lib/labs/loader-chain';
 import { textErrors } from '../../src/lib/text';
 
 const base: Setup = { call: 'vkCreateInstance', env: new Set(), validation: true, second: false, gpu: 'nvidia', via: 'gdpa' };
@@ -47,7 +47,7 @@ describe('call paths (Vulkan-Loader docs)', () => {
 		expect(tr.hops.map((h) => h.at)).toEqual([
 			['app'],
 			['trampoline'],
-			...names({}).map((n) => [`layer:${n}`]),
+			...names({}).map((n) => [layerNode(n)]),
 			['terminator'],
 			['icd:nvidia', 'icd:lavapipe'],
 			['app'],

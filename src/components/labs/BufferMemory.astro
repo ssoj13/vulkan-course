@@ -8,7 +8,7 @@ import BufferMemoryView, { stepText } from './BufferMemoryView.tsx';
 import { flow } from '../../lib/labs/buffer-memory';
 import { pick } from '../../lib/text';
 import { TEXT } from './buffer-memory.text';
-import { courseIn, langOf } from 'course-kit/lib/course';
+import { courseIn, langOf } from 'course-kit/lib/course.ts';
 
 const v = courseIn(langOf(Astro.url.pathname));
 const t = pick(TEXT, v.lang, 'buffer-memory');

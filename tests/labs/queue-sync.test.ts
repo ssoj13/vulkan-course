@@ -6,7 +6,7 @@ import {
 	PRESETS,
 	PRESET_IDS,
 	QUEUES,
-	VUIDS,
+	ISSUE_VUID,
 	analyze,
 	expand,
 	frames,
@@ -21,7 +21,7 @@ import {
 	type Scenario,
 	type SubmitOp,
 } from '../../src/lib/labs/queue-sync';
-import labJson from '../../src/data/queue-sync.json';
+import { vuid } from '../../src/lib/vuids';
 import { TEXT } from '../../src/components/labs/queue-sync.text';
 
 /** Deep copy of a preset, changed by `f`. */
@@ -43,9 +43,8 @@ describe('data', () => {
 		expect(gpu.queueFamilies[1]!.queueFlags).not.toContain('VK_QUEUE_COMPUTE_BIT');
 		expect(gpu.queueFamilies[2]!.queueFlags).not.toContain('VK_QUEUE_GRAPHICS_BIT');
 	});
-	test('every VUID the lab quotes is synced from the registry', () => {
-		for (const v of Object.values(labJson.vuids)) expect(VUIDS[v]).toBeString();
-		expect(VUIDS['VUID-vkQueueSubmit2-semaphore-03873']).toContain('must reference a semaphore signal operation that has been submitted for execution');
+	test('a binary wait with no signal submitted is the rule the lab names', () => {
+		expect(vuid(ISSUE_VUID.binaryNoSignal!)).toContain('must reference a semaphore signal operation that has been submitted for execution');
 	});
 	test('presets are valid scenarios', () => {
 		for (const id of PRESET_IDS) expect(scenarioErrors(PRESETS[id])).toEqual([]);

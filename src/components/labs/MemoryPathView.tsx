@@ -8,14 +8,13 @@ import { LabFrame } from 'course-kit/components/lab/LabFrame.tsx';
 import { fmt } from 'course-kit/i18n.mjs';
 import { pick } from '../../lib/text';
 import {
+	BUFFER_TYPE_BITS,
 	BW,
 	FRAME_MS,
-	HEAPS,
 	NODES,
 	PATH,
 	PATHS,
 	SIZES,
-	TYPES,
 	VUID_HEAP_SIZE,
 	bytes,
 	shortFlag,
@@ -23,6 +22,8 @@ import {
 	type NodeId,
 	type PathId,
 } from '../../lib/labs/memory-path';
+import { HEAPS, TYPES } from '../../lib/labs/memory';
+import { vuid } from '../../lib/vuids';
 import { PATH_KEY, TEXT } from './memory-path.text';
 import './memory-path.css';
 
@@ -126,7 +127,7 @@ export default function MemoryPathView({ lang }: { lang: string }) {
 				<div className="lab-msg is-err">
 					<p>{fmt(t.noFit, { size: bytes(size, lang), heap: tr.heap.index, heapSize: bytes(tr.heap.size, lang) })}</p>
 					<p className="mp-vuid">
-						<code>{VUID_HEAP_SIZE.id}</code> {VUID_HEAP_SIZE.text}
+						<code>{VUID_HEAP_SIZE}</code> {vuid(VUID_HEAP_SIZE)}
 					</p>
 				</div>
 			)}
@@ -140,7 +141,7 @@ export default function MemoryPathView({ lang }: { lang: string }) {
 						</li>
 					))}
 				</ul>
-				<p className="lab-muted">{fmt(t.typeHead, { flags: PATH[path].need.map(shortFlag).join(' | ') })}</p>
+				<p className="lab-muted">{fmt(t.typeHead, { bits: BUFFER_TYPE_BITS, flags: PATH[path].need.map(shortFlag).join(' | ') })}</p>
 				<ul>
 					{TYPES.map((ty) => (
 						<li key={`t${ty.index}`} className={ty.index === tr.type.index ? 'is-on' : undefined} aria-current={ty.index === tr.type.index ? 'true' : undefined}>

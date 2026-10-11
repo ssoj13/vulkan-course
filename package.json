@@ -10,6 +10,10 @@
     "check": "astro check",
     "lint": "bun scripts/lint-content.ts",
     "sync:gpu": "bun scripts/sync-gpu.ts",
+    "sync:buffers": "cargo run --release --locked --manifest-path tools/vk-probe/Cargo.toml --bin buffer-requirements -- src/data/buffer-requirements.json",
+    "sync:validation-log": "cargo run --release --locked --manifest-path tools/vk-probe/Cargo.toml --bin validation-log -- src/data/validation-log.json",
+    "sync:vuids": "bun scripts/sync-vuids.ts",
+    "sync:dynamic-states": "bun scripts/sync-dynamic-states.ts",
     "astro": "astro"
   },
   "dependencies": {
@@ -19,15 +23,17 @@
     "@dagrejs/dagre": "^3.1.1",
     "@xyflow/react": "^12.12.0",
     "astro": "^7.3.8",
-    "course-kit": "github:ssoj13/course-kit#v0.4.0",
+    "course-kit": "github:ssoj13/course-kit#v0.4.1",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "sharp": "^0.35.3"
   },
   "devDependencies": {
+    "@astrojs/check": "^0.9.10",
     "@types/bun": "^1.4.2",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
-    "github-slugger": "^2.0.0"
+    "github-slugger": "^2.0.0",
+    "typescript": "~6.0.3"
   }
 }

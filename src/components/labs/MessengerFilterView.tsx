@@ -6,7 +6,8 @@
 import { useState } from 'react';
 import { LabFrame } from 'course-kit/components/lab/LabFrame.tsx';
 import { fmt } from 'course-kit/i18n.mjs';
-import { COURSE, LOG, SEVERITIES, TYPES, blockedBy, hex, maskErrors, produced, runTotals, snippet, vuidText, type Masks } from '../../lib/labs/messenger-filter';
+import { COURSE, LOG, SEVERITIES, TYPES, blockedBy, hex, maskErrors, produced, runTotals, snippet, type Masks } from '../../lib/labs/messenger-filter';
+import { vuid } from '../../lib/vuids';
 import { pick } from '../../lib/text';
 import { TEXT } from './messenger-filter.text';
 import './messenger-filter.css';
@@ -86,7 +87,7 @@ export default function MessengerFilterView({ lang }: { lang: string }) {
 					<ul>
 						{errs.map((v) => (
 							<li key={v}>
-								<code>{v}</code>: {vuidText(v)}
+								<code>{v}</code>: {vuid(v)}
 							</li>
 						))}
 					</ul>

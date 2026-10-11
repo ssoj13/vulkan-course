@@ -48,8 +48,8 @@ recorders) and profilers are all layers. There are two kinds:
 
 - **Explicit layers** are loaded only when the application (or `vkconfig`) asks for them by name. The validation layer
   is explicit.
-- **Implicit layers** are loaded into *every* Vulkan program automatically, because some installed software registered
-  them.
+- **Implicit layers** are loaded into Vulkan programs automatically, without the program asking, because some installed
+  software registered them. A layer's manifest may make that conditional on an environment variable (see below).
 
 <Aside type="caution" title="A real example from the machine this course was built on">
 On Windows the loader finds layers through the registry: `SOFTWARE\Khronos\Vulkan\ImplicitLayers` and
@@ -158,8 +158,8 @@ function, get a handle. The bindings fill `sType` for us.
 			q: 'A screen recorder installed on your PC prints a warning in your Vulkan program. Why can that happen?',
 			options: [
 				{
-					text: 'It registered an implicit layer, loaded into every program',
-					why: 'Implicit layers are registered by installed software and loaded into every Vulkan program automatically; on the development machine Bandicam\'s layer printed exactly such a warning.',
+					text: 'It registered an implicit layer that loads automatically',
+					why: 'Implicit layers are registered by installed software and loaded into Vulkan programs automatically, without the program asking; on the development machine Bandicam\'s layer printed exactly such a warning.',
 				},
 				{
 					text: 'It replaced vulkan-1.dll with its own patched version',

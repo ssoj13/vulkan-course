@@ -60,13 +60,14 @@ describe('graphics-pipeline stages', () => {
 		expect(() => versionOf('VK_DYNAMIC_STATE_POLYGON_MODE_EXT')).toThrow();
 	});
 
+	// Parsing validusage.json (13 MB) takes about a second warm and can pass the 5 s default timeout on a cold cache.
 	test.skipIf(!registry || !existsSync(join(registry, 'validusage.json')))('every struct and vkCmdSet* command exists in the registry', async () => {
 		const db = (await Bun.file(join(registry, 'validusage.json')).json()) as { validation: Record<string, unknown> };
 		const structs = [...STAGES.flatMap((s) => s.config), ...WHOLE].map((c) => c.struct).filter((s) => s !== 'VkPipelineLayout');
 		for (const s of structs) expect(s in db.validation).toBe(true);
 		for (const d of DYN_USES) expect(d.cmd in db.validation).toBe(true);
 		expect('VkPipelineRasterizationLineStateCreateInfo' in db.validation).toBe(true);
-	});
+	}, 30_000);
 });
 
 describe('pipeline count', () => {

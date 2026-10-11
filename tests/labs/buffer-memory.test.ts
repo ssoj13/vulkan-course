@@ -1,16 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
 import gpu from '../../src/data/gpu.json';
 import reqJson from '../../src/data/buffer-requirements.json';
 import {
 	COPY_FAMILIES,
-	HC,
-	HV,
 	LIMITS,
 	PLACEMENTS,
 	REQUESTS,
-	TYPES,
 	USAGES,
 	VUIDS,
 	WANT,
@@ -22,6 +17,7 @@ import {
 	typesIn,
 	type Usage,
 } from '../../src/lib/labs/buffer-memory';
+import { HC, HV, TYPES } from '../../src/lib/labs/memory';
 import { textErrors } from '../../src/lib/text';
 import { TEXT } from '../../src/components/labs/buffer-memory.text';
 
@@ -115,22 +111,13 @@ describe('the flow', () => {
 		const f = flow([V], 1000, 'device');
 		const last = f.at(-1)!;
 		expect(last.kind === 'copy' && last.ok).toBe(false);
-		expect(VUIDS.copyDst.id).toBe('VUID-vkCmdCopyBuffer-dstBuffer-00120');
+		expect(VUIDS.copyDst).toBe('VUID-vkCmdCopyBuffer-dstBuffer-00120');
 	});
 
 	test('the staging buffer is TRANSFER_SRC in upload memory, and family 1 is the dedicated copy family', () => {
 		const st = flow([V, DST], 100, 'device').find((s) => s.kind === 'create' && s.which === 'staging');
 		expect(st?.kind === 'create' && st.usage).toEqual(['VK_BUFFER_USAGE_TRANSFER_SRC_BIT']);
 		expect(COPY_FAMILIES.filter((f) => f.dedicated).map((f) => f.index)).toEqual([1]);
-	});
-
-	const registry = process.env.VULKAN_SDK ? join(process.env.VULKAN_SDK, 'share', 'vulkan', 'registry', 'validusage.json') : '';
-	test.skipIf(!registry || !existsSync(registry))('quoted VUID texts match the SDK registry', async () => {
-		const db = (await Bun.file(registry).json()) as { validation: Record<string, Record<string, { vuid: string; text: string }[]>> };
-		const index = new Map<string, string>();
-		for (const byExt of Object.values(db.validation)) for (const list of Object.values(byExt)) for (const v of list) index.set(v.vuid, v.text);
-		const plain = (t: string) => t.replace(/<[^>]+>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&').replace(/\s+/g, ' ').trim();
-		for (const v of Object.values(VUIDS)) expect(plain(index.get(v.id) ?? '')).toBe(v.text);
 	});
 });
 

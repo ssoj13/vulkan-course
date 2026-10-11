@@ -3,6 +3,7 @@ dist/
 .astro/
 examples/rust/target/
 examples/cpp/build/
+tools/vk-probe/target/
 
 task.md
 .omh/

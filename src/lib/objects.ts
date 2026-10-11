@@ -6,7 +6,7 @@
  */
 import objectsJson from '../data/objects.json';
 import objectsRu from '../data/objects.ru.json';
-import vuidsJson from '../data/vuids.json';
+import { hasVuid, vuid } from './vuids';
 
 /** Curriculum stages in course order; the map colors objects by the stage that introduces them. */
 export const STAGES = ['instance', 'devices', 'presentation', 'pipeline', 'commands', 'sync', 'memory', 'descriptors', 'images'] as const;
@@ -49,7 +49,6 @@ export interface VkObject {
 }
 
 export const OBJECTS: readonly VkObject[] = (objectsJson as { objects: VkObject[] }).objects;
-export const VUIDS: Readonly<Record<string, string>> = vuidsJson;
 const BY_ID = new Map(OBJECTS.map((o) => [o.id, o]));
 
 export function obj(id: string): VkObject {
@@ -102,7 +101,7 @@ export function objectErrors(termIds: ReadonlySet<string>): string[] {
 		if (o.how === 'create' && !o.destroy) errs.push(`${o.id}: created objects need \`destroy\``);
 		if ((o.how === 'enumerate' || o.how === 'get') && o.destroy) errs.push(`${o.id}: ${o.how} handles must not have \`destroy\``);
 		if (o.onDestroy === 'block' && !o.destroyVuid) errs.push(`${o.id}: onDestroy "block" needs destroyVuid`);
-		for (const v of [o.destroyVuid, ...o.parents.map((p) => p.vuid)]) if (v && !(v in VUIDS)) errs.push(`${o.id}: ${v} missing from vuids.json (run scripts/sync-vuids.ts)`);
+		for (const v of [o.destroyVuid, ...o.parents.map((p) => p.vuid)]) if (v && !hasVuid(v)) errs.push(`${o.id}: ${v} missing from vuids.json (run scripts/sync-vuids.ts)`);
 		for (const p of o.parents) if (!ids.has(p.id)) errs.push(`${o.id}: unknown parent "${p.id}"`);
 	}
 	return errs;
@@ -147,8 +146,8 @@ function liveFor(state: SimState, parentId: string): string | undefined {
 }
 
 /** Validation-layer style message quoting the spec's valid-usage text. */
-function vuError(vuid: string, call: string): LogLine {
-	return { kind: 'error', vuid, text: `Validation Error: [ ${vuid} ] ${call}(): The Vulkan spec states: ${VUIDS[vuid]}` };
+function vuError(id: string, call: string): LogLine {
+	return { kind: 'error', vuid: id, text: `Validation Error: [ ${id} ] ${call}(): The Vulkan spec states: ${vuid(id)}` };
 }
 
 /** Why `id` cannot be created now (missing parents / extension), or null when it can. */

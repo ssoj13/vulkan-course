@@ -1,13 +1,10 @@
 import { describe, expect, test } from 'bun:test';
-import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { TEXT } from '../../src/components/labs/queue-planner.text';
 import {
 	DEFAULT_OPTIONS,
 	DEFAULT_REQS,
 	FAMILIES,
 	PRIORITY_LEVELS,
-	VUIDS,
 	caps,
 	familyFor,
 	plan,
@@ -113,17 +110,6 @@ describe('plan', () => {
 		const p = plan(FAMILIES, reqs({ present: off, compute: off, transfer: off }), DEFAULT_OPTIONS);
 		expect(p.infos).toEqual([{ family: 0, count: 1, priorities: [1], roles: ['graphics'] }]);
 	});
-});
-
-test('quoted VUID texts are verbatim from the SDK registry (skipped without the SDK)', () => {
-	const sdk = process.env.VULKAN_SDK ?? 'C:/Programs/VulkanSDK/1.4.341.1';
-	const path = join(sdk, 'share', 'vulkan', 'registry', 'validusage.json');
-	if (!existsSync(path)) return;
-	const plain = (t: string) => t.replace(/<[^>]+>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&').replace(/\s+/g, ' ').trim();
-	const db = JSON.parse(readFileSync(path, 'utf8')) as { validation: Record<string, Record<string, { vuid: string; text: string }[]>> };
-	const index = new Map<string, string>();
-	for (const byExt of Object.values(db.validation)) for (const list of Object.values(byExt)) for (const v of list) index.set(v.vuid, plain(v.text));
-	for (const [vuid, text] of Object.entries(VUIDS)) expect(index.get(vuid)).toBe(text);
 });
 
 test('texts: every language has the same keys and placeholders', () => {

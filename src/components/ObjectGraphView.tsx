@@ -12,7 +12,7 @@ import '@xyflow/react/dist/style.css';
 import 'course-kit/components/graph/graph.css';
 import { Frame } from 'course-kit/components/graph/Frame.tsx';
 import { heat, useFlowNodes } from 'course-kit/components/graph/flow.ts';
-import { FIT_ZOOM, alignTop } from 'course-kit/lib/fit';
+import { FIT_ZOOM, alignTop } from 'course-kit/lib/fit.ts';
 import { fmt } from 'course-kit/i18n.mjs';
 import './objects.css';
 import { EMPTY, STAGES, blockers, create, destroy, labelOf, noteOf, obj, type LogLine, type SimState } from '../lib/objects';

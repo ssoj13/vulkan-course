@@ -73,7 +73,7 @@ export default function GlVsVulkanView({ lang }: { lang: string }) {
 
 	const chips = (side: 'gl' | 'vk') => (
 		<ol className="gv-chips">
-			{draws.map((d, i) => {
+			{draws.map((_, i) => {
 				const step = r.steps[i + 1]!;
 				const hitch = side === 'gl' && step.gl.compile && i <= played;
 				return (

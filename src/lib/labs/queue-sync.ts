@@ -18,12 +18,10 @@
  *   submitted before that signal.
  * - A fence signal's first scope: the batches of its vkQueueSubmit2 call and all commands earlier in submission order.
  * - Host write ordering: a submission happens after everything the host did before the call.
- * Valid-usage texts come from src/data/vuids.json (scripts/sync-vuids.ts); the ids per issue are in queue-sync.json.
+ * Valid-usage ids per issue kind are in ISSUE_VUID; their texts come from `vuid()` (src/lib/vuids.ts).
  * Pure module: no DOM, no React, tested with `bun test`.
  */
 import gpu from '../../data/gpu.json';
-import labJson from '../../data/queue-sync.json';
-import vuidsJson from '../../data/vuids.json';
 
 // ---------------------------------------------------------------------------------------------------------------
 // Queues and pipeline stages
@@ -297,9 +295,6 @@ export function scenarioErrors(sc: Scenario): string[] {
 // ---------------------------------------------------------------------------------------------------------------
 // Issues
 
-export const VUIDS: Readonly<Record<string, string>> = vuidsJson;
-const ISSUE_VUID: Readonly<Record<string, string>> = labJson.vuids;
-
 export type IssueKind =
 	| 'race'
 	| 'binaryNoSignal'
@@ -314,6 +309,18 @@ export type IssueKind =
 	| 'cpuBlocked'
 	| 'neverRuns';
 
+/** The valid-usage rule each issue kind breaks; races and deadlocks break none (every call is valid on its own). */
+export const ISSUE_VUID: Readonly<Partial<Record<IssueKind, string>>> = {
+	binaryNoSignal: 'VUID-vkQueueSubmit2-semaphore-03873',
+	binarySignaled: 'VUID-vkQueueSubmit2-semaphore-03868',
+	timelineNotIncreasing: 'VUID-VkSubmitInfo2-semaphore-03882',
+	timelineSameBatch: 'VUID-VkSubmitInfo2-semaphore-03881',
+	stageUnsupported: 'VUID-vkQueueSubmit2-stageMask-03870',
+	cbPending: 'VUID-vkBeginCommandBuffer-commandBuffer-00049',
+	fenceSignaled: 'VUID-vkQueueSubmit2-fence-04894',
+	fencePending: 'VUID-vkQueueSubmit2-fence-04895',
+};
+
 export interface Issue {
 	kind: IssueKind;
 	/** Host op the issue is reported at. */
@@ -322,17 +329,13 @@ export interface Issue {
 	others: number[];
 	/** Values for the issue's text: names, stages, times. */
 	vars: Record<string, string | number>;
-	/** Valid-usage id and its registry text; races and deadlocks have none. */
+	/** Valid-usage id (its text: `vuid()` from src/lib/vuids.ts); races and deadlocks have none. */
 	vuid?: string;
-	vuidText?: string;
 }
 
 function issue(kind: IssueKind, op: number, vars: Record<string, string | number> = {}, others: number[] = []): Issue {
 	const vuid = ISSUE_VUID[kind];
-	if (!vuid) return { kind, op, others, vars };
-	const text = VUIDS[vuid];
-	if (text === undefined) throw new Error(`${vuid} missing from vuids.json (run scripts/sync-vuids.ts)`);
-	return { kind, op, others, vars, vuid, vuidText: text };
+	return vuid ? { kind, op, others, vars, vuid } : { kind, op, others, vars };
 }
 
 // ---------------------------------------------------------------------------------------------------------------

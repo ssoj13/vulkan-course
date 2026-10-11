@@ -1,10 +1,17 @@
 {
   "meta": {
-    "source": "Real capture on the course dev machine (same GPU and driver as gpu.json): a scratch Rust program (ash at the course pin) creates a Vulkan 1.4 instance and a device on GPU 0 (queue family 0, no features), then for every non-empty combination of the six usage flags seen in `buffers` (63 rows) and each requested size calls vkCreateBuffer (sharingMode EXCLUSIVE, no flags), vkGetBufferMemoryRequirements and vkDestroyBuffer. memoryTypePropertyFlags: the raw VkMemoryPropertyFlags of the memory types the same run saw (must match gpu.json).",
+    "source": "Real capture on the course dev machine (same GPU and driver as gpu.json) by tools/vk-probe (binary buffer-requirements, `bun run sync:buffers`; ash at the course pin): it creates a Vulkan 1.4 instance and a device on GPU 0 (queue family 0, no features), then for every non-empty combination of the six usage flags seen in `buffers` (63 rows) and each requested size calls vkCreateBuffer (sharingMode EXCLUSIVE, no flags), vkGetBufferMemoryRequirements and vkDestroyBuffer. memoryTypePropertyFlags: the raw VkMemoryPropertyFlags of the memory types the same run saw (must match gpu.json).",
     "device": "NVIDIA GeForce RTX 3080 Ti",
     "driverVersionRaw": 2584739840,
-    "date": "2026-10-10",
-    "memoryTypePropertyFlags": [0, 1, 1, 6, 14, 7],
+    "date": "2026-10-11",
+    "memoryTypePropertyFlags": [
+      0,
+      1,
+      1,
+      6,
+      14,
+      7
+    ],
     "requests": [
       1,
       100,

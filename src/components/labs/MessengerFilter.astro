@@ -4,14 +4,11 @@
  * The no-JS fallback lists what the course's masks (WARNING | ERROR) let through, from the same model.
  */
 import MessengerFilterView from './MessengerFilterView.tsx';
-import { COURSE, LOG, blockedBy, produced, snippet, vuidText } from '../../lib/labs/messenger-filter';
+import { COURSE, blockedBy, produced, snippet } from '../../lib/labs/messenger-filter';
 import { pick } from '../../lib/text';
 import { TEXT } from './messenger-filter.text';
-import { courseIn, langOf } from 'course-kit/lib/course';
+import { courseIn, langOf } from 'course-kit/lib/course.ts';
 import { fmt } from 'course-kit/i18n.mjs';
-
-// Every VUID the lab can quote must have its registry text (fails the build otherwise).
-LOG.maskVuids.forEach(vuidText);
 
 const v = courseIn(langOf(Astro.url.pathname));
 const t = pick(TEXT, v.lang, 'messenger-filter');

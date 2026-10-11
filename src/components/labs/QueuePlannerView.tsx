@@ -12,7 +12,6 @@ import {
 	FAMILIES,
 	PRIORITY_LEVELS,
 	ROLES,
-	VUIDS,
 	caps,
 	plan,
 	type Options,
@@ -21,6 +20,7 @@ import {
 	type RoleReq,
 } from '../../lib/labs/queue-planner';
 import { pick } from '../../lib/text';
+import { vuid } from '../../lib/vuids';
 import { TEXT } from './queue-planner.text';
 import './queue-planner.css';
 
@@ -184,7 +184,7 @@ export default function QueuePlannerView({ lang }: { lang: string }) {
 								<b>{errorText(t, e)}</b>
 								{'vuid' in e && (
 									<span className="vk-qp-vuid">
-										[{e.vuid}] {VUIDS[e.vuid]}
+										[{e.vuid}] {vuid(e.vuid)}
 									</span>
 								)}
 							</li>

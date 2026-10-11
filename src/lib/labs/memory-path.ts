@@ -2,13 +2,11 @@
  * Model of the memory-path lab: where a buffer lives on the course GPU (src/data/gpu.json, from vulkaninfo) and what
  * moving it costs per frame. Three paths: the GPU reads VRAM, the GPU reads host-visible system RAM over PCIe, the
  * CPU writes into the BAR window (VRAM the CPU can map). Each path picks its memory type with the spec's
- * find-memory-type rule over the real memory types; times use theoretical peak bandwidths only.
- * Pure module: no DOM, no React, tested with `bun test`.
+ * find-memory-type rule (lib/labs/memory.ts) over the real memory types and the real memoryTypeBits of a buffer;
+ * times use theoretical peak bandwidths only. Pure module: no DOM, no React, tested with `bun test`.
  */
-import gpu from '../../data/gpu.json';
-
-export const MiB = 1024 ** 2;
-export const GiB = 1024 ** 3;
+import reqJson from '../../data/buffer-requirements.json';
+import { DL, GiB, HC, HEAPS, HV, MiB, findType, type MemHeap, type MemType } from './memory';
 
 /**
  * Theoretical peak bandwidths, bytes/s (GB = 10^9 bytes), the numbers quoted in lesson `gpu`:
@@ -30,10 +28,6 @@ export type PathId = (typeof PATHS)[number];
 export const NODES = ['ram', 'cpu', 'pcie', 'gpu', 'vram'] as const;
 export type NodeId = (typeof NODES)[number];
 
-const DL = 'VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT';
-const HV = 'VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT';
-const HC = 'VK_MEMORY_PROPERTY_HOST_COHERENT_BIT';
-
 export interface PathDef {
 	/** Memory property flags the path requires of the memory type. */
 	need: readonly string[];
@@ -51,38 +45,20 @@ export const PATH: Readonly<Record<PathId, PathDef>> = {
 	bar: { need: [DL, HV], bw: BW.pcie, route: ['cpu', 'pcie', 'gpu', 'vram'] },
 };
 
-export interface MemType {
-	index: number;
-	heapIndex: number;
-	flags: readonly string[];
-}
-export interface MemHeap {
-	index: number;
-	size: number;
-	flags: readonly string[];
-}
-
-export const HEAPS: readonly MemHeap[] = gpu.memory.heaps.map((h, index) => ({ index, size: h.size, flags: h.flags }));
-export const TYPES: readonly MemType[] = gpu.memory.types.map((t, index) => ({ index, heapIndex: t.heapIndex, flags: t.propertyFlags }));
-
 /**
- * The spec's find-memory-type rule (chapter "Device Memory", sample `findProperties`): the first type, in index
- * order, that has every required flag. The spec orders the types (a type whose flags are a strict subset of another's
- * comes first) so that this simple loop finds the plainest fitting type. A real buffer would also pass its
- * `memoryTypeBits`; the lab allows every type. Returns null when no type has the flags.
+ * memoryTypeBits of the buffer each path allocates, from the real capture (src/data/buffer-requirements.json): every
+ * usage combination reports the same mask on this GPU (59 = types 0, 1, 3, 4, 5; type 2 is never allowed for a
+ * buffer), so one value serves every path. Throws if a recapture reports different masks for different usages.
  */
-export function findType(need: readonly string[], types: readonly MemType[] = TYPES): MemType | null {
-	return types.find((t) => need.every((f) => t.flags.includes(f))) ?? null;
-}
+export const BUFFER_TYPE_BITS: number = (() => {
+	const masks = new Set(reqJson.buffers.map((b) => b.memoryTypeBits));
+	const [bits] = masks;
+	if (masks.size !== 1 || bits === undefined) throw new Error(`memory-path: buffers report different memoryTypeBits: ${[...masks].join(', ')}`);
+	return bits;
+})();
 
-/** VUID-vkAllocateMemory-pAllocateInfo-01713, plain text of the SDK 1.4.341 registry (validusage.json). */
-export const VUID_HEAP_SIZE = {
-	id: 'VUID-vkAllocateMemory-pAllocateInfo-01713',
-	text:
-		'pAllocateInfo->allocationSize must be less than or equal to VkPhysicalDeviceMemoryProperties::memoryHeaps[memindex].size ' +
-		'where memindex = VkPhysicalDeviceMemoryProperties::memoryTypes[pAllocateInfo->memoryTypeIndex].heapIndex as returned by ' +
-		'vkGetPhysicalDeviceMemoryProperties for the VkPhysicalDevice that device was created from',
-} as const;
+/** The rule an allocation larger than its heap breaks; its text comes from `vuid()` (src/lib/vuids.ts). */
+export const VUID_HEAP_SIZE = 'VUID-vkAllocateMemory-pAllocateInfo-01713';
 
 export interface Transfer {
 	type: MemType;
@@ -95,11 +71,11 @@ export interface Transfer {
 	budget: number;
 }
 
-/** What moving `size` bytes along `path` costs on the course GPU. Throws if gpu.json has no fitting type. */
+/** What moving `size` bytes along `path` costs on the course GPU. Throws if no type the buffer allows has the flags. */
 export function transfer(path: PathId, size: number): Transfer {
 	const p = PATH[path];
-	const type = findType(p.need);
-	if (!type) throw new Error(`memory-path: gpu.json has no memory type with ${p.need.join(' | ')}`);
+	const type = findType(BUFFER_TYPE_BITS, p.need);
+	if (!type) throw new Error(`memory-path: no memory type allowed by ${BUFFER_TYPE_BITS} has ${p.need.join(' | ')}`);
 	const heap = HEAPS[type.heapIndex];
 	if (!heap) throw new Error(`memory-path: memory type ${type.index} points at missing heap ${type.heapIndex}`);
 	const ms = (size / p.bw) * 1000;
