@@ -61,14 +61,17 @@ as `SHADER_DIR` by CMake), the same file the Rust examples embed. It is compiled
 | 22 | `src/22_depth.cpp` | two intersecting cubes, perspective projection into Vulkan clip space, depth format choice, shared depth image with a per-frame WAW barrier, depth state, `pDepthAttachment`; `--no-depth` |
 | 23 | `src/23_mipmaps.cpp` | receding checkerboard floor; 10-level mip chain generated with `blitImage2` and per-level barriers; trilinear sampler; `--no-mips`, `--anisotropy` |
 | 24 | `src/24_msaa.cpp` | MSAA: sample count from the framebuffer limits (`--samples 1\|2\|4\|8`), transient multisampled color + depth (lazily allocated memory if offered), resolve into the swapchain image (`resolveMode` AVERAGE) |
+| 25 | `src/25_compute.cpp` | compute pipelines: SAXPY + groupshared workgroup reduction; LocalSize read from the SPIR-V, compute limits, subgroupSize, ceil-div `dispatch`, COMPUTE -> HOST barrier, HOST_CACHED readback (`--uncached`), timestamps, exact CPU check; no window |
+| 26 | `src/26_particles.cpp` | particles in one STORAGE_BUFFER \| VERTEX_BUFFER buffer: compute `init`/`simulate`, drawn as points in the same command buffer; WAR/RAW barriers across frames in flight (`--count`) |
+| 27 | `src/27_async_compute.cpp` | the simulation on a compute-only queue family: ping-pong buffers, CONCURRENT sharing, two timeline semaphores, timestamps on both queues measure the overlap; `--same-queue` |
 
 Lessons embed code by `// #region <name>` ... `// #endregion` markers; the names
 match the Rust examples.
 
-Steps 06-12, 14, 15 and 17-20 keep their window open until you close it; steps 10-12, 14, 15
-and 17-20 also take `--seconds S`. Lines that depend on timing start with `[timing]`, lines
+Steps 06-12, 14, 15, 17-24, 26 and 27 keep their window open until you close it; steps 10-12, 14, 15,
+17-24, 26 and 27 also take `--seconds S`. Lines that depend on timing start with `[timing]`, lines
 with GPU addresses (step 19) with `[addr]` (drop both to compare with the Rust output). Steps
-06-10, 12, 14, 15 and 17-20 have a fixed-size window: resizing
+06-10, 12, 14, 15, 17-24, 26 and 27 have a fixed-size window: resizing
 (and minimizing, which makes the swapchain out of date) needs swapchain recreation, which is
 step 11 - the others stop cleanly with a message. In step 16 the lines about the allocator's
 internals start with `[lib]`: VMA here, a minimal linear allocator in the Rust version (whose

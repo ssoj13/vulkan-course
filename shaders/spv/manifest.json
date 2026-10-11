@@ -53,6 +53,39 @@
 			]
 		},
 		{
+			"source": "particles.slang",
+			"sourceSha256": "61b7dc0e2e8ef623bfed826d270b353dc898aacd39e08905f15aac961c3b0f37",
+			"outputs": [
+				{
+					"file": "particles.spv",
+					"bytes": 7472,
+					"sha256": "d01965331eeec48e22218a69d0f646351356534be2dc081d8271a514a1a7b977"
+				}
+			]
+		},
+		{
+			"source": "reduce.slang",
+			"sourceSha256": "bddf95c5c5990a391c5003905e6d3e379674e96752f88e96d3c45b7e80d81456",
+			"outputs": [
+				{
+					"file": "reduce.spv",
+					"bytes": 2216,
+					"sha256": "2635461fb7736ab531c13285d198a234ef9f039f63e1d8a5e1e9c6196547d6a2"
+				}
+			]
+		},
+		{
+			"source": "saxpy.slang",
+			"sourceSha256": "1b2f21dd0a75eb2172233a32aa30fa078c26940fd0d68319703b1836413d8663",
+			"outputs": [
+				{
+					"file": "saxpy.spv",
+					"bytes": 1444,
+					"sha256": "1684ac258362924ab91842bef618208f04ce42357156ba27849f7ee537ef7812"
+				}
+			]
+		},
+		{
 			"source": "textured.slang",
 			"sourceSha256": "f4ac29f1d41f56e5d92eb947bec7247c2c480a78c1777fd77a2c96cd8e5ff522",
 			"outputs": [

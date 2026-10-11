@@ -19,7 +19,8 @@ find_package(glfw3 CONFIG REQUIRED)
 find_package(VulkanMemoryAllocator CONFIG REQUIRED)
 
 # Steps 08+ read the SPIR-V compiled from ../../shaders/*.slang (bun run sync:shaders)
-# at run time; the absolute path of shaders/spv is baked in at build time.
+# at run time; the absolute path of shaders/spv is baked in at build time (as
+# SHADER_DIR, defined for every step: the ones without shaders ignore it).
 cmake_path(ABSOLUTE_PATH CMAKE_CURRENT_SOURCE_DIR OUTPUT_VARIABLE src_dir)
 cmake_path(APPEND src_dir "../../shaders/spv" OUTPUT_VARIABLE shader_dir)
 cmake_path(NORMAL_PATH shader_dir)
@@ -49,13 +50,17 @@ set(STEPS
     21_texture
     22_depth
     23_mipmaps
-    24_msaa)
+    24_msaa
+    25_compute
+    26_particles
+    27_async_compute)
 # Steps that open a window.
 set(WINDOW_STEPS 06_window_surface 07_swapchain 08_pipeline 09_triangle
                  10_frames_in_flight 11_resize 12_timeline 14_vertex_buffer
                  15_staging 17_uniforms 18_push_constants
                  19_buffer_device_address 20_bindless
-                 21_texture 22_depth 23_mipmaps 24_msaa)
+                 21_texture 22_depth 23_mipmaps 24_msaa
+                 26_particles 27_async_compute)
 
 foreach(step IN LISTS STEPS)
     add_executable(${step} src/${step}.cpp)
@@ -65,9 +70,9 @@ foreach(step IN LISTS STEPS)
         # ships an older VMA as <vma/vk_mem_alloc.h>, which we do not use.)
         target_link_libraries(${step} PRIVATE GPUOpen::VulkanMemoryAllocator)
     endif()
+    target_compile_definitions(${step} PRIVATE SHADER_DIR="${shader_dir}")
     if(step IN_LIST WINDOW_STEPS)
         target_link_libraries(${step} PRIVATE glfw)
-        target_compile_definitions(${step} PRIVATE SHADER_DIR="${shader_dir}")
     endif()
 
     # Vulkan-Hpp structs become plain aggregates, so we can write

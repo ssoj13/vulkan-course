@@ -416,6 +416,57 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
   printing "staging buffer destroyed" (= Rust UploadScratch drop). fmt/clippy/W4 clean, sync validation clean (bandicam
   only), stdout identical without [timing] (21 default/--nearest, 22, 23 default/--no-mips, 24 default/--samples 1).
   Examples are not scanned by scripts/vuid-refs.ts (src/ only): no sync:vuids. Logs: scratchpad m10fix/.
+- examples 25-27 (module 11 "compute", 2026-10-11, both languages; stdout identical without `[timing]`). New shaders
+  `saxpy.slang` (result = a*x + y; StructuredBuffer x/y at bindings 0/1, RWStructuredBuffer result at 2, push {float a;
+  uint count} 8 bytes), `reduce.slang` (groupshared uint[256] tree sum, GroupMemoryBarrierWithGroupSync = OpControlBarrier
+  Workgroup/Workgroup/AcquireRelease|WorkgroupMemory (264); out-of-range invocations load 0 instead of returning, so all
+  reach every barrier), `particles.slang` (init/simulate/advance compute + vertexMain/fragmentMain; Particle {float2 pos,
+  vel} std430 stride 16; push {dt, time, count, aspect} 16 bytes; writes SV_PointSize 1.0 =
+  VUID-VkGraphicsPipelineCreateInfo-topology-08773 without maintenance5). All three declare only `Shader` (pinned).
+  Slang emits `OpExecutionMode LocalSize 256 1 1`; the programs read it (OpEntryPoint name -> id -> LocalSize).
+  25_compute (no window): family 0 (first COMPUTE), limits printed (RTX 3080 Ti: invocations 1024, size 1024x1024x64,
+  count 2147483647x65535x65535, shared 49152, subgroupSize 32; spec: Vulkan 1.4 min invocations 256 and size
+  (256,256,64), core 128/(128,128,64), shared min 16384). Default N = 1000000 -> 3907 groups (last has 64), `--count`
+  1..2^23 (2N-1 < 2^24 keeps floats exact; OpFAdd/OpFMul "Correctly rounded" table), `--uncached`. Inputs type 3
+  (HOST_VISIBLE|COHERENT), outputs choose_type(HOST_VISIBLE, preferred HOST_CACHED) = type 4 (coherent: no invalidate;
+  code invalidates if not). Barrier COMPUTE_SHADER/SHADER_STORAGE_WRITE -> HOST/HOST_READ, quoting the fence Note
+  ("Signaling a fence and waiting on the host does not guarantee ... visible to the host"). Measured (release, sync
+  validation on): saxpy 530-720 us = 17-22 GB/s (inputs/outputs in system RAM, PCIe), saxpy+reduce 750-940 us
+  (8M elements: 5.6 ms / 7.6-8.8 ms); CPU copy of 4 MB results: HOST_CACHED type 4 0.8-1.2 ms (3.4-5.0 GB/s) vs
+  `--uncached` type 3 23.5-25.2 ms (0.16-0.17 GB/s), ~25x. Verified exactly vs CPU (all results, all group sums,
+  total 499500000).
+  26_particles: 2^20 particles (`--count`, max 2^24) in ONE DEVICE_LOCAL buffer (type 1) STORAGE_BUFFER|VERTEX_BUFFER;
+  init by a compute dispatch (fence-waited startup submit); per frame in one command buffer on family 0 (checked for
+  GRAPHICS|COMPUTE): barrier [VERTEX_ATTRIBUTE_INPUT/NONE -> COMPUTE_SHADER/NONE (WAR vs frame n-1's draw) +
+  COMPUTE_SHADER/STORAGE_WRITE -> COMPUTE_SHADER/STORAGE_READ|WRITE (RAW)], dispatch simulate (in place), barrier
+  COMPUTE_SHADER/STORAGE_WRITE -> VERTEX_ATTRIBUTE_INPUT/VERTEX_ATTRIBUTE_READ, draw POINT_LIST. Single buffer chosen:
+  GPU-only data needs barriers, not per-frame copies (copies are for CPU-written data, step 17). dt clamped to 1/60.
+  27_async_compute: compute on family 2 (COMPUTE without GRAPHICS), one queue each; ping-pong P[0]/P[1] (step n writes
+  P[n%2] from P[(n-1)%2]; frame n draws P[n%2]); sharing CONCURRENT [0, 2] (EXCLUSIVE would need release/acquire per
+  switch and serialize the overlap; spec: no transfer -> contents undefined for the second family's reads; CONCURRENT
+  "may result in lower performance access"); `--same-queue` = one queue of family 0, EXCLUSIVE (CONCURRENT needs >= 2
+  families). Timelines `computed` (init state = 0, step n signals n) and `rendered` (frame n signals n); graphics n
+  waits computed >= n, compute n waits rendered >= n-2 (WAR), host waits rendered >= n-F / computed >= n-F for slot
+  reuse; semaphore waits/signals at ALL_COMMANDS so the TOP_OF_PIPE start timestamp lies inside the wait's scope
+  (interpretation: ALL_COMMANDS covers every operation of the batch). Compute step n+1 submitted right after frame n's
+  present. Timestamps compared across queues: all device timestamps are in VK_TIME_DOMAIN_DEVICE_KHR (spec,
+  vkCmdWriteTimestamp2). MEASURED (release, validation on, sync off, 3 alternating runs x 2 languages, 4 s, MAILBOX,
+  2^20 particles): per frame graphics 272-282 us, compute 45 us; overlap async 0.8-3.0 us (2-7% of the compute time),
+  same-queue 0.0 us; fps async 648-1055 vs same-queue 824-1135 (noise, CPU/present bound: ~1 ms per frame vs ~0.32 ms
+  GPU). Async compute gives NO measurable gain on the RTX 3080 Ti here; the program prints the numbers as they are.
+  Screenshots taken 2026-10-11 (window capture works again): examples/screenshots/{26_particles,27_async_compute}.png.
+  SYNC VALIDATION TRAP (SDK 1.4.341): VK_KHRONOS_VALIDATION_VALIDATE_SYNC=true alone does NOT track shader
+  storage-buffer accesses (setting syncval_shader_accesses_heuristic, default false); with
+  VK_KHRONOS_VALIDATION_SYNCVAL_SHADER_ACCESSES_HEURISTIC=true: removing 26's compute->vertex barrier -> "vkCmdDraw():
+  READ_AFTER_WRITE hazard detected. vkCmdDraw reads vertex VkBuffer ..., which was previously written by vkCmdDispatch";
+  removing 26's WAR barrier -> "vkQueueSubmit2(): WRITE_AFTER_READ hazard detected. vkCmdDispatch ... writes to
+  VkBuffer ..., which was previously read by vkCmdDraw ... Vulkan insight: an execution dependency is sufficient";
+  removing 27's computed wait in the graphics submit -> "vkQueueSubmit2(): READ_RACING_WRITE hazard detected. vkCmdDraw
+  ... reads VkBuffer ..., which was previously written by vkCmdDispatch (... submitted on VkQueue ...)". NOT detected
+  even with the heuristic: 26 without the compute->compute RAW barrier, 25 with saxpy dispatched twice (WAW), 27
+  without the rendered >= n-2 WAR wait, 25 without the COMPUTE->HOST barrier (host reads are not tracked; results still
+  correct on this machine). Earlier "sync validation clean" claims for storage buffers (modules 9-10) were made without
+  the heuristic. All clean runs of 25-27 used both env vars: only the bandicam warning. Logs: scratchpad m11/.
 - Module 8 review fixes, round 2 (2026-10-11, EN lessons; the RU lessons written afterwards carry the same facts):
   - gpu-allocator experiment (scratch cargo project, deleted after; logs check*.log in the session scratchpad gpualloc/):
     gpu-allocator =0.28.0 (features std+vulkan) + `[patch.crates-io] ash = { git = ash-rs/ash, rev = f4c2ca3 }`.
@@ -562,6 +613,15 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
 - [x] Module 10 RU lessons (2026-10-11): ru/images/{textures-and-samplers, depth, mipmaps, msaa} authored (same regions,
   outputs, VUIDs, measurements, ObjectGraph build and quiz facts as EN, with the review fixes).
 - [ ] Module 10: independent review of the RU lessons (language + facts vs EN).
+- [x] Module 11 examples 25-27 (2026-10-11): see State "examples 25-27"; CMake STEPS/WINDOW_STEPS (SHADER_DIR now
+  defined for every step: 25 has no window but loads SPIR-V) and READMEs updated. fmt + clippy -D warnings, C++ /W4 clean.
+- [ ] Module 11: independent reviews of 25-27 (code vs spec), then the EN lessons compute/{compute-shaders, particles,
+  async-compute} (module `compute` not yet in course.json); `sync:vuids` is not needed for examples (src/ only).
+- [ ] Re-run the storage-buffer steps (17-24) with VK_KHRONOS_VALIDATION_SYNCVAL_SHADER_ACCESSES_HEURISTIC=true and
+  correct the "sync validation clean" statements if anything shows up (see State "examples 25-27", trap).
+- [ ] Async compute shows no gain on the RTX 3080 Ti with 2^20 particles (CPU/present bound); a lesson experiment
+  could add a heavier kernel or FIFO + a GPU-bound load to show when overlap helps - measure before claiming.
+- [ ] READMEs: the "Steps 08+ use triangle.spv / mesh.spv" sentence predates steps 17-27 shaders; list all .spv files.
 - [ ] Proposal: a step 16b using gpu-allocator through `[patch.crates-io]` once a gpu-allocator release (or its main)
   builds against ash master (`push_next` -> `push`); 0.28.0 does not. Needs a Cargo.toml change: coordinate with the
   owner of examples/rust/Cargo.toml. Also update the Cargo.toml comment (lines 18-21) to mention the [patch] result.

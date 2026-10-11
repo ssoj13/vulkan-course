@@ -64,11 +64,14 @@ cargo run --bin 01_instance
 | `22_depth` | Two intersecting cubes (`shaders/cube.slang`, 2 instances) with a perspective projection into Vulkan clip space; depth format chosen from D32_SFLOAT / D24_UNORM_S8_UINT / D16_UNORM; one depth image shared by the frames in flight with a WAW barrier per frame; pipeline depth state; `--no-depth` |
 | `23_mipmaps` | 512x512 checkerboard floor receding to the horizon; full mip chain (10 levels) generated on the GPU with `vkCmdBlitImage2` and per-level barriers; trilinear sampler; `--no-mips` (maxLod 0), `--anisotropy` |
 | `24_msaa` | Step 22 with MSAA: sample count from `framebufferColorSampleCounts & framebufferDepthSampleCounts` (`--samples 1\|2\|4\|8`, default 4), transient multisampled color + depth (LAZILY_ALLOCATED if offered, else DEVICE_LOCAL), resolve into the swapchain image via dynamic rendering (`resolveMode` AVERAGE) |
+| `25_compute` | Compute pipelines: SAXPY over N elements (`--count`, default 1000000) and a groupshared workgroup reduction (`shaders/saxpy.slang`, `shaders/reduce.slang`); workgroup size read from the SPIR-V (LocalSize), compute limits + subgroupSize, ceil-div dispatch, storage-buffer descriptor sets, COMPUTE -> HOST barrier, readback from HOST_CACHED memory (`--uncached` to compare), GPU timestamps, exact CPU verification. No window |
+| `26_particles` | 2^20 particles (`--count`) in one DEVICE_LOCAL buffer used as STORAGE_BUFFER and VERTEX_BUFFER: initialized and simulated by compute shaders (`shaders/particles.slang`), drawn as points in the same command buffer; WAR/RAW barriers across frames in flight |
+| `27_async_compute` | The simulation on a compute-only queue family (ping-pong buffers, CONCURRENT sharing, two timeline semaphores), compute step n+1 overlapping graphics frame n; GPU timestamps on both queues measure the overlap; `--same-queue` for comparison |
 
-Steps 06-12, 14, 15 and 17-20 keep their window open until you close it; steps 10-12, 14, 15
-and 17-20 also take `--seconds S` to close it after S seconds. Lines that depend on timing start
+Steps 06-12, 14, 15, 17-24, 26 and 27 keep their window open until you close it; steps 10-12, 14, 15,
+17-24, 26 and 27 also take `--seconds S` to close it after S seconds. Lines that depend on timing start
 with `[timing]`, lines with GPU addresses (step 19) with `[addr]` (drop both to compare the Rust
-and C++ output). Steps 06-10, 12, 14, 15 and 17-20 have a
+and C++ output). Steps 06-10, 12, 14, 15, 17-24, 26 and 27 have a
 fixed-size window: resizing (and minimizing, which makes the swapchain out of date)
 needs swapchain recreation, which is step 11 - the others stop cleanly with a message.
 
@@ -80,6 +83,6 @@ identical.
 
 ![Step 09](../screenshots/09_triangle.png)
 
-The debug messenger in steps 02-20 reports only `[WARNING]` and `[ERROR]`.
+The debug messenger in steps 02-27 reports only `[WARNING]` and `[ERROR]`.
 A warning from a third-party implicit layer (screen recorders, overlays) is
 not about our code: implicit layers are explained in the loader lesson.
