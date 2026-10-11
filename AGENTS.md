@@ -92,8 +92,13 @@ those as real output); never invented. Check content with `bun run lint` before 
 9. Descriptors: uniform buffers, descriptor sets/layouts/pools, push constants, buffer device address, bindless.
 10. Images: textures, samplers, depth, mipmaps, MSAA.
 11. Compute: compute pipelines, particles, async compute.
-Advanced: debugging/profiling (RenderDoc, Nsight, timestamps), pipeline cache, multithreaded recording,
-shader objects, mesh shaders, ray tracing, tile-based mobile GPUs. Capstone: mini renderer (glTF + PBR).
+12. Advanced (plan: `notes/module-12-plan.md`, decisions and verified device facts): debugging-and-profiling
+    (28_debug_labels, 29_gpu_queries), pipeline-cache (30), multithreaded-recording (31), mesh-shaders (32), ray-query
+    (33), ray-tracing-pipeline (34), capstone-renderer (35, glTF + PBR, multi-file). Not planned yet: shader objects,
+    tile-based mobile GPUs.
+
+Status (2026-10-11): modules 1-11 published EN + RU (examples 01-27, 12 labs, screenshots 09-27 pixel-verified).
+Module 12 in progress.
 
 ## Visualizations (planned, Vulkan-specific, live in this repo)
 
@@ -527,6 +532,16 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
 
 ## TODO
 
+Current plan (2026-10-11), in order:
+1. Module 12 per `notes/module-12-plan.md`: per pair of steps code (both languages) -> independent code review -> fixes
+   -> EN lessons -> review -> fixes + RU -> push. Wave 1 = Slang check (mesh/task, ray query, RT pipeline, printf) +
+   28/29 (in progress); then 30, 31, 32, 33+34, 35.
+2. Open reviews: RU lessons of modules 4-11 (language + facts vs EN); second look at the module 11 EN fixes.
+3. Course-wide cleanups listed below (Vk::new guard pattern, compute pipeline object in objects.json, README .spv list,
+   15_staging.cpp comment, labs/graphics-pipeline wording, course-kit v0.4.1 release + `bun run check` in CI, C++ in CI).
+4. With the user: term-map direction; ReBAR-on snapshot after they enable it; optional RenderDoc 1.46 / Nsight Graphics
+   install (not downloaded without the user).
+
 - [x] Module 7 examples 10-12 (2026-10-11; resumed from WIP 7b36597): fmt + clippy -D warnings, C++ /W4 clean, run on
   the RTX 3080 Ti with VK_KHRONOS_VALIDATION_VALIDATE_SYNC=true: zero messages except the bandicam API-version warning;
   stdout identical Rust vs C++ without `[timing]` lines (10: --frames 1/2/3; 11: both present paths; 12: --frames 1/2/3).
@@ -576,7 +591,7 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
   for" no image either; heap budgets quoted in memory-types. Heap 1 = exactly half of the 68630528000 bytes of RAM.
 - [x] Module 8 RU lessons (2026-10-11): ru/memory/{memory-types, vertex-and-index-buffers, staging-uploads,
   allocators}, authored from the round-2 EN facts; lint, tests, astro check clean.
-- [ ] Module 8: independent review of the EN lessons (facts vs spec/runs, quizzes), then of the RU lessons.
+- [x] Module 8: EN lessons reviewed (two rounds, fixes in State). [ ] Independent review of the RU lessons.
 - [x] RebarCheck (EN+RU, 2026-10-11) presents ReBAR ON as a possible misconfiguration too (CSM/MBR boot, NVIDIA
   per-app profiles and measured regressions, uncached BAR heap vs readbacks); sources in REBAR.md.
 - [x] Module 9 examples 17-20 (2026-10-11): fmt + clippy -D warnings, C++ /W4 clean (clean rebuild of all 20), run on
@@ -585,8 +600,7 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
   bindless.slang (+ spv, manifest; tests/shaders.test.ts passes). Details in State "examples 17-20".
 - [x] Screenshots of 17-20 (2026-10-11): 17 in uniform-buffers (regular hexagon = column-major upload verified
   visually too), 19 in buffer-device-address, 20 in bindless (EN + RU); 18 captured, not embedded (same picture as 17).
-- [ ] Module 9: independent reviews of 17-20 (code vs spec), then the EN lessons descriptors/{uniform-buffers,
-  descriptor-sets, push-constants, buffer-device-address, bindless}; `sync:vuids` for the VUIDs named in 17-20 comments.
+- [x] Module 9: reviews of 17-20 (code vs spec) and of the EN lessons done, fixes committed (bc7a8fd, 241fc0f).
 - [x] Module 9 EN lessons (2026-10-11): module `descriptors` ("Descriptors and shader data") in course.json/course.ru.json;
   RU pages written afterwards (next item). Regions shown once: 17 mesh/uniform-struct/transform/reflect/check-layout/frame-resources/
   uniform-buffers/update-uniforms (uniform-buffers, + Snippet transform.slang), 17 set-layout/pipeline-layout/
@@ -611,9 +625,7 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
   CPU reference, mips vs --no-mips neighbor differences, 55 vs 7 colors at 4x/1x); embedded as pairs in
   textures-and-samplers (+ LINEAR/NEAREST zooms), depth, mipmaps, msaa (4x/1x zooms), EN + RU. Not captured:
   23 `--anisotropy`, temporal shimmer.
-- [ ] Module 10: independent reviews of 21-24 (code vs spec), then the EN lessons images/{textures-and-samplers, depth,
-  mipmaps, msaa}; `sync:vuids` for the VUIDs named in 21-24 comments (VkSamplerCreateInfo-anisotropyEnable-01071,
-  VkImageMemoryBarrier2-image-03320).
+- [x] Module 10: review of 21-24 (code vs spec) done, fixes committed (d759d61); EN lesson review below.
 - [x] 22/24 D24_UNORM_S8_UINT branch (DEPTH_STENCIL_ATTACHMENT_OPTIMAL, both aspects, pStencilAttachment): tested
   2026-10-11 by temporarily putting it first in the candidate list (both languages, reverted): runs, sync validation clean.
 - [x] Module 10 EN lessons (2026-10-11): module `images` ("Images") in course.json/course.ru.json; RU pages are
@@ -651,7 +663,7 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
 - [ ] Module 10: independent review of the RU lessons (language + facts vs EN).
 - [x] Module 11 examples 25-27 (2026-10-11): see State "examples 25-27"; CMake STEPS/WINDOW_STEPS (SHADER_DIR now
   defined for every step: 25 has no window but loads SPIR-V) and READMEs updated. fmt + clippy -D warnings, C++ /W4 clean.
-- [ ] Module 11: independent reviews of 25-27 (code vs spec); `sync:vuids` is not needed for examples (src/ only).
+- [x] Module 11: review of 25-27 (code vs spec) done; `sync:vuids` is not needed for examples (src/ only).
   Review 1 findings fixed 2026-10-11 (State "Module 11 review fixes"); lessons quoting 27's submit-graphics region or
   its measurements must say image_available is waited at ALL_COMMANDS and use the re-measured numbers.
 - [x] Module 11 EN lessons (2026-10-11): module `compute` ("Compute") in course.json/course.ru.json; slugs
@@ -680,7 +692,7 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
   second queue family"; VK_TIME_DOMAIN_DEVICE_KHR "comparable with device timestamp values captured using
   vkCmdWriteTimestamp or vkCmdWriteTimestamp2"; OpFAdd/OpFMul "Correctly rounded"; HOST_CACHED read speed; fence Note.
   Not sourced, hedged in text: NVIDIA shared memory = L1 array, workgroup stays on one SM, hardware compute queues.
-- [ ] Screenshots of 26/27: `examples/screenshots/{26_particles,27_async_compute}.png` are 795x628 window grabs WITH the
+- [x] Screenshots of 26/27 (replaced 2026-10-11 by the 800x600 client-area captures, commit 8778b73). Old note: the first `examples/screenshots/{26_particles,27_async_compute}.png` were 795x628 window grabs WITH the
   title bar (not the 800x600 client-area convention; their colors are off the shader ramp, e.g. B 66 < 89, so they were
   resampled). The lesson copies in src/assets were recaptured 2026-10-11 with scratchpad cap.py (PrintWindow client
   area, Rust release, `--seconds 4`, ~2.5 s): 800x600, every lit color within 0.56 of the sRGB-encoded blue->orange
@@ -749,4 +761,5 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
   `gpu-rebar.json` or a profile field) and let the memory labs switch between OFF (measured) and ON (measured).
   `src/data/gpu.json` stays the ReBAR-off snapshot; until then the ON state is described in words only
   (`src/components/RebarCheck.astro`, lab notes).
-- [ ] User review, then modules 4+ (presentation, pipeline, commands, sync, memory, descriptors, images, compute)
+- [x] Modules 4-11 (presentation, pipeline, commands, sync, memory, descriptors, images, compute), EN + RU, published.
+- [ ] User review of modules 4-11.
