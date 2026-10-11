@@ -1,0 +1,371 @@
+---
+title: Mipmaps
+description: 'Why a textured floor shimmers in the distance and how a prefiltered mip chain fixes it: how many levels and how much memory, generating the chain on the GPU with vkCmdBlitImage2 and a barrier per level, the format features a blit needs, how the sampler picks a level (λ, mipmapMode, maxLod), and anisotropic filtering.'
+---
+
+import MindMap from 'course-kit/components/MindMap.astro';
+import Quiz from 'course-kit/components/Quiz.astro';
+import Step from '../../../components/Step.astro';
+
+Step 23 lays step 21's sampling onto a checkerboard floor that runs to the horizon. Near the camera a texel covers many
+pixels and filtering looks smooth. Far away it is the other way round: dozens of texels fall into one pixel, the
+sampler reads a few of them, which ones depends on the exact position, and as the camera moves the floor dissolves into
+crawling moiré. How does a renderer read "the average of all the texels under this pixel" without reading all of them,
+and who prepares the data that makes it possible?
+
+## Where this fits
+
+The third lesson of the **images** module. It extends the [texture](lesson:textures-and-samplers) to an image with many
+levels, generated with blits ordered by per-level [barriers](lesson:barriers-and-layouts), and gives the sampler's LOD
+settings, which step 21 clamped to zero, real work. The chain:
+
+`VkImage with mipLevels = 10 → copy level 0 → vkCmdBlitImage2 level i-1 → level i (one barrier dance per level) → VkImageView over all levels → VkSampler (mipmapMode, minLod, maxLod, anisotropy) → λ from the UV derivatives → texture unit reads two levels`
+
+A [mip map](term:mipmap) is a chain of prefiltered copies of an image, each half the size of the previous one. The
+sampler's [level of detail](term:lod) λ picks the level whose texels match the pixel size; blending two neighboring
+levels is [trilinear filtering](term:trilinear-filtering), and [anisotropic filtering](term:anisotropic-filtering) goes
+further for surfaces at grazing angles. The levels are made here by [vkCmdBlitImage2](term:vk-cmd-blit-image). Without
+them, minified textures [alias](term:texture-aliasing). After this lesson: [MSAA](lesson:msaa), which treats the
+aliasing at geometry edges that mipmaps cannot reach.
+
+## Why a far floor shimmers
+
+Sampling is measuring a signal at points. A checkerboard with 16-texel cells, seen so far away that a cell is smaller
+than a pixel, contains detail finer than the pixel grid can represent; sampling it at one point per pixel folds that
+detail into false low-frequency patterns, which move as the camera moves. That is [aliasing](term:texture-aliasing),
+the same thing a renderer fights with pixel filters and the reason a compositor prefilters before scaling an image
+down.
+
+The cure is to remove the fine detail *before* sampling, at the right scale for each pixel. Doing that per pixel at
+render time would mean averaging dozens of texels for every far pixel. Mipmaps precompute it: level 1 is level 0
+averaged 2 x 2, level 2 is level 1 averaged 2 x 2, down to 1 x 1. At render time the sampler picks the level whose
+texels are about one pixel in size and reads 4 texels there (8 with trilinear filtering) instead of dozens. Offline
+renderers rely on the same structure: the `.tx` files that `maketx` makes for Arnold and OSL, or RenderMan's `txmake`
+textures, are tiled images with a precomputed mip pyramid, so the renderer reads only the level and the tiles it needs.
+
+The texture is a high-contrast checkerboard:
+
+<Step file="23_mipmaps" region="texture-data" />
+
+The floor is one large quad whose UVs repeat the texture every 2 units, so 20 x 102.5 copies:
+
+<Step file="23_mipmaps" region="floor" />
+
+The camera hovers 1 unit above it, looking slightly down, and glides forward:
+
+<Step file="23_mipmaps" region="camera" />
+
+## 1. How many levels, how much memory
+
+<Step file="23_mipmaps" region="mip-count" />
+
+Each level halves width and height, rounding down, never below 1; the chain ends at 1 x 1. For a square of side n that
+is floor(log2 n) + 1 levels, for a rectangle the larger side decides. For a 512 x 512 image, 10 levels:
+
+```text
+Mip levels: floor(log2(max(512, 512))) + 1 = 10
+VkImage: 10 mip levels, TRANSFER_SRC | TRANSFER_DST | SAMPLED; memory 1399808 bytes (level 0 alone: 1048576; the chain adds about a third), memory type 1
+```
+
+The levels form a geometric series, 1 + 1/4 + 1/16 + ... which approaches 4/3: a full chain costs a third more than the
+base image. The texels of the ten levels add up to 1398100 bytes; the driver asks for 1399808, a little more, presumably
+padding of the smallest levels to its tile sizes (the layout is the driver's, so the exact reason is not visible).
+
+## 2. Can the GPU build them?
+
+The levels can be computed on the CPU, by an offline tool, or on the GPU. Step 23 does the last, with blits: a blit
+copies a rectangle of one image into a rectangle of another, scaling and filtering on the way. That needs more from the
+format than step 21 asked:
+
+<Step file="23_mipmaps" region="format-support" />
+
+```text
+Format support (vkGetPhysicalDeviceFormatProperties2):
+  R8G8B8A8_SRGB (optimal tiling): SAMPLED_IMAGE yes, SAMPLED_IMAGE_FILTER_LINEAR yes, TRANSFER_DST yes, BLIT_SRC yes, BLIT_DST yes
+```
+
+`BLIT_SRC` and `BLIT_DST` let a blit read and write the format; the blit's `LINEAR` filter needs
+`SAMPLED_IMAGE_FILTER_LINEAR` on the source (`VUID-VkBlitImageInfo2-filter-02001`). Formats without them get their
+levels another way. Block-compressed formats typically cannot be blit *targets*: on the course GPU, `BC7_SRGB_BLOCK`
+lists `BLIT_SRC` but not `BLIT_DST` (vulkaninfo `--show-formats`), since writing would mean encoding blocks. Integer
+formats have no linear filtering (none does on the course GPU). Their chains come from the CPU or an offline tool. Two more
+restrictions: blits need a queue with graphics capability (`VUID-vkCmdBlitImage2-commandBuffer-cmdpool`), so a
+dedicated transfer queue cannot build mips, and neither image may be multisampled
+(`VUID-VkBlitImageInfo2-srcImage-00233`): multisampled images are averaged by a *resolve* instead, in the
+[MSAA lesson](lesson:msaa).
+
+## 3. The image
+
+<Step file="23_mipmaps" region="create-image" />
+
+Two changes from step 21: `mipLevels = 10`, and the usage gains `TRANSFER_SRC`, because every level except the last is
+read by a blit.
+
+## 4. Level 0
+
+<Step file="23_mipmaps" region="upload-level-0" />
+
+All ten levels go from `UNDEFINED` to `TRANSFER_DST_OPTIMAL` at once: level 0 for the copy, the others for the blits that
+will write them. Each [subresource](lesson:image-views) (here: each mip level) has its own layout, and a barrier names
+exactly which levels it moves; that is what makes the level-by-level dance below possible. Then step 21's copy fills
+level 0 from the staging buffer.
+
+## 5. The blit chain
+
+<Step file="23_mipmaps" region="blit-chain" />
+
+Level i is made from level i-1, so level i-1 must be finished and readable first. Per level, three commands:
+
+| Command | Level | Layout | Synchronization |
+|---|---|---|---|
+| barrier | i-1 | `TRANSFER_DST -> TRANSFER_SRC` | after its writer (the copy for level 0, the previous blit otherwise), before the blit's read |
+| `vkCmdBlitImage2` | i-1 → i | reads `TRANSFER_SRC`, writes `TRANSFER_DST` | `LINEAR` filter, half the size |
+| barrier | i-1 | `TRANSFER_SRC -> SHADER_READ_ONLY` | after the blit's read (`BLIT`, access `NONE`), before fragment shader sampling |
+
+After the loop the last level, written but never read by a blit, gets its own `TRANSFER_DST -> SHADER_READ_ONLY`
+barrier. Two details in the table are worth reading twice:
+
+- **Access `NONE` after a read.** The third barrier orders a *read* (the blit's) before a layout transition, which is
+  a write: a write-after-read. A read leaves nothing in caches that must be written back, so the execution dependency
+  (the `BLIT` stage) is enough and the source access is `NONE`. Writes are different: after a write, the access must be
+  named so the data is made available.
+- **Linear light.** The levels must be averages of *light*, not of encoded sRGB numbers, or they would come out too
+  dark. Blits handle it: "For sRGB source formats, nonlinear RGB values are converted to linear representation prior to
+  filtering" (spec, "Image Copies With Scaling"); the result is converted back when written to the `_SRGB` level.
+
+The command buffer records 30 commands for 10 levels and runs once; the program prints the chain as it records it:
+
+```text
+Recording the upload and the mip chain:
+  mip  0: 512x512 (vkCmdCopyBufferToImage2 from the staging buffer)
+  mip  1: 256x256 (vkCmdBlitImage2 from mip 0, LINEAR)
+  mip  2: 128x128 (vkCmdBlitImage2 from mip 1, LINEAR)
+  ...
+  mip  9: 1x1 (vkCmdBlitImage2 from mip 8, LINEAR)
+Upload + mip generation complete (fence waited); every level is SHADER_READ_ONLY_OPTIMAL
+[timing] upload + 9 blits 2.392 ms
+```
+
+The upload plus nine blits took 2.4 to 3.4 ms in the runs quoted here, about what step 21's single copy took: the cost is
+the submit and the fence wait, not the blits. A blit's `LINEAR` filter on an exact 2:1 reduction averages 2 x 2 texels,
+a box filter. That is adequate, not the best: offline tools usually offer better kernels (Lanczos, Kaiser), which keep
+distant textures sharper, one reason to precompute mips for shipped assets.
+
+## 6. A view over all levels
+
+<Step file="23_mipmaps" region="image-view" />
+
+The sampler can only reach levels the view exposes: `levelCount = 10`. A view with `levelCount = 1` would make the
+chain invisible to shaders even though the image has it.
+
+## 7. The sampler picks the level
+
+<Step file="23_mipmaps" region="sampler" />
+
+The [level of detail](term:lod) λ is computed per pixel from how fast the texture coordinates change between
+neighboring pixels: the implicit derivatives over a 2 x 2 quad of fragment shader invocations, scaled to texels. In the
+spec's terms (without anisotropy), `λ_base = log2(ρ_max)`, where ρ_max is the larger of the two scale factors (texels
+per pixel along x and y); then `λ' = λ_base + mipLodBias` (plus a shader bias, clamped by `maxSamplerLodBias`), and λ
+is λ' clamped to `[minLod, maxLod]`. λ = 0 means one texel per pixel, λ = 3 means 8 texels per pixel, so level 3.
+
+Then the level is picked from λ, limited to the levels of the view:
+
+- `mipmapMode = NEAREST`: the nearest level, bilinear inside it. Visible seams where the level switches.
+- `mipmapMode = LINEAR`: the two neighboring levels, bilinear in each, blended by the fraction of λ:
+  [trilinear filtering](term:trilinear-filtering), which step 23 uses.
+
+`maxLod = 10` lets λ reach the last level (anything at or above the last level index would do; `VK_LOD_CLAMP_NONE`
+means "no clamp"). And λ ≤ 0 still means magnification, `magFilter`, exactly as in step 21.
+
+### Anisotropic filtering
+
+A floor at a grazing angle is squeezed in one direction only: a pixel's footprint in the texture is long along the view
+direction and narrow across it. λ follows the *larger* scale factor, so trilinear filtering picks a level that is right
+along the long axis and too blurry across it: the far floor turns into gray mush. [Anisotropic filtering](term:anisotropic-filtering)
+uses a finer level and takes several samples along the long axis instead, up to `maxAnisotropy` (16 here). The spec
+defines the inputs but leaves the scheme to the hardware ("implementation-dependent").
+
+## Three runs
+
+<Step file="23_mipmaps" region="cli" />
+
+```text
+default          Sampler: LINEAR filters, mipmapMode LINEAR, minLod 0, maxLod 10, anisotropy off (maxSamplerAnisotropy 16)
+--no-mips        Sampler: LINEAR filters, mipmapMode LINEAR, minLod 0, maxLod 0 (--no-mips: level 0 only), anisotropy off (maxSamplerAnisotropy 16)
+--anisotropy     Sampler: LINEAR filters, mipmapMode LINEAR, minLod 0, maxLod 10, anisotropy 16 (maxSamplerAnisotropy 16)
+```
+
+(Run names on the left added for this table; Rust and C++ print the same lines.)
+
+- **`--no-mips`** keeps the image and its ten levels and changes one sampler field: `maxLod = 0`. λ can no longer
+  exceed 0, so only level 0 is ever read, and, as in step 21, the texture always counts as magnified and `magFilter`
+  is used. Expect the far floor to shimmer when the camera moves: this is the aliasing mipmaps exist to prevent.
+- **default** (trilinear): the far floor should settle into a steady average, the checkerboard fading toward gray in
+  the distance, which is what the prefiltered levels contain.
+- **`--anisotropy`**: the same, with the cells staying distinct further toward the horizon, because finer levels are
+  read along the squeezed axis.
+
+(These are the expected results of the sampling rules; no screenshots of step 23 were taken for this lesson.)
+
+What it costs on the course GPU: nothing measurable in this scene. Three alternating 3-second runs of each (Rust,
+release, validation on): default 2646-2881 fps, `--no-mips` 2773-2847, `--anisotropy` 2722-2817. One floor quad at
+800 x 600 leaves the texture units mostly idle; a frame full of anisotropically filtered textures is where the extra
+samples show up in profiles.
+
+## Generated or prepared?
+
+Step 23 generates the chain at load time because it keeps the example self-contained. Shipped assets usually carry
+their mips: KTX2 and DDS store all levels (often in block-compressed formats, which cannot be blitted anyway), so
+loading is one copy region per level, and the filtering is done once, offline, with a better kernel. Generating on the
+GPU remains the tool for images made at run time: render targets that are sampled later, procedural or streamed
+textures.
+
+## What the program prints
+
+The default run, Rust (C++ prints the same lines; only `[timing]` values differ):
+
+```text
+Texture: 512x512 RGBA8 checkerboard, 16-texel cells, 1048576 bytes (FNV-1a 0xef4a0dc5)
+Format support (vkGetPhysicalDeviceFormatProperties2):
+  R8G8B8A8_SRGB (optimal tiling): SAMPLED_IMAGE yes, SAMPLED_IMAGE_FILTER_LINEAR yes, TRANSFER_DST yes, BLIT_SRC yes, BLIT_DST yes
+Mip levels: floor(log2(max(512, 512))) + 1 = 10
+VkImage: 10 mip levels, TRANSFER_SRC | TRANSFER_DST | SAMPLED; memory 1399808 bytes (level 0 alone: 1048576; the chain adds about a third), memory type 1
+Recording the upload and the mip chain:
+  mip  0: 512x512 (vkCmdCopyBufferToImage2 from the staging buffer)
+  mip  1: 256x256 (vkCmdBlitImage2 from mip 0, LINEAR)
+  mip  2: 128x128 (vkCmdBlitImage2 from mip 1, LINEAR)
+  mip  3: 64x64 (vkCmdBlitImage2 from mip 2, LINEAR)
+  mip  4: 32x32 (vkCmdBlitImage2 from mip 3, LINEAR)
+  mip  5: 16x16 (vkCmdBlitImage2 from mip 4, LINEAR)
+  mip  6: 8x8 (vkCmdBlitImage2 from mip 5, LINEAR)
+  mip  7: 4x4 (vkCmdBlitImage2 from mip 6, LINEAR)
+  mip  8: 2x2 (vkCmdBlitImage2 from mip 7, LINEAR)
+  mip  9: 1x1 (vkCmdBlitImage2 from mip 8, LINEAR)
+Upload + mip generation complete (fence waited); every level is SHADER_READ_ONLY_OPTIMAL
+[timing] upload + 9 blits 2.392 ms
+Sampler: LINEAR filters, mipmapMode LINEAR, minLod 0, maxLod 10, anisotropy off (maxSamplerAnisotropy 16)
+
+SPIR-V: 1368 bytes (textured.spv), entry points vertexMain, fragmentMain
+Graphics pipeline created
+Mesh: floor 40 x 205 units, UVs 0..20 x 0..102.5 (REPEAT)
+
+2 frames in flight; camera 1 unit above the floor, gliding forward at 1 unit/s
+Rendering. Close the window to exit.
+```
+
+(shortened: the device and swapchain lines at the top are step 21's.)
+
+## The map of this lesson
+
+<MindMap />
+
+## Underneath
+
+- **Derivatives come from quads.** Fragment shaders typically run in 2 x 2 pixel quads so that the hardware can take
+  differences between neighbors; pixels outside the triangle still run as *helper invocations* to supply them. That is
+  why `.Sample()` with implicit LOD exists only in fragment shaders (compute shaders pass the LOD or gradients
+  explicitly), and why the spec leaves derivatives undefined when the image or sampler is not uniform across a quad
+  (unless `quadDivergentImplicitLod` is supported).
+- **Texture units and caches.** Trilinear filtering reads 8 texels from two levels; because the chosen level has
+  texels about the size of a pixel, neighboring pixels read neighboring texels, and the texture cache typically hits.
+  Without mips, far pixels jump across level 0 and each fetch tends to touch a new cache line: mipmaps make sampling
+  both better looking and kinder to the memory system.
+- **Mip tails.** The smallest levels are tiny; drivers typically pack them together into one tile-sized block, which
+  is consistent with the image asking for slightly more memory than its texels.
+
+<Quiz
+	questions={[
+		{
+			q: 'How much more memory does a full mip chain take than its level 0?',
+			options: [
+				{
+					text: 'Twice as much, since every level is stored in addition to level 0',
+					why: 'Each level is a quarter of the previous one, so the extra levels add 1/4 + 1/16 + ... = 1/3, not 1.',
+				},
+				{
+					text: 'About a third more (step 23: 1399808 bytes for a 1048576-byte level 0)',
+					why: 'Right: the series 1 + 1/4 + 1/16 + ... approaches 4/3; the driver adds a little padding on top.',
+				},
+				{
+					text: 'Half as much again',
+					why: 'Halving width and height quarters the area, so the series is in quarters, not halves.',
+				},
+				{
+					text: 'Nothing: the GPU computes the levels on the fly from level 0 when sampling',
+					why: 'The levels are stored texels, written by the blits; the sampler only reads them.',
+				},
+			],
+			answer: 1,
+			ref: '#1-how-many-levels-how-much-memory',
+		},
+		{
+			q: 'In step 23\'s blit chain, why does the barrier that moves level i-1 to SHADER_READ_ONLY have source access NONE?',
+			options: [
+				{
+					text: 'Because the last access to level i-1 was the blit\'s read, and a read only needs an execution dependency before the next write',
+					why: 'Right: a write-after-read hazard is avoided by ordering execution; there is no write whose data has to be made available.',
+				},
+				{
+					text: 'Because blits bypass the caches',
+					why: 'Blits use caches like other transfers; the reason is that the previous access was a read.',
+				},
+				{
+					text: 'It is a shortcut that validation tolerates but the spec forbids',
+					why: 'It is exactly what the spec\'s memory model allows: availability is only needed for writes.',
+				},
+				{
+					text: 'Because the fence at the end makes every level visible anyway',
+					why: 'A fence makes nothing visible to the device; the barrier is what orders the layout transition after the read.',
+				},
+			],
+			answer: 0,
+			ref: '#5-the-blit-chain',
+		},
+		{
+			q: 'With --no-mips, step 23 sets maxLod = 0 but keeps the 10-level image and view. What does the sampler read for the far floor?',
+			options: [
+				{
+					text: 'The 1x1 level, because the floor is far away',
+					why: 'λ is clamped to at most maxLod = 0, so no level above 0 is ever selected.',
+				},
+				{
+					text: 'Level 0 with minFilter, which therefore aliases',
+					why: 'Level 0 is right, but with λ ≤ 0 the texture counts as magnified, so magFilter is the filter in use.',
+				},
+				{
+					text: 'Nothing: maxLod must equal the level count of the view, so vkCreateSampler fails and the program stops with an error',
+					why: 'maxLod only has to be at least minLod; 0 is valid, the levels are simply never reached.',
+				},
+				{
+					text: 'Only level 0, filtered with magFilter: λ never exceeds 0, so the texture always counts as magnified',
+					why: 'Right: one or two texels per sample from level 0 for pixels that cover dozens, so the far floor aliases.',
+				},
+			],
+			answer: 3,
+			ref: '#three-runs',
+		},
+		{
+			q: 'Why can a program not generate the mip chain of a texture on a dedicated transfer queue with vkCmdBlitImage2?',
+			options: [
+				{
+					text: 'Transfer queues cannot access images, only buffers',
+					why: 'Transfer queues copy to and from images; vkCmdCopyBufferToImage2 works there.',
+				},
+				{
+					text: 'Blits require a command pool whose queue family supports graphics operations',
+					why: 'Right: VUID-vkCmdBlitImage2-commandBuffer-cmdpool. Copies may run on a transfer queue; blits may not.',
+				},
+				{
+					text: 'Blits on a transfer queue would skip the sRGB conversion and darken every level of the chain',
+					why: 'The conversion is part of the blit\'s definition on any queue; the restriction is on the queue type itself.',
+				},
+				{
+					text: 'Transfer queues cannot record the barriers between mip levels',
+					why: 'Pipeline barriers can be recorded on any queue family; the restriction is specific to blit commands.',
+				},
+			],
+			answer: 1,
+			ref: '#2-can-the-gpu-build-them',
+		},
+	]}
+/>

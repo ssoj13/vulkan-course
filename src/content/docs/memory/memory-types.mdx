@@ -113,8 +113,8 @@ each built on the one below:
 | [LAZILY_ALLOCATED](term:lazily-allocated) | "only allows device access"; backing may be provided lazily | transient attachments on tile-based GPUs; no type has it here |
 
 The last row deserves a sentence of its own: a lazily allocated type is for images created with
-`TRANSIENT_ATTACHMENT` usage (an MSAA or depth attachment that lives only during a render pass on a tile-based GPU, material of
-module 10). The spec rules it out for buffers in so many
+`TRANSIENT_ATTACHMENT` usage (an MSAA or depth attachment that lives only during a render pass on a tile-based GPU, see
+[MSAA](lesson:msaa#2-multisampled-attachments)). The spec rules it out for buffers in so many
 words: "lazily allocated memory is disallowed for buffers in all cases". There are a few more flags (`PROTECTED` for
 protected content, two AMD and one NVIDIA vendor flag); none of them appear on the course GPU.
 

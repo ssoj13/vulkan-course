@@ -83,7 +83,7 @@
       "note": "A linear array of bytes (vertices, indices, uniforms). Needs memory bound to it before use."
     },
     {
-      "id": "sampler", "handle": "VkSampler", "stage": "images",
+      "id": "sampler", "handle": "VkSampler", "term": "vk-sampler", "stage": "images",
       "how": "create", "call": "vkCreateSampler", "destroy": "vkDestroySampler",
       "parents": [{ "id": "device", "param": "device", "vuid": "VUID-vkCreateSampler-device-parameter" }],
       "note": "Filtering and addressing rules for reading a texture (linear, mipmaps, repeat)."

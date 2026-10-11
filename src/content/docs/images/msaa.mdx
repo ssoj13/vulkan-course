@@ -1,0 +1,329 @@
+---
+title: Multisample anti-aliasing (MSAA)
+description: 'Smooth geometry edges without shading every sample: sample counts the device supports, multisampled color and depth attachments (TRANSIENT_ATTACHMENT, lazily allocated memory where it exists), the pipeline''s sample count, the resolve at the end of a rendering with resolveMode AVERAGE, what it costs in memory, and what MSAA does not fix.'
+---
+
+import MindMap from 'course-kit/components/MindMap.astro';
+import Quiz from 'course-kit/components/Quiz.astro';
+import Step from '../../../components/Step.astro';
+
+Step 22's cubes have jagged edges. The rasterizer tests one point per pixel, the pixel center, so a pixel is either
+fully inside a triangle or fully outside; an edge crossing the pixel grid at a shallow angle becomes a staircase that
+crawls when the cube turns. The brute-force fix is to render at four times the resolution and scale down. Can the GPU
+get most of that quality without shading four times as many pixels, and what does Vulkan need for it?
+
+## Where this fits
+
+The last lesson of the **images** module. It multisamples step 22's [depth buffer](lesson:depth), adds a multisampled
+color image, and uses the resolve built into [dynamic rendering](lesson:dynamic-rendering). The chain:
+
+`framebufferColorSampleCounts ∩ framebufferDepthSampleCounts → VkImage samples = N (color + depth, TRANSIENT_ATTACHMENT) → rasterizationSamples = N in the pipeline → rendering: resolveMode AVERAGE into resolveImageView (the swapchain view) → single-sample image presented`
+
+[MSAA](term:msaa) tests coverage and depth at several [sample](term:sample-count) positions per pixel but runs the
+fragment shader once per pixel and triangle; the samples are averaged into one color by the
+[resolve](term:msaa-resolve). The multisampled images live only during one rendering, which is what
+[transient attachments](term:transient-attachment) and [lazily allocated](term:lazily-allocated) memory are for.
+[Sample shading](term:sample-shading) moves MSAA toward [supersampling](term:supersampling), which shades every sample.
+Before: [mipmaps](lesson:mipmaps), which handle aliasing *inside* textures; MSAA handles it at geometry edges.
+
+## Coverage, not shading
+
+In an offline renderer, anti-aliasing usually means supersampling: Arnold's camera (AA) samples, for example, trace and
+shade several rays per pixel and filter the results. Every sample costs a full shade. That fixes everything, edges,
+textures, highlights, at a price proportional to the sample count.
+
+MSAA splits the work. Per pixel and triangle:
+
+1. **Coverage** is tested at N sample positions (N = 4 here). With the standard positions (`standardSampleLocations`
+   is true on the course GPU), 4x uses (0.375, 0.125), (0.875, 0.375), (0.125, 0.625), (0.625, 0.875) within the pixel
+   (spec, "Standard Sample Locations"): a rotated grid, so near-horizontal and near-vertical edges both get four distinct
+   steps.
+2. **Depth** is tested per sample too, against a depth buffer that has N values per pixel.
+3. The **fragment shader runs once** (not per sample), and its color is written to every sample that passed.
+4. At the end, the N colors of each pixel are averaged: the **resolve**.
+
+Inside a triangle all N samples pass and receive the same color: the average is that color, nothing changes, and the
+shader ran once. On an edge, some samples hold this triangle's color and the rest the background or the neighbor:
+the average is a blend proportional to coverage, which is exactly what smooths the staircase. The shading cost stays
+close to one invocation per pixel; storage and bandwidth grow with N.
+
+What MSAA cannot do follows from step 3: anything that varies *within* one triangle is still sampled once per pixel. A
+high-frequency texture is [mipmaps'](lesson:mipmaps) job; a sharp specular highlight needs sample shading or other
+techniques.
+
+## 1. Which sample counts
+
+<Step file="24_msaa" region="sample-counts" />
+
+A rendering's attachments must all have the same sample count (`VUID-VkRenderingInfo-multisampledRenderToSingleSampled-06857`,
+unless a mixed-samples extension or `multisampledRenderToSingleSampled` is enabled), so the usable counts for color
+plus depth are the intersection of two device limits. The spec requires at least 1 and 4 in both
+(`framebufferColorSampleCounts` and `framebufferDepthSampleCounts`, limits table), so 4x is the portable choice.
+
+<Step file="24_msaa" region="choose-samples" />
+
+```text
+framebufferColorSampleCounts: 1, 2, 4, 8
+framebufferDepthSampleCounts: 1, 2, 4, 8
+Usable for color + depth: 1, 2, 4, 8
+Sample count: 4 (--samples): MSAA color + depth, resolved into the swapchain image
+```
+
+The framebuffer limits speak for all formats at once. A specific format, usage and tiling has its own answer,
+`sampleCounts` from `vkGetPhysicalDeviceImageFormatProperties2`, which the image creation below checks as well
+(creating an image with a count outside it violates `VUID-VkImageCreateInfo-samples-02258`).
+
+## 2. Multisampled attachments
+
+<Step file="24_msaa" region="transient-attachment" />
+
+A multisampled image is an ordinary `VkImage` with `samples = N`: each pixel stores N values. These images live only
+inside one rendering: cleared at the start (`loadOp CLEAR`), resolved, then thrown away (`storeOp DONT_CARE`). Vulkan has
+a usage bit for exactly that, `TRANSIENT_ATTACHMENT`, which "specifies that implementations may support using memory
+allocations with the `VK_MEMORY_PROPERTY_LAZILY_ALLOCATED_BIT` to back an image with this usage" (spec). It may only
+be combined with attachment usages (`VUID-VkImageCreateInfo-usage-00963`), because an image whose contents never leave
+a rendering cannot be sampled or copied.
+
+[Lazily allocated](term:lazily-allocated) memory is the payoff on tile-based GPUs (most mobile ones): they render a
+small tile at a time in on-chip memory, so the samples of a transient attachment can stay on chip from clear to
+resolve, and the allocation may never get physical pages. On such a GPU a 4x MSAA target costs almost no memory. The
+course GPU renders to VRAM and has no lazily allocated memory type, so `create_attachment` falls back to plain
+`DEVICE_LOCAL`:
+
+```text
+Memory types with LAZILY_ALLOCATED on this device: 0 (tile-based GPUs have them; desktop GPUs render to VRAM)
+```
+
+The lazily allocated path of the code was therefore never taken on this machine; it is written as the spec describes
+it, not tested.
+
+<Step file="24_msaa" region="msaa-images" />
+
+Two multisampled images: color in the swapchain's format, depth in step 22's format. The swapchain image stays
+single-sampled; it only receives the resolve. What the four runs allocated:
+
+| `--samples` | Color attachment | Depth attachment | Total |
+|---|---|---|---|
+| 1 | none (draws into the swapchain image) | 2048000 bytes | 2.0 MB |
+| 2 | 4096000 bytes | 4096000 bytes | 8.2 MB |
+| 4 | 8192000 bytes | 8192000 bytes | 16.4 MB |
+| 8 | 16384000 bytes | 16384000 bytes | 32.8 MB |
+
+Exactly 800 x 600 x 4 bytes x N for each, all in memory type 1. At 4K and 8x, the same two attachments would take
+about 530 MB; this is why high sample counts are rare at high resolutions, and why tile-based GPUs, where the samples
+need no memory at all, use MSAA so freely.
+
+## 3. The pipeline's sample count
+
+<Step file="24_msaa" region="multisample-state" />
+
+`rasterizationSamples` must match the attachments' sample count. `sampleShadingEnable` stays off: the shader runs once
+per pixel and triangle. With [sample shading](term:sample-shading) on, "an implementation must invoke the fragment
+shader at least max(⌈`minSampleShading` × `rasterizationSamples`⌉, 1) times per fragment" (spec): `minSampleShading = 1`
+shades every sample, which is supersampling inside the MSAA machinery, and treats shader aliasing at up to N times the
+shading cost. The `sampleRateShading` feature it needs is on the Vulkan 1.4 must-support list; step 24 does not enable it.
+
+## 4. The resolve at the end of the rendering
+
+<Step file="24_msaa" region="resolve-attachment" />
+
+With dynamic rendering, the resolve is part of the color attachment description:
+
+- `imageView` is the multisampled image, cleared at the start and never stored (`DONT_CARE`);
+- `resolveMode = AVERAGE` averages the samples of each pixel. For a non-integer color format the allowed modes are
+  `NONE`, `CUSTOM_BIT_EXT` and `AVERAGE` (`VUID-VkRenderingAttachmentInfo-imageView-06129`), so `AVERAGE` is the only
+  fixed-function resolve for color. (Integer formats are not averaged; their fixed-function choice is
+  `SAMPLE_ZERO`, which takes sample 0: `VUID-VkRenderingAttachmentInfo-imageView-06130`.)
+- `resolveImageView` is the swapchain image's view, single-sampled (`VUID-VkRenderingAttachmentInfo-imageView-06864`),
+  in `resolveImageLayout`.
+
+The resolve runs when the rendering ends, in the `COLOR_ATTACHMENT_OUTPUT` stage, which by the spec's definition
+"includes ... render pass multisample resolve operations". It reads the samples as color attachment reads and accesses
+the single-sample image as color attachment reads and writes, so the barriers that already surround the swapchain
+image (into the attachment layout, then to `PRESENT_SRC`) cover it. The depth attachment is not resolved: nobody reads
+it after the rendering.
+
+The older alternative, `vkCmdResolveImage2` after the rendering, works too, but it needs the multisampled image to be
+*stored*, which defeats the transient attachment: the samples would have to be written to memory and read back.
+
+## 5. Barriers for shared multisampled images
+
+<Step file="24_msaa" region="msaa-barriers" />
+
+The multisampled color and depth images are shared by both frames in flight, like step 22's depth image, so each gets
+step 22's write-after-write barrier at the start of the frame. The depth barrier is step 22's. The color barrier waits
+for the previous frame's last accesses in `COLOR_ATTACHMENT_OUTPUT`: its `DONT_CARE` store, a write that must be made
+available (source access `COLOR_ATTACHMENT_WRITE`), and the resolve's read of the samples, which only needs the
+execution dependency. As in step 22, removing the source scope was tested and synchronization validation reported the
+same `WRITE_AFTER_WRITE` hazard on the shared image.
+
+## Four runs
+
+<Step file="24_msaa" region="cli" />
+
+The lines that change with `--samples` (Rust and C++ print the same):
+
+```text
+--samples 1:
+  Sample count: 1 (--samples 1): no MSAA, rendering straight into the swapchain image
+  Depth attachment: D32_SFLOAT x1, 2048000 bytes, memory type 1 (DEVICE_LOCAL; no LAZILY_ALLOCATED type allowed, fallback)
+  Graphics pipeline created (rasterizationSamples 1, color B8G8R8A8_SRGB + depth D32_SFLOAT)
+--samples 2:
+  Depth attachment: D32_SFLOAT x2, 4096000 bytes, memory type 1 (DEVICE_LOCAL; no LAZILY_ALLOCATED type allowed, fallback)
+  Color attachment: B8G8R8A8_SRGB x2, 4096000 bytes, memory type 1 (DEVICE_LOCAL; no LAZILY_ALLOCATED type allowed, fallback)
+--samples 4:
+  Depth attachment: D32_SFLOAT x4, 8192000 bytes, memory type 1 (DEVICE_LOCAL; no LAZILY_ALLOCATED type allowed, fallback)
+  Color attachment: B8G8R8A8_SRGB x4, 8192000 bytes, memory type 1 (DEVICE_LOCAL; no LAZILY_ALLOCATED type allowed, fallback)
+--samples 8:
+  Depth attachment: D32_SFLOAT x8, 16384000 bytes, memory type 1 (DEVICE_LOCAL; no LAZILY_ALLOCATED type allowed, fallback)
+  Color attachment: B8G8R8A8_SRGB x8, 16384000 bytes, memory type 1 (DEVICE_LOCAL; no LAZILY_ALLOCATED type allowed, fallback)
+```
+
+(Run labels and indentation added; each run prints the full output below with its own numbers.) The frame rates of
+these single 2-second runs (2060 to 2604 fps, with 8x not the slowest) show no trend at this load, so this lesson makes
+no claim about the cost of MSAA on the course GPU: two cubes at 800 x 600 do not stress it. Edge quality was not
+captured either (no screenshots of step 24 were taken): with 1 sample the staircases are full steps, with 4 samples an
+edge pixel can take 5 shades between the two sides (0 to 4 covered samples).
+
+## What the program prints
+
+The default run (4 samples), Rust (C++ prints the same lines; only `[timing]` values differ):
+
+```text
+framebufferColorSampleCounts: 1, 2, 4, 8
+framebufferDepthSampleCounts: 1, 2, 4, 8
+Usable for color + depth: 1, 2, 4, 8
+Sample count: 4 (--samples): MSAA color + depth, resolved into the swapchain image
+Depth format candidates (optimal tiling, DEPTH_STENCIL_ATTACHMENT):
+  D32_SFLOAT: yes
+  D24_UNORM_S8_UINT: yes
+  D16_UNORM: yes
+Depth format: D32_SFLOAT, attachment layout DEPTH_ATTACHMENT_OPTIMAL
+Depth attachment: D32_SFLOAT x4, 8192000 bytes, memory type 1 (DEVICE_LOCAL; no LAZILY_ALLOCATED type allowed, fallback)
+Color attachment: B8G8R8A8_SRGB x4, 8192000 bytes, memory type 1 (DEVICE_LOCAL; no LAZILY_ALLOCATED type allowed, fallback)
+Memory types with LAZILY_ALLOCATED on this device: 0 (tile-based GPUs have them; desktop GPUs render to VRAM)
+
+SPIR-V: 1764 bytes (cube.spv), entry points vertexMain, fragmentMain
+Graphics pipeline created (rasterizationSamples 4, color B8G8R8A8_SRGB + depth D32_SFLOAT)
+Mesh: cube, 24 vertices, 36 indices, drawn as 2 instances
+Uniform buffers: 2 x 128 bytes (2 matrices), one descriptor set each
+
+2 frames in flight, multisampled images shared by both
+Rendering. Close the window to exit.
+```
+
+(shortened: the device and swapchain lines at the top are step 22's.)
+
+## The map of this lesson
+
+<MindMap />
+
+## Underneath
+
+- **Samples are stored compressed, typically.** Inside a triangle all N samples of a pixel hold the same color; desktop
+  GPUs typically exploit that with color compression, storing one value plus a small mask until an edge splits the
+  pixel. That is why MSAA's bandwidth cost is usually far below N times, although the allocation is the full N times
+  (the table above): the memory must be there for the worst case.
+- **The resolve on tile-based GPUs** happens when a tile is written out: the samples are averaged on chip and only the
+  single-sample result goes to memory. With `TRANSIENT_ATTACHMENT`, lazily allocated memory and `DONT_CARE`, the
+  multisampled image may never exist in memory at all.
+- **Depth per sample.** The depth test runs per sample, and the hardware typically interpolates depth at each sample
+  position from the triangle's plane, so intersections between surfaces (step 22's cubes) are anti-aliased too, not only
+  silhouettes.
+
+<Quiz
+	questions={[
+		{
+			q: 'How many times does the fragment shader run for a pixel in the middle of a triangle with 4x MSAA and sample shading off?',
+			options: [
+				{
+					text: 'Four times, once per sample',
+					why: 'That is supersampling (or sample shading with minSampleShading 1); MSAA shades once and writes the color to the covered samples.',
+				},
+				{
+					text: 'Once; its color goes to all four covered samples',
+					why: 'Right: coverage and depth are per sample, shading is per pixel and triangle.',
+				},
+				{
+					text: 'Not at all; the resolve computes the color from the neighboring pixels at the end of the rendering',
+					why: 'The resolve only averages the stored samples; the colors come from the fragment shader.',
+				},
+				{
+					text: 'Twice: once for the color and once more for the depth value of each of the four samples',
+					why: 'Depth is interpolated and tested per sample by fixed-function hardware; the shader runs once.',
+				},
+			],
+			answer: 1,
+			ref: '#coverage-not-shading',
+		},
+		{
+			q: 'Step 24 gives its multisampled images TRANSIENT_ATTACHMENT usage. What does that change on the course GPU?',
+			options: [
+				{
+					text: 'The images take no memory, because the samples stay on chip',
+					why: 'That is the tile-based case with LAZILY_ALLOCATED memory; the course GPU has no such memory type.',
+				},
+				{
+					text: 'The images can no longer be cleared, only resolved',
+					why: 'Transient attachments are cleared like any attachment; only non-attachment usages are excluded.',
+				},
+				{
+					text: 'The images become sampleable from shaders after the resolve has finished',
+					why: 'The opposite: TRANSIENT_ATTACHMENT may only be combined with attachment usages, so they cannot be sampled.',
+				},
+				{
+					text: 'In practice nothing: no LAZILY_ALLOCATED type exists, so they fall back to DEVICE_LOCAL memory of full size',
+					why: 'Right: the run prints 0 lazily allocated types and 8192000 bytes per 4x attachment in memory type 1.',
+				},
+			],
+			answer: 3,
+			ref: '#2-multisampled-attachments',
+		},
+		{
+			q: 'Why does step 24 resolve through the rendering\'s resolveImageView instead of calling vkCmdResolveImage2 afterwards?',
+			options: [
+				{
+					text: 'vkCmdResolveImage2 does not exist in Vulkan 1.4',
+					why: 'It exists (core since 1.3, from VK_KHR_copy_commands2); it is just the less efficient path here.',
+				},
+				{
+					text: 'A separate resolve needs the samples stored to memory first, which a DONT_CARE transient attachment avoids',
+					why: 'Right: resolving at the end of the rendering lets the samples be discarded, which is what transient and lazily allocated memory are for.',
+				},
+				{
+					text: 'Because vkCmdResolveImage2 can only resolve depth/stencil images, so a color attachment has to use the rendering\'s own resolve',
+					why: 'vkCmdResolveImage2 resolves color images; depth resolves are the special case.',
+				},
+				{
+					text: 'Dynamic rendering forbids vkCmdResolveImage2 after a rendering',
+					why: 'It is allowed outside a rendering; it is only the costlier path here, because the samples must be stored first.',
+				},
+			],
+			answer: 1,
+			ref: '#4-the-resolve-at-the-end-of-the-rendering',
+		},
+		{
+			q: 'A texture on a cube aliases with 8x MSAA. Why does MSAA not help?',
+			options: [
+				{
+					text: 'The texture is sampled once per pixel by the single shader invocation; MSAA only adds samples for coverage and depth',
+					why: 'Right: texture aliasing is fixed by mipmaps (or sample shading), not by more coverage samples.',
+				},
+				{
+					text: '8x is too many samples; 4x would be smoother',
+					why: 'More coverage samples never make texture sampling worse or better; the shader still runs once per pixel.',
+				},
+				{
+					text: 'The resolve uses AVERAGE, which only smooths geometry edges; textured surfaces would need a custom resolve mode such as CUSTOM_BIT_EXT',
+					why: 'The resolve averages identical colors inside the triangle; the aliasing is already in that one color.',
+				},
+				{
+					text: 'MSAA only works with depth formats that have stencil',
+					why: 'MSAA works with any supported depth format, D32_SFLOAT here.',
+				},
+			],
+			answer: 0,
+			ref: '#coverage-not-shading',
+		},
+	]}
+/>

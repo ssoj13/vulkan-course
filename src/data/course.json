@@ -98,6 +98,17 @@
         { "slug": "buffer-device-address", "title": "Buffer device address", "short": "Device address", "summary": "64-bit GPU pointers instead of descriptors: the feature and the flags they require, pointers in Slang, and GPU-assisted validation catching a read past the end." },
         { "slug": "bindless", "title": "Bindless descriptors", "short": "Bindless", "summary": "One set with a big descriptor array, bound once and indexed per instance: descriptor indexing, the four binding flags, updates while frames are in flight, and non-uniform indexing." }
       ]
+    },
+    {
+      "slug": "images",
+      "title": "Images",
+      "summary": "Images the GPU reads, tests and averages: textures with samplers, depth buffers and Vulkan's clip space, mip chains generated with blits, and multisample anti-aliasing with a resolve.",
+      "lessons": [
+        { "slug": "textures-and-samplers", "title": "Textures and samplers", "summary": "From CPU pixels to Sampler2D.Sample: optimal tiling, format features, a staging copy into an image with two layout transitions, the image view, the sampler, and why color textures are _SRGB." },
+        { "slug": "depth", "title": "Depth buffers", "summary": "A per-pixel depth test instead of draw order: choosing a depth format, the depth attachment, test and write, Vulkan clip space and where the projection's precision goes, and the barrier a shared depth image needs." },
+        { "slug": "mipmaps", "title": "Mipmaps", "summary": "Why a far floor shimmers: the mip chain and its memory, generating it with vkCmdBlitImage2 and a barrier per level, how the sampler picks a level, and anisotropic filtering." },
+        { "slug": "msaa", "title": "Multisample anti-aliasing (MSAA)", "short": "MSAA", "summary": "Smooth edges without shading every sample: supported sample counts, multisampled transient attachments, the resolve at the end of a rendering, the memory it costs and what MSAA does not fix." }
+      ]
     }
   ],
   "labs": [

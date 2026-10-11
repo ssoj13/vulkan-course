@@ -77,7 +77,7 @@ Our triangle needs very little, and every line has a reason:
   with Vulkan's +Y-down clip space our corners run clockwise on screen. Declare `COUNTER_CLOCKWISE` instead and the
   triangle counts as a back face and is culled: an empty window and no error, a classic first-day puzzle. The line width
   must be 1.0 unless the `wideLines` feature is enabled.
-- **Multisampling: one sample.** MSAA comes with the images module.
+- **Multisampling: one sample.** MSAA comes with the images module ([MSAA](lesson:msaa)).
 - **Color blending: off, write all four channels.** One entry per color attachment; the fragment color replaces what is
   there.
 

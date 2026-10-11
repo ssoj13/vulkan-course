@@ -1,0 +1,395 @@
+---
+title: Depth buffers
+description: 'Why draw order cannot hide surfaces and a per-pixel depth image can: choosing a depth format, the depth attachment of dynamic rendering, the depth test and write, Vulkan clip space (y down, depth 0..1), the perspective projection and where its precision goes, and the barrier a shared depth image needs.'
+---
+
+import MindMap from 'course-kit/components/MindMap.astro';
+import Quiz from 'course-kit/components/Quiz.astro';
+import Snippet from 'course-kit/components/Snippet.astro';
+import Step from '../../../components/Step.astro';
+
+Step 22 draws two cubes that cut through each other. Back-face culling makes each cube look right on its own, because a
+cube is convex. Where they intersect, though, which surface is in front changes from pixel to pixel along the
+intersection line, and no order of drawing the cubes or their triangles can get that right. How does a GPU decide,
+per pixel, which surface wins, and what does it take in Vulkan to switch that on?
+
+## Where this fits
+
+The second lesson of the **images** module: after an image the GPU *reads* ([textures](lesson:textures-and-samplers)),
+an image the GPU *writes and tests* on every fragment. It builds on [dynamic rendering](lesson:dynamic-rendering) (the
+attachment), the [graphics pipeline](lesson:graphics-pipeline) (the depth state left out until now) and the
+[barriers](lesson:barriers-and-layouts) of module 7. The chain:
+
+`depth format (format features) → VkImage (DEPTH_STENCIL_ATTACHMENT) → VkImageView (depth aspect) → pDepthAttachment of vkCmdBeginRendering (clear 1.0) → depth test + write in the pipeline → early / late fragment tests in hardware`
+
+A [depth buffer](term:depth-buffer) is an [attachment](term:attachment) that keeps one depth value per pixel, stored in
+a [depth format](term:depth-format). The [depth test](term:depth-test) compares every fragment with it. The values come
+from the [perspective projection](term:perspective-projection), which maps camera space into Vulkan's
+[clip space](term:clip-space); a variant, [reversed-Z](term:reversed-z), spends the precision differently. Hardware
+typically runs the test before shading where it can ([early-Z](term:early-z)). After this lesson:
+[mipmaps](lesson:mipmaps), then [MSAA](lesson:msaa), which multisamples this very depth buffer.
+
+## The painter's problem
+
+Without a depth buffer the last triangle drawn covers whatever was there: the painter's algorithm. Sorting objects back
+to front works for objects that do not overlap in depth, and fails for intersecting or cyclically overlapping ones, which
+is exactly the case here. Every renderer you know solves it per sample instead: the Z pass or depth AOV of an offline
+render stores, per pixel, the distance of the nearest surface, and a deep or Z-merge in Nuke decides per pixel which
+plate is in front. A GPU does the same during rasterization:
+
+1. Before drawing, every pixel's depth is set to "as far as possible" (the clear value, 1.0).
+2. Each fragment has a depth from the rasterizer. The **depth test** compares it with the stored value; with
+   `compareOp = LESS`, it passes only if it is nearer.
+3. If it passes, the **depth write** stores the new depth and the fragment's color is kept; otherwise the fragment is
+   discarded.
+
+The scene: one cube mesh drawn as two instances.
+
+<Step file="22_depth" region="cube" />
+
+<Snippet src="shaders/cube.slang" />
+
+Each face lists its corners counter-clockwise seen from outside, and the pipeline sets `frontFace =
+COUNTER_CLOCKWISE` with back faces culled. The y flip in the projection below is what keeps that winding
+counter-clockwise *on screen*, where Vulkan judges it; drop the flip and both the image and the winding turn over, and
+culling removes the faces you wanted to see. Culling halves the triangles that reach the depth test, but it is not a substitute for the test: it
+knows nothing about the *other* cube.
+
+<Step file="22_depth" region="scene" />
+
+The second cube sits 0.45 units off the first, less than a cube's size, so the two always intersect while they turn.
+
+## 1. Choosing a depth format
+
+<Step file="22_depth" region="depth-format" />
+
+For depth attachments the spec guarantees one format, `D16_UNORM`, and for the better ones lets the vendor choose: the `DEPTH_STENCIL_ATTACHMENT` feature "must be supported for at least one of
+`VK_FORMAT_X8_D24_UNORM_PACK32` and `VK_FORMAT_D32_SFLOAT`, and must be supported for at least one of
+`VK_FORMAT_D24_UNORM_S8_UINT` and `VK_FORMAT_D32_SFLOAT_S8_UINT`" (spec, mandatory format support tables). So a portable
+program lists candidates in order of preference and asks, exactly like the texture format check of the previous lesson:
+
+| Format | Bits | Stencil | Note |
+|---|---|---|---|
+| `D32_SFLOAT` | 32-bit float | no | the usual first choice; pairs well with reversed-Z |
+| `D24_UNORM_S8_UINT` | 24-bit normalized | 8 bits | the classic combined depth/stencil format |
+| `D16_UNORM` | 16-bit normalized | no | always supported, coarse for large scenes (computed below) |
+
+All three are supported on the course GPU, and the step takes `D32_SFLOAT`:
+
+```text
+Depth format candidates (optimal tiling, DEPTH_STENCIL_ATTACHMENT):
+  D32_SFLOAT: yes
+  D24_UNORM_S8_UINT: yes
+  D16_UNORM: yes
+Depth format: D32_SFLOAT, attachment layout DEPTH_ATTACHMENT_OPTIMAL
+```
+
+A format with stencil changes three details, which the code handles with `has_stencil`: barriers must name both the
+depth and the stencil aspect (`VUID-VkImageMemoryBarrier2-image-03320`, without the `separateDepthStencilLayouts`
+feature), the layout becomes `DEPTH_STENCIL_ATTACHMENT_OPTIMAL`, and the same view is attached as the stencil attachment
+too. That branch was tested by temporarily putting `D24_UNORM_S8_UINT` first: it runs, and synchronization validation
+is clean.
+
+## 2. The depth image
+
+<Step file="22_depth" region="depth-image" />
+
+A depth buffer is an ordinary `VkImage`: the size of the swapchain images, the chosen format, usage
+`DEPTH_STENCIL_ATTACHMENT` only (nobody samples or copies it), optimal tiling, `DEVICE_LOCAL` memory, and a view whose
+aspect is depth (plus stencil, if the format has it).
+
+```text
+Depth image: 800x600, DEPTH_STENCIL_ATTACHMENT, 2048000 bytes in memory type 1 (DEVICE_LOCAL), one for both frames in flight
+```
+
+2048000 = 800 x 600 x 4 bytes: here the driver reports exactly the texel data. "One for both frames in flight" is a
+decision with a cost, the subject of [section 6](#6-one-depth-image-two-frames-in-flight).
+
+## 3. From camera space to depth: Vulkan's clip space
+
+Where does a fragment's depth come from? From the vertex shader's output position, `SV_Position`, a point in *clip
+space*. The GPU divides it by its w (the perspective divide) and maps x and y to pixels with the viewport, and z to depth
+with the viewport's `minDepth..maxDepth` (0..1 here). Vulkan's [clip space](term:clip-space) differs from OpenGL's,
+which the projection matrices of most textbooks assume, in two ways:
+
+- **y points down**: framebuffer coordinates start at the top-left, and clip-space +y goes to the bottom of the
+  screen. A camera with "+y up" needs a flip.
+- **depth runs from 0 to 1**, not from -1 to 1: primitives are clipped to `0 ≤ z ≤ w` (spec, "Primitive Clipping").
+
+The matrix helpers are the usual column-major ones; nothing Vulkan-specific happens in them:
+
+<Step file="22_depth" region="math" />
+
+The projection is where the two differences are built in:
+
+<Step file="22_depth" region="projection" />
+
+Read it as a [perspective projection](term:perspective-projection) in four rows: x scaled by the field of view and the
+aspect, y scaled and **negated** (the flip), z mapped so that the near plane lands on 0 and the far plane on 1, and
+`w = -z`, the distance in front of the camera, which the divide uses. The alternative to negating y in the matrix is a
+viewport with negative height: "The application can specify a negative term for height, which has the effect of
+negating the y coordinate in clip space" (spec; core since Vulkan 1.1). Either works; pick one and flip the winding
+accordingly. (`VK_EXT_depth_clip_control` would let a pipeline use OpenGL's -1..1 depth range instead; Vulkan's
+native 0..1 needs nothing.)
+
+<Step file="22_depth" region="projection-matrix" />
+
+The program prints the matrix row by row and the depth a point gets at four distances:
+
+```text
+Projection: fovy 60 degrees, aspect 1.3333334, near 0.1, far 100 (rows; Vulkan clip space: y down, depth 0..1)
+     1.2990    0.0000    0.0000    0.0000
+     0.0000   -1.7321    0.0000    0.0000
+     0.0000    0.0000   -1.0010   -0.1001
+     0.0000    0.0000   -1.0000    0.0000
+Depth after the divide: 0.0000 at distance 0.1, 0.9009 at 1, 0.9724 at 3.5, 1.0000 at 100
+```
+
+### Where the precision goes
+
+Depth is not proportional to distance. After the divide, `depth = far / (far - near) * (1 - near / distance)`: it is
+affine in **1 / distance**. With near 0.1 and far 100 (the arithmetic below is computed from that formula, not
+measured):
+
+- half of the whole range, 0 to 0.5, is used up between 0.1 and about 0.2 units;
+- 90% of it (up to the printed 0.9009) by distance 1; the cubes, at 3.5, sit at 0.9724; the last 99 units share
+  less than 10%.
+
+What that costs depends on the format. Near distance d, one step of depth corresponds to a distance step of roughly
+`step / (0.1 / d²)`. With `D16_UNORM` (step 1/65535 ≈ 1.5e-5) that is about 0.002 units at the cubes' distance but
+about 1.5 units at the far plane: surfaces closer than that to each other there fight (z-fighting). `D32_SFLOAT` has
+2^-24 ≈ 6e-8 between neighboring values in [0.5, 1), about 0.006 units at the far plane. The near plane is the lever:
+the precision lost at a distance grows with distance² / near, so moving near from 0.1 to 1 gains tenfold everywhere
+behind it, and moving far changes little.
+
+[Reversed-Z](term:reversed-z) is the standard improvement for `D32_SFLOAT`: map near to 1 and far to 0, clear to 0 and
+compare with `GREATER`. A float has far more representable values near 0 than near 1, which offsets the crowding of
+depth values near the far plane. It changes the matrix, the clear value and the compare op, nothing else; step 22 keeps
+the classic mapping so its numbers match the textbooks.
+
+## 4. The depth test in the pipeline
+
+<Step file="22_depth" region="depth-state" />
+
+The pipeline's `VkPipelineDepthStencilStateCreateInfo`, left out (null) in every pipeline so far, now says:
+
+- `depthTestEnable`: compare each fragment with the stored depth;
+- `depthWriteEnable`: store the depth of fragments that pass. Test and write are separate switches for a reason: a
+  pass that draws transparent surfaces after the opaque ones usually *tests* against the opaque depth but does not
+  *write*, so transparent layers do not hide each other;
+- `depthCompareOp = LESS`: "the comparison evaluates reference < test", with the fragment's depth as the reference and
+  the stored value as the test (spec): nearer wins;
+- the depth bounds test and the stencil test stay off.
+
+With dynamic rendering the pipeline also states the attachment formats it will render to: the depth format next to
+the color format, and a stencil format only if the depth format has stencil.
+
+### What --no-depth shows
+
+<Step file="22_depth" region="cli" />
+
+`--no-depth` turns the test and the write off but keeps the attachment, so only the pipeline state differs:
+
+```text
+Depth state: test OFF, write OFF (--no-depth): the last cube drawn wins
+```
+
+Each cube is still drawn correctly against itself (culling), but where they overlap, the second instance always covers
+the first: within one draw, primitive order runs "from lower numbered instances to higher" (spec, "Primitive Order"),
+and without a test the later fragment simply overwrites.
+
+## 5. Attaching it to the rendering
+
+<Step file="22_depth" region="depth-attachment" />
+
+The depth attachment is a `VkRenderingAttachmentInfo` like the color one:
+
+- `loadOp = CLEAR` with depth 1.0: every pixel starts at the far plane. The clear value must lie in 0..1 unless
+  `VK_EXT_depth_range_unrestricted` is enabled (`VUID-VkClearDepthStencilValue-depth-00022`).
+- `storeOp = DONT_CARE`: after the rendering nobody needs the depth, only the color image is presented. Telling the
+  driver so lets it skip writing the depth out; on a tile-based GPU the depth may then never leave on-chip memory.
+
+Where in the pipeline do these happen? The spec puts depth attachment load operations into the
+`EARLY_FRAGMENT_TESTS` stage and store operations into `LATE_FRAGMENT_TESTS` ("This stage also includes render pass load
+operations for framebuffer attachments with a depth/stencil format" and the same for store): the two stages the next
+section's barrier names.
+
+## 6. One depth image, two frames in flight
+
+<Step file="22_depth" region="depth-barrier" />
+
+Two frames are in flight, but there is only one depth image. Frame N+1's clear is a write to the same memory that
+frame N's tests are still writing, a write-after-write [hazard](term:data-hazard). The fence the CPU waited on belongs
+to frame N-1, so nothing orders frame N against frame N+1 except this barrier:
+
+| | Stage | Access |
+|---|---|---|
+| first scope (frame N, earlier in the queue) | `EARLY_FRAGMENT_TESTS \| LATE_FRAGMENT_TESTS` | `DEPTH_STENCIL_ATTACHMENT_WRITE` |
+| second scope (this frame) | `EARLY_FRAGMENT_TESTS \| LATE_FRAGMENT_TESTS` | `DEPTH_STENCIL_ATTACHMENT_READ \| WRITE` |
+| layout | `UNDEFINED -> DEPTH_ATTACHMENT_OPTIMAL` | old contents are not needed: the clear overwrites them |
+
+A barrier's first scope reaches back to everything submitted earlier on the queue, including the previous frame's
+command buffer, which is why one barrier at the start of each frame is enough. The layout transition from `UNDEFINED`
+is a write too, and it happens between the two scopes, so it is ordered as well.
+
+This was checked the hard way. With `VK_KHRONOS_VALIDATION_VALIDATE_SYNC=true` the program is clean; with the first
+scope emptied (src stage and access `NONE`, a temporary edit that was reverted), synchronization validation reported a
+`WRITE_AFTER_WRITE` hazard: `vkCmdPipelineBarrier2` writes to the depth `VkImage`, "which was previously written by
+vkCmdEndRendering" (excerpt of the message as recorded in the project notes; the full text was not kept).
+
+The price is that frame N+1's fragment tests wait for frame N's. The alternative is one depth image per frame in
+flight, another 2 MB here: memory against overlap, the trade-off of the [frames in flight lesson](lesson:frames-in-flight).
+
+## 7. Recording the frame
+
+<Step file="22_depth" region="draw" />
+
+The swapchain image's barrier (step 09's) and the depth barrier go into one `vkCmdPipelineBarrier2`, then one indexed
+draw with two instances: `SV_VulkanInstanceID` picks `mvp[0]` or `mvp[1]`.
+
+## What the program prints
+
+The default run, Rust (C++ prints the same lines; only `[timing]` values differ):
+
+```text
+Depth format candidates (optimal tiling, DEPTH_STENCIL_ATTACHMENT):
+  D32_SFLOAT: yes
+  D24_UNORM_S8_UINT: yes
+  D16_UNORM: yes
+Depth format: D32_SFLOAT, attachment layout DEPTH_ATTACHMENT_OPTIMAL
+Depth image: 800x600, DEPTH_STENCIL_ATTACHMENT, 2048000 bytes in memory type 1 (DEVICE_LOCAL), one for both frames in flight
+
+Projection: fovy 60 degrees, aspect 1.3333334, near 0.1, far 100 (rows; Vulkan clip space: y down, depth 0..1)
+     1.2990    0.0000    0.0000    0.0000
+     0.0000   -1.7321    0.0000    0.0000
+     0.0000    0.0000   -1.0010   -0.1001
+     0.0000    0.0000   -1.0000    0.0000
+Depth after the divide: 0.0000 at distance 0.1, 0.9009 at 1, 0.9724 at 3.5, 1.0000 at 100
+
+SPIR-V: 1764 bytes (cube.spv), entry points vertexMain, fragmentMain
+Depth state: test on, write on, compare LESS (clear value 1.0)
+Graphics pipeline created (color B8G8R8A8_SRGB + depth D32_SFLOAT)
+Mesh: cube, 24 vertices, 36 indices, drawn as 2 instances
+Uniform buffers: 2 x 128 bytes (2 matrices), one descriptor set each
+
+2 frames in flight, one shared depth image
+Rendering. Close the window to exit.
+```
+
+(shortened: the device and swapchain lines at the top are step 17's.)
+
+## The map of this lesson
+
+<MindMap />
+
+## Underneath
+
+- **Early-Z.** In the spec's logical order the fragment shader runs before the depth test. But "a fragment shader may
+  not be executed if ... any other fragment operation discards the fragment, and the shader does not write to any
+  storage resources" (spec, "Fragment Shading"), so hardware typically tests depth *before* shading when the result
+  cannot depend on the shader, and skips the shader for hidden fragments. A shader that writes depth itself, or
+  discards fragments, typically forces the test to run after it (the `LATE_FRAGMENT_TESTS` stage). Drawing opaque
+  objects roughly front to back helps early rejection; drawing a depth-only prepass first is the extreme form of that.
+- **Hierarchical depth and compression.** Desktop GPUs typically keep coarse per-tile minimum/maximum depth to reject
+  whole blocks of fragments at once, and store depth compressed (a tile of a planar triangle compresses to its plane
+  equation). That is one reason the clear is cheap and why the attachment layout matters: the driver may keep the image
+  in a form only the depth hardware understands.
+- **Tile-based GPUs** test depth in on-chip tile memory; with `DONT_CARE` the depth of a tile is simply dropped when
+  the tile is finished, which saves the memory traffic of a whole depth image per frame.
+
+<Quiz
+	questions={[
+		{
+			q: 'Two cubes intersect. Why can draw order alone not make the image correct?',
+			options: [
+				{
+					text: 'It can, if the cubes are sorted by their centers before drawing',
+					why: 'Sorting whole objects fails when they intersect: each cube is partly in front of the other.',
+				},
+				{
+					text: 'Because the GPU reorders draws freely, so draw order is never kept',
+					why: 'Blending and attachment writes do follow primitive order; the problem is geometric, not ordering by the GPU.',
+				},
+				{
+					text: 'Each cube is in front of the other in some pixels, so the decision has to be made per pixel',
+					why: 'Right: along the intersection the nearer surface changes from pixel to pixel; only a per-pixel depth test resolves that.',
+				},
+				{
+					text: 'Because back-face culling is on, which removes the hidden faces of the other cube as well',
+					why: 'Culling only looks at the winding of each triangle; it knows nothing about the other cube.',
+				},
+			],
+			answer: 2,
+			ref: '#the-painters-problem',
+		},
+		{
+			q: 'Which depth format may a portable Vulkan program rely on for a depth attachment without asking?',
+			options: [
+				{
+					text: 'D32_SFLOAT',
+					why: 'The spec only guarantees one of X8_D24_UNORM_PACK32 and D32_SFLOAT; a device may offer the other one instead.',
+				},
+				{
+					text: 'D16_UNORM; the 24- and 32-bit formats are guaranteed only as "one of two"',
+					why: 'Right: D16_UNORM is required, the others come in pairs of which at least one must be supported, so programs query.',
+				},
+				{
+					text: 'D24_UNORM_S8_UINT, the classic format every GPU has',
+					why: 'It is one of a pair (with D32_SFLOAT_S8_UINT); some devices support only the other one.',
+				},
+				{
+					text: 'Every depth format; only color formats need vkGetPhysicalDeviceFormatProperties2',
+					why: 'Depth formats are queried like any other; only some are mandatory.',
+				},
+			],
+			answer: 1,
+			ref: '#1-choosing-a-depth-format',
+		},
+		{
+			q: 'With near 0.1 and far 100, step 22 prints depth 0.9009 at distance 1. What does that mean for precision?',
+			options: [
+				{
+					text: 'Nothing: depth is proportional to distance, so 1 unit is 1% of the range',
+					why: 'Depth is affine in 1/distance, not in distance; 1 unit at 0.1..100 is 1% of the distance but 90% of the depth range.',
+				},
+				{
+					text: 'About 90% of the depth values are spent on the first unit; the remaining 99 share the rest',
+					why: 'Right: the values crowd near the camera, so far surfaces get coarse steps (z-fighting), which near plane choice and reversed-Z address.',
+				},
+				{
+					text: 'The far plane is too far away and should be moved much closer, which fixes the precision everywhere in the scene',
+					why: 'The far plane changes little; the lost precision grows with distance² / near, so the near plane is the lever.',
+				},
+				{
+					text: 'Depth values above 0.9 are clipped, so objects beyond distance 1 are not drawn',
+					why: 'Clipping happens outside 0..1; 0.9 is inside, and the cubes at 3.5 (depth 0.9724) are drawn.',
+				},
+			],
+			answer: 1,
+			ref: '#where-the-precision-goes',
+		},
+		{
+			q: 'Step 22 shares one depth image between two frames in flight. What does its per-frame barrier protect against?',
+			options: [
+				{
+					text: 'Frame N+1\'s clear and depth writes overlapping frame N\'s depth writes to the same image (write after write)',
+					why: 'Right: the waited fence belongs to frame N-1; the barrier\'s first scope reaches frame N\'s fragment tests on the queue.',
+				},
+				{
+					text: 'The presentation engine reading the depth image',
+					why: 'Only the swapchain image is presented; the depth image never leaves the rendering (DONT_CARE).',
+				},
+				{
+					text: 'Nothing: the fence wait at the start of the frame already orders the frames',
+					why: 'That fence belongs to the frame two submissions back; frame N may still be running on the GPU.',
+				},
+				{
+					text: 'The vertex shader of the next frame reading the depth values that the previous frame wrote, before those writes are finished and visible',
+					why: 'No shader reads the depth image; the hazard is between depth writes of consecutive frames.',
+				},
+			],
+			answer: 0,
+			ref: '#6-one-depth-image-two-frames-in-flight',
+		},
+	]}
+/>

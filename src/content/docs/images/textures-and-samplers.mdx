@@ -1,0 +1,471 @@
+---
+title: Textures and samplers
+description: 'How pixels from the CPU become a texture a shader can sample: VkImage versus VkBuffer, optimal tiling, format features, a staging copy into an image with two layout transitions, the image view, the sampler (filters, address modes, anisotropy) and why color textures are _SRGB.'
+---
+
+import MindMap from 'course-kit/components/MindMap.astro';
+import Quiz from 'course-kit/components/Quiz.astro';
+import Snippet from 'course-kit/components/Snippet.astro';
+import Step from '../../../components/Step.astro';
+import ObjectGraph from '../../../components/ObjectGraph.astro';
+
+So far every color on screen came from a vertex or a constant. A real material reads a texture: an image file painted
+in Mari or baked in Substance, looked up per pixel with a UV. In Vulkan that one lookup, `albedo.Sample(uv)`, rests on
+more objects than any draw so far: an image, its memory, a copy, two layout transitions, a view, a sampler and a new
+kind of descriptor. Why is a texture not simply a buffer with pixels in it, and what does each of those objects add?
+
+## Where this fits
+
+The first lesson of the **images** module. It reuses almost everything before it: the [staging upload](lesson:staging-uploads)
+of module 8, the [barriers and layouts](lesson:barriers-and-layouts) of module 7, the [image view](lesson:image-views)
+of the presentation module and the [descriptor sets](lesson:descriptor-sets) of module 9. The chain of this lesson:
+
+`CPU pixels → staging VkBuffer → vkCmdCopyBufferToImage2 → VkImage (OPTIMAL tiling, SHADER_READ_ONLY_OPTIMAL) → VkImageView + VkSampler → COMBINED_IMAGE_SAMPLER descriptor → Sampler2D.Sample(uv) → texture unit`
+
+A [texture](term:texture) is an [image](term:vk-image) that shaders read through a [sampler](term:vk-sampler). The image
+is stored with [optimal tiling](term:image-tiling), so its texels arrive by a [copy from a buffer](term:buffer-to-image-copy)
+after checking the format's [format features](term:format-features); the sampler decides
+[filtering](term:texture-filtering), [address modes](term:address-mode) and [anisotropy](term:anisotropic-filtering);
+a [combined image sampler](term:combined-image-sampler) descriptor hands both to the shader, and color data lives in an
+[_SRGB format](term:srgb-format). Underneath, the [texture units](term:texture-unit) do the filtering. After this
+lesson: [depth buffers](lesson:depth) (an image the GPU writes), [mipmaps](lesson:mipmaps) (an image with many levels)
+and [MSAA](lesson:msaa) (an image with many samples per pixel).
+
+## An image is not a buffer with pixels
+
+A [`VkBuffer`](term:vk-buffer) is a run of bytes. The GPU reads it at addresses the shader computes, and the meaning of
+the bytes is whatever the shader says. A [`VkImage`](term:vk-image) is a block of texels with a description the GPU
+itself understands:
+
+| | `VkBuffer` | `VkImage` |
+|---|---|---|
+| Shape | a length in bytes | width, height, depth, mip levels, array layers |
+| Element | none (the shader decides) | a **format**: `R8G8B8A8_SRGB` = 4 bytes, sRGB-encoded color |
+| Memory order | linear, the CPU can map it | usually **optimal tiling**: an order only the driver knows |
+| State | none | a **layout** per subresource, changed by barriers |
+| Read by a shader through | an address or a buffer descriptor | an image view, usually with a sampler |
+
+The format is what lets fixed-function hardware do work on the shader's behalf: decode 8-bit sRGB into linear floats,
+blend four neighbors, wrap coordinates, all before the shader sees a value. A buffer could hold the same bytes, but the
+shader would have to do all of that itself, one load at a time.
+
+A compositing analogy: a buffer is raw data on disk; an image is a Read node that knows the file's resolution,
+channels and color space, and a sampler is the filter setting of the Transform that resamples it. Same pixels, but the
+tools around them do the heavy lifting.
+
+## Optimal and linear tiling
+
+With `VK_IMAGE_TILING_LINEAR` the texels lie row after row, as in a scanline EXR. With `VK_IMAGE_TILING_OPTIMAL` the
+driver arranges them as the hardware prefers: typically in small 2D tiles or along a space-filling curve, so that
+texels that are neighbors on screen are neighbors in memory, and possibly compressed. It is the tiled EXR idea from the
+[image views lesson](lesson:image-views), except that the tile shape is the GPU's secret.
+
+Why not keep textures linear, so the CPU can write them directly? Because linear tiling is the exception the spec
+barely guarantees: "Creation of images with tiling `VK_IMAGE_TILING_LINEAR` may not be supported unless other
+parameters meet all of the constraints": a 2D image, not a depth/stencil format, one mip level, one layer, one sample,
+and a usage of only `TRANSFER_SRC` and/or `TRANSFER_DST`. The guaranteed linear image cannot even be sampled; anything
+more is an optional extra the device reports per format (`linearTilingFeatures`). And where sampling a linear image
+works, it gives up the 2D locality the texture caches are built for. On the course GPU the question is settled by memory
+as well: the texture's memory requirements below allow memory types 0 and 1 only, and neither is `HOST_VISIBLE`. This
+optimal image cannot be mapped at all. So textures go the way vertex data went in module 8: write a staging buffer,
+copy on the GPU.
+
+## 1. The texels
+
+<Step file="21_texture" region="texture-data" />
+
+The texture is generated, not loaded: 256 x 256 RGBA8, a checkerboard of color gradients and dark gray, with a
+2-texel white frame so you can see where one copy of the texture ends. Integer math only, so Rust and C++ produce the
+same 262144 bytes, and both print the same fingerprint (`FNV-1a 0xb2e278e1`). A real program would decode a PNG or,
+better, load a GPU-ready container (KTX2, DDS) into exactly such a byte array; the Vulkan side does not change.
+
+<Step file="21_texture" region="quad" />
+
+The mesh is a quad with UVs from 0 to 2, not 0 to 1. Inside [0, 1] the shader reads the texture; outside, the
+sampler's address mode decides what it sees, so three quarters of the quad show the address mode at work. The vertex
+shader is step 17's transform with a full matrix, and the fragment shader does one thing:
+
+<Snippet src="shaders/textured.slang" />
+
+`Sampler2D` is Slang's name for an image view and a sampler in one descriptor; `.Sample(uv)` is an *implicit-LOD*
+sample: the GPU works out from neighboring pixels how fast `uv` changes and filters accordingly. That rate matters for
+mipmaps; with one level here it only decides between the two filters, as the sampler section shows.
+
+## 2. Can this format do it?
+
+Not every format supports every use. Before creating an image, a program asks
+`vkGetPhysicalDeviceFormatProperties2` what a format can do with each tiling; the answer is a set of
+[format features](term:format-features).
+
+<Step file="21_texture" region="format-support" />
+
+Three features are needed: `SAMPLED_IMAGE` (shaders may sample it), `SAMPLED_IMAGE_FILTER_LINEAR` (the sampler may
+use linear filtering on it) and `TRANSFER_DST` (a copy may write it). On the course GPU:
+
+```text
+Format support (vkGetPhysicalDeviceFormatProperties2):
+  R8G8B8A8_SRGB (optimal tiling): SAMPLED_IMAGE yes, SAMPLED_IMAGE_FILTER_LINEAR yes, TRANSFER_DST yes
+  R8G8B8A8_UNORM (optimal tiling): SAMPLED_IMAGE yes, SAMPLED_IMAGE_FILTER_LINEAR yes, TRANSFER_DST yes
+```
+
+Both formats would do. Which one is right is a question about the data, not about the GPU.
+
+<Step file="21_texture" region="texture-format" />
+
+### sRGB or UNORM
+
+The texels were authored on a monitor, so their 8-bit values are **sRGB-encoded**: the curve that spends more codes on
+dark tones, exactly what a texture painted in Photoshop or Mari contains. The format tells Vulkan which it is:
+
+- `R8G8B8A8_SRGB`: when a shader samples it, "the (R,G,B,A) components are first converted as if they are UNORM
+  formats, and then sRGB to linear conversion is performed on the converted (R,G,B) components" (spec, "Texel Decode";
+  alpha stays linear). The conversion happens per texel, before filtering, so blending between texels and all shader
+  math happen in linear light, and the `_SRGB` swapchain encodes the result once on write.
+- `R8G8B8A8_UNORM`: the shader gets `value / 255`, no conversion. Right for data that was never a color on a screen:
+  normal maps, roughness, masks, displacement.
+
+Using `_UNORM` for a color texture does two things wrong. The encoded values are treated as linear, and the `_SRGB`
+swapchain then encodes them a **second** time, so the image comes out too bright and washed out; and filtering blends
+non-linear values, so every transition between bright and dark texels is mixed with the wrong weights. It is the same mistake as reading an sRGB plate
+as linear in Nuke and then viewing it through the sRGB viewer LUT. The formats differ only in the conversion; the bytes
+uploaded are the same.
+
+## 3. The image and its memory
+
+<Step file="21_texture" region="create-image" />
+
+The create info is the description of the table above: 2D, 256 x 256 x 1, one mip level, one layer, one sample,
+`OPTIMAL` tiling, and the usage `TRANSFER_DST | SAMPLED`: everything the image will ever be used for, declared up front
+so the driver can choose its arrangement. `initialLayout` is `UNDEFINED`: an optimal image starts with no defined
+contents. (Core Vulkan's other choice, `PREINITIALIZED`, "specifies that a linear image's memory is in a defined
+layout and can be populated by data" (spec): it is for linear images the host writes, not for textures like this one.)
+
+<Step file="21_texture" region="image-memory" />
+
+Images ask for memory exactly like buffers ([memory types](lesson:memory-types)), with their own answer:
+
+```text
+Memory requirements: size 262144, alignment 1024, memoryTypeBits 0b11 -> memory type 1 (DEVICE_LOCAL)
+```
+
+- **size**: 262144 = 256 x 256 x 4 here, but nothing promises that; padding and tiling can make it larger (the mipmap
+  lesson shows a case).
+- **alignment 1024**: buffers on this GPU asked for 4 to 64 bytes ([memory types](lesson:memory-types)). An optimal image asks for 1 KiB, which is also the
+  [bufferImageGranularity](term:buffer-image-granularity) of this device, the page that a buffer and an optimal image
+  sharing one allocation must not share.
+- **memoryTypeBits 0b11**: types 0 and 1 only. Buffers were allowed `0b111011`; this image may not use the
+  `HOST_VISIBLE` types 3 and 4 nor the BAR type 5. Type 1, `DEVICE_LOCAL` in heap 0, is the first with the wanted flag.
+
+## 4. The upload: a copy into a hidden arrangement
+
+The upload is [step 15's staging path](lesson:staging-uploads) with two differences: the copy must know about rows and
+texel formats, and the image must be in the right [layout](term:image-layout) at each moment. One command buffer
+records three commands.
+
+<Step file="21_texture" region="to-transfer-dst" />
+
+**Barrier 1: `UNDEFINED -> TRANSFER_DST_OPTIMAL`.** A copy may only write an image in `TRANSFER_DST_OPTIMAL` (or
+`GENERAL`): `VUID-VkCopyBufferToImageInfo2-dstImageLayout-01396`. The old layout `UNDEFINED` means "the current
+contents may be discarded", which is what a fresh image has. Nothing earlier in this command buffer touches the image,
+so the first synchronization scope is empty (`NONE`); the second scope is the copy's write, which must not start
+before the [layout transition](term:layout-transition) has happened.
+
+<Step file="21_texture" region="copy" />
+
+**The copy.** [`vkCmdCopyBufferToImage2`](term:buffer-to-image-copy) takes regions, each a part of the buffer and a part
+of one subresource (aspect, mip level, layers). Two fields describe the buffer side as an image:
+`bufferRowLength` and `bufferImageHeight` "specify in texels a subregion of a larger two- or three-dimensional image in
+buffer memory ... If either of these values is zero, that aspect of the buffer memory is considered to be tightly
+packed according to the `imageExtent`" (spec). Zero here: the rows follow each other with no gap, as `texture_pixels`
+wrote them. A non-zero row length lets you copy a 256-wide window out of a 1024-wide atlas in the buffer, the way a
+crop node reads a region of a larger plate. While copying, the GPU converts the buffer's row-by-row order into the
+image's tiled one; that conversion is the reason the copy exists.
+
+<Step file="21_texture" region="to-shader-read" />
+
+**Barrier 2: `TRANSFER_DST_OPTIMAL -> SHADER_READ_ONLY_OPTIMAL`.** The layout for sampling. The first scope is the
+copy's write (made available), the second the fragment shader's sampled reads (made visible). This barrier, not the
+fence that the program waits on afterwards, is what lets the shader see the texels: the fence only tells the CPU that
+the staging buffer may go, as in [staging uploads](lesson:staging-uploads).
+
+```text
+Staging buffer: 262144 bytes, TRANSFER_SRC, memory type 3
+Recorded: barrier UNDEFINED -> TRANSFER_DST_OPTIMAL, vkCmdCopyBufferToImage2 (256x256, mip 0), barrier TRANSFER_DST_OPTIMAL -> SHADER_READ_ONLY_OPTIMAL
+Upload complete (fence waited); staging buffer destroyed
+[timing] texture upload 2.377 ms (staging write + record + submit + wait)
+```
+
+The `[timing]` line varies by run: 1.8 to 2.4 ms in the runs quoted in this lesson, for 256 KiB, dominated by the
+fixed cost of one submit and one fence wait rather than by the bytes.
+
+## 5. The view
+
+<Step file="21_texture" region="image-view" />
+
+Descriptors never point at images, only at [image views](term:vk-image-view): here the plain one, a 2D view of mip 0,
+layer 0, color aspect, in the image's own format. The [image views lesson](lesson:image-views) has the rest (view
+types, swizzles, ranges).
+
+## 6. The sampler
+
+<Step file="21_texture" region="sampler" />
+
+A [`VkSampler`](term:vk-sampler) holds no image. It is a set of rules for reading *any* image, and one sampler can
+serve thousands of textures. Its fields fall into four groups.
+
+**Filters.** A pixel almost never lands on a texel center. With `NEAREST` the sampler returns the closest texel (hard
+blocky edges when magnified, like Nuke's Impulse filter); with `LINEAR` it blends the 2 x 2 texels around the sample
+point by their distance (bilinear filtering). There are two filters because there are two
+situations ([texture filtering](term:texture-filtering)): **magnification**, where one texel covers many pixels, and
+**minification**, where many texels fall into one pixel. The spec decides between them by the level-of-detail value λ:
+"If λ is less than or equal to zero, the texture is said to be magnified, and the filter mode within a mip level is
+selected by the `magFilter` in the sampler. If λ is greater than zero, the texture is said to be minified" and
+`minFilter` applies.
+
+**maxLod 0 and the magnification filter.** This sampler sets `minLod = maxLod = 0`, because the image has one level.
+λ is clamped to `[minLod, maxLod]`, so it never exceeds 0: the texture always counts as *magnified* and `magFilter` is
+the filter used even when the quad is far away. The spec states this effect in a note on mapping OpenGL filters: "using
+a `maxLod` of zero would cause magnification to always be performed, and the `magFilter` to always be used". It is
+harmless here because both filters are equal. A program that wants GL's non-mipmapped minification uses `maxLod = 0.25`
+(the same note), and the [mipmaps lesson](lesson:mipmaps) gives λ real work to do.
+
+**Address modes.** What `uv` outside [0, 1] reads, set per axis (u, v, w); the quad's UVs run to 2 to show them:
+
+| `--address` | Mode | Outside [0, 1] |
+|---|---|---|
+| `repeat` (default) | `REPEAT` | the texture tiles, like a repeating UV in any DCC shader |
+| `mirror` | `MIRRORED_REPEAT` | tiles, every other copy flipped, so edges always meet their own mirror image |
+| `clamp` | `CLAMP_TO_EDGE` | the edge texels are stretched outwards |
+| `border` | `CLAMP_TO_BORDER` | a fixed border color, here `FLOAT_OPAQUE_BLACK` |
+
+A fifth mode, `MIRROR_CLAMP_TO_EDGE` (one mirrored copy, then the edge), needs the `samplerMirrorClampToEdge` feature,
+which is on the same Vulkan 1.4 must-support list as anisotropy; the step does not use it.
+
+**Anisotropy.** On a surface seen at a grazing angle, a pixel's footprint in the texture is long and thin; plain
+filtering either blurs it or misses texels along its long axis. [Anisotropic filtering](term:anisotropic-filtering) takes
+several samples along that axis, up to `maxAnisotropy`. How exactly is left to the hardware: "The particular scheme for
+anisotropic texture filtering is implementation-dependent" (spec). It needs the `samplerAnisotropy` feature
+**enabled** (`VUID-VkSamplerCreateInfo-anisotropyEnable-01070`) and a value no larger than the device limit
+(`VUID-VkSamplerCreateInfo-anisotropyEnable-01071`). The limit `maxSamplerAnisotropy` is 16 here, which is also the
+minimum the spec's limits table requires of a device that supports anisotropy. The quad in this step is never at a grazing angle, so the effect is invisible;
+the floor of the mipmaps lesson is where it shows.
+
+The rest stays off: no LOD bias, no depth comparison (that is for shadow maps), normalized coordinates (0..1, not
+texel units).
+
+### The flags, run
+
+<Step file="21_texture" region="cli" />
+
+Each run prints its sampler line (Rust and C++ print the same; only `[timing]` lines differ):
+
+```text
+default                       Sampler: LINEAR filters, address mode REPEAT, anisotropy 16
+--nearest                     Sampler: NEAREST filters, address mode REPEAT, anisotropy off
+--address mirror              Sampler: LINEAR filters, address mode MIRRORED_REPEAT, anisotropy 16
+--address clamp               Sampler: LINEAR filters, address mode CLAMP_TO_EDGE, anisotropy 16
+--address border              Sampler: LINEAR filters, address mode CLAMP_TO_BORDER, anisotropy 16
+--nearest --address clamp     Sampler: NEAREST filters, address mode CLAMP_TO_EDGE, anisotropy off
+```
+
+(Run names on the left added for this table.) The sampler is the only thing that changes between these runs: same
+image, same view, same descriptor layout. That separation is the point of having a sampler object.
+
+## 7. One more binding in the set
+
+The texture reaches the shader through step 17's descriptor set, which gets a second binding. Anisotropy, a device
+feature, has to be enabled first:
+
+<Step file="21_texture" region="device-features" />
+
+The spec's feature requirements say "If Vulkan 1.4 is supported, the following features must be supported", and
+`samplerAnisotropy` is in that list, so every Vulkan 1.4 device has it. Supported is not enabled, though, and a feature
+that is not enabled may not be used.
+
+<Step file="21_texture" region="set-layout" />
+
+Binding 1 is a [`COMBINED_IMAGE_SAMPLER`](term:combined-image-sampler): one descriptor holding a view and a sampler,
+visible to the fragment stage. The alternative is two bindings, `SAMPLED_IMAGE` (`Texture2D`) and `SAMPLER`
+(`SamplerState`), combined in the shader; that pays off when one sampler serves many images, as in a
+[bindless](lesson:bindless) table. Both forms are core and common; the combined one is the shortest path for one texture.
+
+<Step file="21_texture" region="descriptor-pool" />
+
+The pool grows by one combined image sampler per set: two sets, two of each type.
+
+<Step file="21_texture" region="write-sets" />
+
+An image descriptor names three things: the sampler, the view and the **layout** the image will be in when a shader
+reads it, here `SHADER_READ_ONLY_OPTIMAL`, which the upload's second barrier established. The descriptor does not
+change the layout; it promises it, and the validation layer checks the promise against the layouts it tracks. Both sets point to the same texture:
+it never changes while frames are in flight, so it needs no per-frame copy.
+
+<Step file="21_texture" region="bind-and-draw" />
+
+Nothing new per frame: binding the set binds both descriptors.
+
+## 8. Cleanup
+
+<Step file="21_texture" region="cleanup" />
+
+Children before parents, as always: the descriptor pool (which frees its sets) before the sampler and view they point
+to, the view before its image, the image before its memory.
+
+## Build it yourself
+
+A texture adds three objects to the device, and the descriptor set needs two of them:
+
+<ObjectGraph
+	mode="build"
+	scope={['instance', 'physical-device', 'device', 'image', 'device-memory', 'image-view', 'sampler', 'descriptor-set-layout', 'descriptor-pool', 'descriptor-set']}
+	caption="The image needs memory bound before it gets a view; the sampler depends on nothing but the device. A combined image sampler descriptor names one of each."
+/>
+
+## What the program prints
+
+The default run, Rust (C++ prints the same lines; only the `[timing]` values differ):
+
+```text
+Texture: 256x256 RGBA8, 262144 bytes, generated on the CPU (FNV-1a 0xb2e278e1)
+Format support (vkGetPhysicalDeviceFormatProperties2):
+  R8G8B8A8_SRGB (optimal tiling): SAMPLED_IMAGE yes, SAMPLED_IMAGE_FILTER_LINEAR yes, TRANSFER_DST yes
+  R8G8B8A8_UNORM (optimal tiling): SAMPLED_IMAGE yes, SAMPLED_IMAGE_FILTER_LINEAR yes, TRANSFER_DST yes
+Texture format: R8G8B8A8_SRGB (color data is sRGB-encoded)
+VkImage: 2D, 1 mip level, OPTIMAL tiling, TRANSFER_DST | SAMPLED
+Memory requirements: size 262144, alignment 1024, memoryTypeBits 0b11 -> memory type 1 (DEVICE_LOCAL)
+Staging buffer: 262144 bytes, TRANSFER_SRC, memory type 3
+Recorded: barrier UNDEFINED -> TRANSFER_DST_OPTIMAL, vkCmdCopyBufferToImage2 (256x256, mip 0), barrier TRANSFER_DST_OPTIMAL -> SHADER_READ_ONLY_OPTIMAL
+Upload complete (fence waited); staging buffer destroyed
+[timing] texture upload 2.377 ms (staging write + record + submit + wait)
+maxSamplerAnisotropy = 16
+Sampler: LINEAR filters, address mode REPEAT, anisotropy 16
+
+SPIR-V: 1368 bytes (textured.spv), entry points vertexMain, fragmentMain
+Descriptor set layout: binding 0 = UNIFORM_BUFFER (VERTEX), binding 1 = COMBINED_IMAGE_SAMPLER (FRAGMENT)
+Graphics pipeline created
+Mesh: quad, 4 vertices, 6 indices, UVs 0..2
+Descriptor pool: maxSets 2, UNIFORM_BUFFER x 2, COMBINED_IMAGE_SAMPLER x 2; 2 sets allocated
+vkUpdateDescriptorSets: 4 writes (per set: binding 0 -> its uniform buffer, binding 1 -> texture view + sampler, SHADER_READ_ONLY_OPTIMAL)
+
+2 frames in flight; the quad turns at 0.3 rad/s
+Rendering. Close the window to exit.
+```
+
+(shortened: the device and swapchain lines at the top are step 17's.) With validation on, the only message is the one
+from the Bandicam implicit layer known since step 02.
+
+## The map of this lesson
+
+<MindMap />
+
+## Underneath
+
+- **Texture units.** Typically each shader core has texture units next to it: hardware that takes a coordinate and a
+  descriptor, computes the texel addresses in the tiled layout, fetches through a texture cache, decodes the format
+  (sRGB included) and filters, then returns a filtered value to the shader. That is why sampling with `LINEAR` costs the
+  shader one instruction instead of four loads and the arithmetic, and why the format and the sampler have to be known
+  to the hardware rather than to the shader.
+- **Tiling and compression are the driver's business.** The exact tile arrangement, and whether an optimal image is
+  stored compressed, are not exposed by Vulkan; layouts exist so the driver knows, at each transition, which
+  arrangement the next user needs. Copying into the image is where the linear rows of the buffer get rearranged, which
+  is also why the copy engines and the texture hardware can read the same image efficiently while the CPU cannot.
+- **Descriptors for images.** On the course GPU a sampled-image descriptor is 4 bytes (`VK_EXT_descriptor_buffer`
+  properties, quoted in the [descriptor sets lesson](lesson:descriptor-sets)): typically an index into a table of image
+  and sampler descriptions that the driver maintains, not the description itself.
+
+<Quiz
+	questions={[
+		{
+			q: 'Why does step 21 copy the texels from a buffer instead of mapping the image\'s memory and writing them?',
+			options: [
+				{
+					text: 'Mapping is slower than a copy for 256 KiB',
+					why: 'Speed is not the reason: on this GPU the image\'s memoryTypeBits (0b11) allow no HOST_VISIBLE type at all, and even mappable optimal memory would be in a layout the CPU does not know.',
+				},
+				{
+					text: 'An OPTIMAL image keeps its texels in a driver-specific arrangement, and here its memory types are not even host-visible',
+					why: 'Right: the copy converts the buffer\'s rows into the tiled layout, and memoryTypeBits 0b11 leaves only types 0 and 1, neither of them HOST_VISIBLE.',
+				},
+				{
+					text: 'Images cannot be bound to memory, only filled by copies',
+					why: 'Images are bound to memory like buffers (vkBindImageMemory); the step does that before the copy.',
+				},
+				{
+					text: 'Shaders can only read images that were written by the GPU',
+					why: 'There is no such rule; what matters is the layout and the visibility of the writes, whoever made them.',
+				},
+			],
+			answer: 1,
+			ref: '#optimal-and-linear-tiling',
+		},
+		{
+			q: 'A color texture painted in Mari is uploaded as R8G8B8A8_UNORM and drawn to an _SRGB swapchain. What happens?',
+			options: [
+				{
+					text: 'Nothing: UNORM and SRGB hold the same bytes, so the result is identical',
+					why: 'The bytes are the same, but the conversion differs: SRGB decodes them to linear when sampled, UNORM does not.',
+				},
+				{
+					text: 'It comes out too dark',
+					why: 'The opposite: the encoded values are taken as linear, and the swapchain encodes them a second time, which brightens them.',
+				},
+				{
+					text: 'The image is encoded twice and looks washed out, and filtering blends non-linear values',
+					why: 'Right: no decode on sampling, an encode on write, so double encoding; and linear filtering happens on encoded values.',
+				},
+				{
+					text: 'Vulkan rejects the descriptor at draw time, because a UNORM format cannot hold color data meant for an sRGB swapchain',
+					why: 'Vulkan has no idea what the data means; both formats support sampling here. Picking the right one is the program\'s job.',
+				},
+			],
+			answer: 2,
+			ref: '#srgb-or-unorm',
+		},
+		{
+			q: 'Step 21\'s sampler has minFilter = magFilter = LINEAR and maxLod = 0. Which filter is used when the quad is tiny on screen?',
+			options: [
+				{
+					text: 'minFilter, because many texels fall into one pixel when the quad is small, so the texture is minified',
+					why: 'Only if λ is greater than zero; maxLod = 0 clamps λ to at most 0, so the texture always counts as magnified.',
+				},
+				{
+					text: 'magFilter: λ is clamped to at most 0, so the texture always counts as magnified',
+					why: 'Right: the spec selects magFilter for λ ≤ 0, and its note on OpenGL filters says maxLod 0 makes magnification always happen. Harmless here, both are LINEAR.',
+				},
+				{
+					text: 'Neither: with maxLod 0 sampling is disabled and returns the border color',
+					why: 'maxLod limits the level of detail; it does not disable sampling. The border color only appears with CLAMP_TO_BORDER outside [0, 1].',
+				},
+				{
+					text: 'Both: the sampler averages the minFilter and magFilter results',
+					why: 'There is no such blend; λ selects exactly one of the two filters for each sample.',
+				},
+			],
+			answer: 1,
+			ref: '#6-the-sampler',
+		},
+		{
+			q: 'What makes the copied texels visible to the fragment shader in step 21?',
+			options: [
+				{
+					text: 'The fence the CPU waits on after the submit',
+					why: 'A fence tells the host that the work completed; it does not make the copy\'s writes visible to later shader reads.',
+				},
+				{
+					text: 'The descriptor\'s imageLayout = SHADER_READ_ONLY_OPTIMAL',
+					why: 'The descriptor only promises the layout the image will be in; it performs no transition and no memory dependency.',
+				},
+				{
+					text: 'Nothing extra is needed: a copy and a draw recorded on the same queue always run one after the other, in submission order',
+					why: 'Submission order alone orders neither execution nor memory access; a barrier is needed.',
+				},
+				{
+					text: 'The second barrier: COPY/TRANSFER_WRITE to FRAGMENT_SHADER/SHADER_SAMPLED_READ with the transition',
+					why: 'Right: it makes the copy\'s writes available and visible to sampled reads in the fragment shader, and moves the image into the sampling layout.',
+				},
+			],
+			answer: 3,
+			ref: '#4-the-upload-a-copy-into-a-hidden-arrangement',
+		},
+	]}
+/>

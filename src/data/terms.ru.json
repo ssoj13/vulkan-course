@@ -612,6 +612,151 @@
       "label": "Subgroup",
       "aka": ["подгруппа", "warp", "wave", "wavefront", "subgroupSize", "варп"],
       "def": "Группа вызовов шейдера, которую GPU планирует вместе на одном шейдерном ядре и которая умеет быстро обмениваться данными и синхронизироваться: 32 на GPU курса (warp у NVIDIA, wave у AMD). Lockstep Vulkan не обещает (начиная с Volta у NVIDIA потоки планируются независимо); общие для всей подгруппы значения железо может держать в скалярных регистрах."
+    },
+    "texture": {
+      "label": "Текстура",
+      "aka": ["texture", "текстура", "Sampler2D", "Texture2D"],
+      "def": "Изображение, которое шейдеры читают через сэмплер: тексели с форматом, которые фильтрует и адресует фиксированное железо, — в отличие от буфера, который шейдер читает байт за байтом."
+    },
+    "vk-sampler": {
+      "label": "VkSampler",
+      "aka": ["sampler", "сэмплер", "vkCreateSampler", "VkSamplerCreateInfo"],
+      "def": "Набор правил чтения любого изображения: фильтры увеличения и уменьшения, режим mip-уровней и диапазон LOD, режимы адресации, анизотропия, сравнение. Изображения в нём нет, поэтому один сэмплер обслуживает сколько угодно текстур."
+    },
+    "image-tiling": {
+      "label": "Tiling изображения (OPTIMAL / LINEAR)",
+      "aka": ["image tiling", "VkImageTiling", "optimal tiling", "linear tiling"],
+      "def": "Как тексели изображения разложены в памяти: LINEAR — строка за строкой, CPU может их адресовать; OPTIMAL — в порядке, который знает только драйвер (тайлы, перестановки, возможно сжатие) и который удобен GPU. Текстуры хранятся в OPTIMAL и заполняются копированием."
+    },
+    "format-features": {
+      "label": "Возможности формата",
+      "aka": ["format features", "VkFormatProperties", "vkGetPhysicalDeviceFormatProperties2", "optimalTilingFeatures"],
+      "def": "Что формат умеет на данном устройстве, отдельно для каждого tiling: сэмплирование, линейную фильтрацию, копирование, blit, роль color- или depth-аттачмента …; запрашиваются vkGetPhysicalDeviceFormatProperties2 до создания изображения."
+    },
+    "buffer-to-image-copy": {
+      "label": "vkCmdCopyBufferToImage2",
+      "aka": ["copy buffer to image", "VkBufferImageCopy2", "bufferRowLength", "bufferImageHeight"],
+      "def": "Команда передачи, которая заполняет подресурсы изображения из буфера и по пути переводит строки буфера в tiling изображения; bufferRowLength и bufferImageHeight описывают сторону буфера (0 — плотная упаковка). Изображение должно быть в TRANSFER_DST_OPTIMAL или GENERAL."
+    },
+    "combined-image-sampler": {
+      "label": "Combined image sampler",
+      "aka": ["combined image sampler", "COMBINED_IMAGE_SAMPLER", "VkDescriptorImageInfo", "sampler2D"],
+      "def": "Тип дескриптора, в котором лежат image view, сэмплер и layout, в котором изображение будет при чтении; ему соответствуют Sampler2D в Slang и sampler2D в GLSL. Альтернатива — раздельные binding SAMPLED_IMAGE и SAMPLER."
+    },
+    "texture-filtering": {
+      "label": "Фильтрация текстур",
+      "aka": ["texture filtering", "NEAREST", "LINEAR", "bilinear", "magFilter", "minFilter"],
+      "def": "Как сэмплер получает значение в точке между текселями: NEAREST берёт ближайший тексель, LINEAR смешивает четыре соседних (2 × 2). magFilter работает, когда тексель покрывает несколько пикселей (λ ≤ 0), minFilter — когда в пиксель попадает несколько текселей."
+    },
+    "address-mode": {
+      "label": "Режим адресации сэмплера",
+      "aka": ["address mode", "wrap mode", "VkSamplerAddressMode", "REPEAT", "CLAMP_TO_EDGE"],
+      "def": "Что сэмплер читает при координатах вне [0, 1], отдельно по каждой оси: повтор, повтор с отражением, крайние тексели или фиксированный цвет границы."
+    },
+    "anisotropic-filtering": {
+      "label": "Анизотропная фильтрация",
+      "aka": ["anisotropic filtering", "anisotropy", "maxAnisotropy", "samplerAnisotropy"],
+      "def": "Фильтрация, которая берёт несколько выборок вдоль длинной оси следа пикселя на текстуре — для поверхностей под острым углом; до maxAnisotropy выборок (16 на GPU курса), схема зависит от реализации. Нужна включённая возможность samplerAnisotropy."
+    },
+    "srgb-format": {
+      "label": "Формат sRGB",
+      "aka": ["sRGB format", "_SRGB", "R8G8B8A8_SRGB", "sRGB decode", "гамма"],
+      "def": "Формат, цветовые компоненты которого хранятся в кодировке sRGB: при сэмплировании они переводятся в линейные значения до фильтрации, при записи кодируются обратно. Подходит для цвета, нарисованного или снятого для экрана; данные вроде нормалей и масок хранят в _UNORM."
+    },
+    "texture-unit": {
+      "label": "Текстурный блок",
+      "aka": ["texture unit", "TMU", "texture mapping unit", "текстурный кэш"],
+      "def": "Фиксированное железо рядом с шейдерными ядрами, которое обычно вычисляет адреса текселей в тайловой раскладке, читает их через текстурный кэш, декодирует формат и фильтрует, возвращая одно отфильтрованное значение на инструкцию выборки."
+    },
+    "depth-buffer": {
+      "label": "Буфер глубины",
+      "aka": ["depth buffer", "z-buffer", "depth attachment", "pDepthAttachment"],
+      "def": "Изображение с одним значением глубины на пиксель (на сэмпл при MSAA), подключённое к рендерингу как depth-аттачмент: каждый фрагмент сравнивается с ним и, если он ближе, записывает свою глубину, поэтому побеждает ближайшая поверхность при любом порядке отрисовки."
+    },
+    "depth-format": {
+      "label": "Формат глубины",
+      "aka": ["depth format", "D32_SFLOAT", "D24_UNORM_S8_UINT", "D16_UNORM"],
+      "def": "Формат для значений глубины (и, возможно, трафарета). Как depth-аттачмент гарантирован только D16_UNORM; из пар X8_D24/D32_SFLOAT и D24S8/D32S8 — хотя бы по одному, поэтому программы опрашивают список кандидатов."
+    },
+    "depth-test": {
+      "label": "Тест и запись глубины",
+      "aka": ["depth test", "depth write", "depthTestEnable", "depthWriteEnable", "depthCompareOp"],
+      "def": "Состояние пайплайна, которое сравнивает глубину каждого фрагмента с сохранённой (compareOp, например LESS) и, если тест пройден и запись включена, сохраняет новую глубину; тест и запись включаются по отдельности."
+    },
+    "clip-space": {
+      "label": "Clip space в Vulkan",
+      "aka": ["clip space", "clip coordinates", "SV_Position", "gl_Position", "NDC"],
+      "def": "Пространство выходной позиции вершинного шейдера до деления на w. В Vulkan +y смотрит вниз по экрану, а глубина идёт от 0 до 1 (примитивы отсекаются по 0 ≤ z ≤ w), в отличие от OpenGL с y вверх и диапазоном -1..1."
+    },
+    "perspective-projection": {
+      "label": "Перспективная проекция",
+      "aka": ["perspective projection", "projection matrix", "fovy", "near plane", "far plane"],
+      "def": "Матрица, переводящая пространство камеры в clip space с w, равным расстоянию, так что деление на w уменьшает далёкие объекты; ближнюю плоскость она ставит на глубину 0, дальнюю на 1, а глубина аффинна по 1/расстояние."
+    },
+    "reversed-z": {
+      "label": "Reversed-Z",
+      "aka": ["reversed-Z", "reverse Z", "обратная глубина"],
+      "def": "Ближняя плоскость отображается в глубину 1, дальняя в 0 (очистка нулём, сравнение GREATER), так что плотные значения формата с плавающей точкой около 0 компенсируют скученность значений глубины вдали."
+    },
+    "early-z": {
+      "label": "Ранний тест глубины (early-Z)",
+      "aka": ["early-Z", "early depth test", "EARLY_FRAGMENT_TESTS", "Hi-Z"],
+      "def": "Тест глубины до фрагментного шейдера, который спецификация допускает, когда шейдер не может изменить результат; железо обычно так и делает, часто с грубой глубиной на тайл (Hi-Z), чтобы не шейдить скрытые фрагменты."
+    },
+    "mipmap": {
+      "label": "Mip-уровни (mipmap)",
+      "aka": ["mip map", "mipmap", "мипмапы", "mip chain", "mipLevels"],
+      "def": "Цепочка заранее отфильтрованных копий изображения, каждая вдвое меньше предыдущей, до 1 × 1, — mip-уровни изображения; стоит примерно на треть больше памяти и позволяет сэмплировать уменьшенные текстуры без алиасинга."
+    },
+    "lod": {
+      "label": "Уровень детализации (λ)",
+      "aka": ["level of detail", "LOD", "lambda", "minLod", "maxLod", "mipLodBias"],
+      "def": "Значение λ = log2(текселей на пиксель) + смещение, которое сэмплер считает для каждого пикселя и зажимает в [minLod, maxLod]; оно выбирает mip-уровень (или два), а λ ≤ 0 означает увеличение. Выводится из производных UV по квадрату 2 × 2."
+    },
+    "vk-cmd-blit-image": {
+      "label": "vkCmdBlitImage2",
+      "aka": ["blit", "VkBlitImageInfo2", "BLIT_SRC", "BLIT_DST"],
+      "def": "Команда передачи, которая копирует область одного изображения в область другого с масштабированием и фильтром NEAREST или LINEAR; требует возможностей формата BLIT_SRC/BLIT_DST, очереди с поддержкой графики и изображений с одним сэмплом. Ей строят цепочки mip-уровней."
+    },
+    "trilinear-filtering": {
+      "label": "Трилинейная фильтрация",
+      "aka": ["trilinear filtering", "mipmapMode LINEAR", "VK_SAMPLER_MIPMAP_MODE_LINEAR"],
+      "def": "Билинейная фильтрация в двух mip-уровнях вокруг λ, смешанных по дробной части λ (mipmapMode LINEAR): без видимых швов там, где меняется уровень."
+    },
+    "texture-aliasing": {
+      "label": "Алиасинг",
+      "aka": ["aliasing", "moiré", "муар", "shimmering"],
+      "def": "Ложные узоры от сэмплирования деталей мельче шага выборки: уменьшенная текстура без mip-уровней мерцает и даёт муар, на краях геометрии это лесенка. Лечится фильтрацией до выборки (mip-уровни) или большим числом выборок (MSAA, суперсэмплинг)."
+    },
+    "msaa": {
+      "label": "MSAA",
+      "aka": ["MSAA", "multisample anti-aliasing", "мультисэмплинг"],
+      "def": "Multisample anti-aliasing: покрытие и глубина проверяются в N точках пикселя и хранятся по сэмплам, фрагментный шейдер выполняется один раз на пиксель и треугольник, а resolve усредняет сэмплы. Сглаживает края геометрии гораздо дешевле, чем в N раз больший шейдинг."
+    },
+    "sample-count": {
+      "label": "Число сэмплов",
+      "aka": ["sample count", "VkSampleCountFlagBits", "rasterizationSamples", "framebufferColorSampleCounts"],
+      "def": "Число сэмплов на пиксель у изображения и у растеризации; у всех аттачментов одного рендеринга оно одинаковое. Допустимые значения дают лимиты framebuffer (как минимум 1 и 4) и, для конкретного формата, vkGetPhysicalDeviceImageFormatProperties2."
+    },
+    "msaa-resolve": {
+      "label": "Resolve",
+      "aka": ["resolve", "resolveMode", "resolveImageView", "VK_RESOLVE_MODE_AVERAGE_BIT", "vkCmdResolveImage2"],
+      "def": "Превращение мультисэмплового изображения в односэмпловое: AVERAGE для цвета (SAMPLE_ZERO для целочисленных форматов). В dynamic rendering он выполняется в конце рендеринга в resolveImageView, на стадии COLOR_ATTACHMENT_OUTPUT."
+    },
+    "transient-attachment": {
+      "label": "Transient-аттачмент",
+      "aka": ["transient attachment", "TRANSIENT_ATTACHMENT", "VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT"],
+      "def": "Usage изображения для аттачмента, содержимое которого живёт только во время рендеринга (очищается и не сохраняется); разрешает память LAZILY_ALLOCATED и сочетается только с usage аттачментов."
+    },
+    "sample-shading": {
+      "label": "Sample shading",
+      "aka": ["sample shading", "sampleShadingEnable", "minSampleShading", "sampleRateShading"],
+      "def": "Запуск фрагментного шейдера больше одного раза на пиксель при MSAA: не меньше ⌈minSampleShading × samples⌉ вызовов; minSampleShading 1 шейдит каждый сэмпл. Нужна возможность sampleRateShading."
+    },
+    "supersampling": {
+      "label": "Суперсэмплинг (SSAA)",
+      "aka": ["supersampling", "SSAA", "суперсэмплинг", "camera AA samples"],
+      "def": "Сглаживание, при котором шейдится каждый сэмпл: рендер с N сэмплами на пиксель и последующая фильтрация. Убирает алиасинг краёв, текстур и шейдинга, но стоит в N раз больше шейдинга; так работают оффлайн-рендереры со своими camera samples."
     }
   },
   "edges": {
@@ -766,6 +911,34 @@
     "bindless|uses|storage-buffer": "массивы",
     "non-uniform-indexing|related|dynamically-uniform": "противоположность",
     "dynamically-uniform|related|subgroup": "важно из-за",
-    "subgroup|built-on|shader-core": "выполняется на"
+    "subgroup|built-on|shader-core": "выполняется на",
+    "texture|uses|vk-sampler": "читается через",
+    "texture|uses|texture-unit": "фильтруется в",
+    "vk-sampler|built-on|vk-device": "создаётся из",
+    "vk-sampler|uses|texture-filtering": "выбирает",
+    "format-features|built-on|vk-physical-device": "запрашиваются у",
+    "buffer-to-image-copy|uses|staging-buffer": "читает",
+    "buffer-to-image-copy|related|image-tiling": "переводит строки в",
+    "buffer-to-image-copy|uses|image-layout": "требует TRANSFER_DST_OPTIMAL",
+    "combined-image-sampler|uses|vk-image-view": "указывает",
+    "combined-image-sampler|uses|vk-sampler": "указывает",
+    "srgb-format|related|surface-format": "как у swapchain",
+    "srgb-format|related|texture-filtering": "декодируется до",
+    "depth-buffer|uses|depth-format": "хранится в",
+    "depth-test|uses|depth-buffer": "сравнивает с",
+    "perspective-projection|built-on|clip-space": "переводит в",
+    "depth-buffer|uses|perspective-projection": "значения из",
+    "reversed-z|related|perspective-projection": "вариант",
+    "early-z|built-on|depth-test": "до шейдинга",
+    "mipmap|uses|vk-cmd-blit-image": "строится через",
+    "lod|uses|mipmap": "выбирает уровень",
+    "trilinear-filtering|uses|mipmap": "смешивает два уровня",
+    "texture-aliasing|related|mipmap": "устраняется",
+    "anisotropic-filtering|related|trilinear-filtering": "улучшает",
+    "msaa|uses|depth-buffer": "мультисэмплирует",
+    "msaa|related|texture-aliasing": "лечит на краях",
+    "transient-attachment|uses|lazily-allocated": "может использовать",
+    "sample-shading|related|msaa": "шейдит по сэмплам в",
+    "supersampling|related|msaa": "шейдит каждый сэмпл, в отличие от"
   }
 }

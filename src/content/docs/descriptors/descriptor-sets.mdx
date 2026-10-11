@@ -36,7 +36,7 @@ How sets are split up is a design choice, [grouping by update frequency](term:se
 A material in a DCC does not contain its textures. It contains *references* to them: a file path, a color space, a
 filter. The renderer resolves those references when it shades. A descriptor is that reference for the GPU: for a
 uniform buffer it says "buffer X, starting at offset O, R bytes long"; for a texture it will say "this [image view](lesson:image-views), read
-with this sampler" (textures are module 10). Its bytes are in a format only the driver and the
+with this sampler" ([textures and samplers](lesson:textures-and-samplers)). Its bytes are in a format only the driver and the
 GPU know, and small: on the course GPU, `VK_EXT_descriptor_buffer` (which exposes the sizes) reports 8 bytes for a
 uniform buffer descriptor, 16 for a storage buffer and 4 for a sampled image (vulkaninfo, driver 616.64). Core
 descriptor sets never show these bytes.
@@ -61,7 +61,7 @@ A set layout is a list of bindings. Each `VkDescriptorSetLayoutBinding` has:
 
 - `binding`: the number the shader uses (`[[vk::binding(0, 0)]]`, the second number being the set);
 - `descriptorType`: what kind of resource, here `UNIFORM_BUFFER`. Others are `STORAGE_BUFFER` ([bindless](lesson:bindless)),
-  `SAMPLED_IMAGE`, `SAMPLER`, `COMBINED_IMAGE_SAMPLER`, `STORAGE_IMAGE` (images, module 10), and a few more;
+  `SAMPLED_IMAGE`, `SAMPLER`, `COMBINED_IMAGE_SAMPLER`, `STORAGE_IMAGE` (images: [textures and samplers](lesson:textures-and-samplers)), and a few more;
 - `descriptorCount`: how many descriptors, i.e. an array. 1 here; 4096 in the bindless lesson;
 - `stageFlags`: which shader stages may read it. Listing only the vertex stage is not decoration: a driver may set up
   descriptors per stage, and a stage that is not listed must not use the binding.
