@@ -531,10 +531,13 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
   21_texture_nearest and 24 full frames are captured but not embedded.
 - C++ on Linux + CI (2026-10-11): presets `msvc-*` (cl, Windows only) and `linux-*` (compiler from `CXX`, Linux
   only) share a hidden `base` (Ninja, vcpkg toolchain from `$env{VCPKG_ROOT}`). CMakeLists fails at configure time
-  without C++23 `<print>` (HAVE_STD_PRINT; Ubuntu 24.04's default g++ 13 lacks it -> `CXX=g++-14`). Non-MSVC builds
-  use `-Wno-missing-field-initializers`: GCC 14 / Clang 18 -Wextra flag every member a designated initializer omits
-  (40 hits: VMA structs in 16, Frame in 18, GpuTimes in 27), which is the examples' zero-init style. The sources
-  needed no other change (no Win32-only code; SHADER_DIR is an absolute CMake path). `.github/workflows/cpp.yml`
+  without C++23 `<print>` (HAVE_STD_PRINT; Ubuntu 24.04's default g++ 13 lacks it -> `CXX=g++-14`). GCC 14 / Clang 18
+  -Wextra (-Wmissing-field-initializers) flag every member a designated initializer omits unless it has a default
+  member initializer (MSVC /W4 does not): fixed at the source - own structs get NSDMIs (18 `Frame::uniform =
+  std::nullopt`, 27 `GpuTimes::current{}/total{}`), 16 names every VmaAllocatorCreateInfo/VmaAllocationCreateInfo
+  member and builds VmaVulkanFunctions by value-init + assignment (its member set depends on VMA's config macros).
+  Rule for new code: a struct used with designated initializers gives every member a default, or the initializer
+  names them all. No Win32-only code was found; SHADER_DIR is an absolute CMake path. `.github/workflows/cpp.yml`
   (push/PR touching examples/cpp, shaders or itself; workflow_dispatch): windows-latest (MSVC 14.51, VS 18) and
   ubuntu-24.04 (g++-14); Vulkan SDK 1.4.341.1 via jakoch/install-vulkan-sdk-action v1.7.0 (needs `github_token`:
   its lavapipe lookup hit the anonymous API rate limit); vcpkg cloned at master e456309 (2026-10-10: glfw3 3.5.1,

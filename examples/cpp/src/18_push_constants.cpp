@@ -298,7 +298,7 @@ struct Frame {
     // Signaled when this slot's submission completes.
     vk::raii::Fence inFlight;
     // Push-descriptor path only: this slot's uniform buffer and its persistently mapped pointer.
-    std::optional<GpuBuffer> uniform;
+    std::optional<GpuBuffer> uniform = std::nullopt;
     FrameUniforms* mapped = nullptr;
 };
 // #endregion

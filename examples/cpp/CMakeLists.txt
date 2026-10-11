@@ -91,12 +91,7 @@ foreach(step IN LISTS STEPS)
     if(MSVC)
         target_compile_options(${step} PRIVATE /W4 /permissive- /utf-8)
     else()
-        # The examples rely on designated initializers zeroing every member they do not name
-        # (C++20 [dcl.init.aggr]: an omitted member is initialized from its default member
-        # initializer or from {}), e.g. VmaAllocatorCreateInfo{ .physicalDevice = ..., .device = ... }.
-        # GCC 14 and Clang 18 -Wextra report each omitted member of such a struct, which is the
-        # style itself, not a bug (MSVC /W4 has no such warning).
-        target_compile_options(${step} PRIVATE -Wall -Wextra -Wno-missing-field-initializers)
+        target_compile_options(${step} PRIVATE -Wall -Wextra)
     endif()
 endforeach()
 

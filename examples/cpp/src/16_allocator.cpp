@@ -328,19 +328,26 @@ try {
         .pfnFree     = nullptr,
         .pUserData   = &vmaAllocateCalls,
     };
-    const VmaVulkanFunctions functions{
-        .vkGetInstanceProcAddr = context.getDispatcher()->vkGetInstanceProcAddr,
-        .vkGetDeviceProcAddr   = instance.getDispatcher()->vkGetDeviceProcAddr,
-    };
+    // Only the two loader entry points; VMA fills the null members itself.
+    // Value-initialized, then assigned: which members the struct has depends on VMA's
+    // configuration macros (e.g. the *2KHR and maintenance4 functions), so a designated
+    // initializer that names all of them would not be portable.
+    VmaVulkanFunctions functions{};
+    functions.vkGetInstanceProcAddr = context.getDispatcher()->vkGetInstanceProcAddr;
+    functions.vkGetDeviceProcAddr   = instance.getDispatcher()->vkGetDeviceProcAddr;
     constexpr vk::DeviceSize blockSize = 64ull * 1024 * 1024;
     const VmaAllocatorCreateInfo allocatorInfo{
-        .physicalDevice              = *physicalDevice,
-        .device                      = *device,
-        .preferredLargeHeapBlockSize = blockSize,
-        .pDeviceMemoryCallbacks      = &memoryCallbacks,
-        .pVulkanFunctions            = &functions,
-        .instance                    = *instance,
-        .vulkanApiVersion            = vk::ApiVersion14,
+        .flags                          = 0,
+        .physicalDevice                 = *physicalDevice,
+        .device                         = *device,
+        .preferredLargeHeapBlockSize    = blockSize,
+        .pAllocationCallbacks           = nullptr, // host allocations: VMA's default
+        .pDeviceMemoryCallbacks         = &memoryCallbacks,
+        .pHeapSizeLimit                 = nullptr, // no per-heap limit
+        .pVulkanFunctions               = &functions,
+        .instance                       = *instance,
+        .vulkanApiVersion               = vk::ApiVersion14,
+        .pTypeExternalMemoryHandleTypes = nullptr, // no exportable memory
     };
     VmaAllocator allocator = VK_NULL_HANDLE;
     check(vmaCreateAllocator(&allocatorInfo, &allocator), "vmaCreateAllocator");
@@ -352,8 +359,15 @@ try {
     // manual steps of step 13 in one call.
     std::println("\nAllocator: buffers bound at offsets inside big blocks");
     const VmaAllocationCreateInfo allocationInfo{
-        .usage         = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE,
-        .requiredFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+        .flags          = 0,
+        .usage          = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE,
+        .requiredFlags  = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+        .preferredFlags = 0,
+        .memoryTypeBits = 0, // 0 = any type allowed by the buffer's requirements
+        .pool           = VK_NULL_HANDLE, // VMA's default pools
+        .pUserData      = nullptr,
+        .priority       = 0.0f, // only used with VK_EXT_memory_priority
+        .minAlignment   = 0,
     };
     struct Placed {
         VkBuffer buffer;

@@ -98,7 +98,8 @@ jobs:
       # vcpkg (manifest mode) builds GLFW and VMA here, on the first configure.
       - name: Configure
         working-directory: examples/cpp
-        run: cmake --preset ${{ matrix.preset }}
+        # Warnings are errors in CI (/W4 and -Wall -Wextra), like clippy -D warnings for Rust.
+        run: cmake --preset ${{ matrix.preset }} -DCMAKE_COMPILE_WARNING_AS_ERROR=ON
 
       # Saved right after configure, so a later compile error does not throw the packages away.
       - name: Save vcpkg binary cache
