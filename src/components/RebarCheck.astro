@@ -39,7 +39,8 @@ const vramGiB = (gpu.memory.heaps[0]!.size / (1024 * MiB)).toFixed(1);
 				<li>NVIDIA Control Panel → System Information → строка Resizable BAR;</li>
 				<li>
 					<code>vulkaninfo</code>, раздел memory heaps: куча, у которой есть тип DEVICE_LOCAL | HOST_VISIBLE, при выключенном
-					ReBAR около 256 MiB (здесь {barMiB} MiB доступно), при включённом — примерно размером с VRAM.
+					ReBAR около 256 MiB (здесь {barMiB} MiB доступно); при включённом память DEVICE_LOCAL | HOST_VISIBLE должна
+					покрыть примерно всю VRAM, хотя драйвер может показать её иначе (например, как тип на самой куче VRAM).
 				</li>
 			</ul>
 			<p>
@@ -48,8 +49,9 @@ const vramGiB = (gpu.memory.heaps[0]!.size / (1024 * MiB)).toFixed(1);
 			</p>
 			<p>
 				Данные этих интерактивов — настоящий снимок машины курса <b>с выключенным ReBAR</b> (куча {barHeap}: {barMiB} MiB при{' '}
-				{vramGiB} GiB VRAM). С включённым ReBAR цифры другие: куча должна вырасти примерно до размера VRAM. Этот вариант
-				ещё не измерен, поэтому здесь он описан только словами.
+				{vramGiB} GiB VRAM). С включённым ReBAR цифры другие: видимая CPU часть VRAM должна вырасти примерно до размера
+				всей VRAM — либо как большая куча {barHeap}, либо как HOST_VISIBLE-тип на другой куче; решает драйвер. Это
+				состояние ещё не измерено, поэтому здесь оно только описано словами, а не показано.
 			</p>
 		</Aside>
 	) : (

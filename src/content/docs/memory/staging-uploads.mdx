@@ -132,6 +132,7 @@ The whole ladder of who makes what available and visible, for this module's uplo
 | CPU writes to `HOST_COHERENT` memory | the writes, in the host domain (by themselves) | (nothing yet) |
 | `vkFlushMappedMemoryRanges` | CPU writes to non-coherent memory, in the host domain (ranges rounded to `nonCoherentAtomSize`) | (nothing yet) |
 | a queue submission | host writes made before it, host domain → device domain | all device accesses of that submission and later |
+| an event for host writes made *after* a submit: `vkSetEvent` on the host → `vkCmdWaitEvents2` with source `HOST` / `HOST_WRITE` | host writes before `vkSetEvent`, host domain → device domain | the accesses of the wait's destination scope |
 | fence signal | all device writes before it | **nothing** |
 | pipeline barrier | the writes of its source access scope | the accesses of its destination access scope |
 | semaphore signal → wait | all device writes before the signal (within the signal's stage mask) | all device accesses after the wait (within the wait's stage mask) |
