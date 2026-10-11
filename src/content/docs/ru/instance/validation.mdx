@@ -72,8 +72,8 @@ import Step from '../../../../components/Step.astro';
 Слой вызывает эту функцию и передаёт **уровень важности** (severity: verbose, info, warning, error), **тип** (general — общее,
 validation — нарушение правил, performance — совет по скорости) и текст сообщения. Приложение всегда должно возвращать
 `false`: значение `true` зарезервировано для разработки самих слоёв. Слой вызывает функцию через C ABI Vulkan
-(`VKAPI_CALL`), поэтому в Rust у неё соглашение вызова `extern "system"`, а в C++ из неё не должно вылететь ни одно
-исключение: раскрутка стека через кадры слоя недопустима.
+(`VKAPI_CALL`), поэтому в Rust у неё соглашение о вызовах `extern "system"`, а в C++ из неё не должно вылететь ни одно
+исключение: раскрутка стека через код слоя недопустима.
 
 ### 3. Что мы хотим слышать
 
@@ -88,7 +88,7 @@ validation — нарушение правил, performance — совет по 
 
 Здесь проблема курицы и яйца: messenger создаётся *из* instance — кто же тогда сообщит о проблемах внутри
 `vkCreateInstance` и `vkDestroyInstance`? Ответ — цепочка `pNext` из [карты объектов](lesson:object-map): мы вешаем ту
-же самую create info messenger-а на create info instance, и слой пользуется ею ровно для этих двух вызовов. В Rust это
+же самую create info для messenger на create info instance, и слой пользуется ею ровно для этих двух вызовов. В Rust это
 делает `.push(...)`, в C++ — `vk::StructureChain`.
 
 <Step file="02_validation" region="create-messenger" />
@@ -169,7 +169,7 @@ The Vulkan spec states: All child objects that were created with instance or wit
 			ref: '#слой-валидации',
 		},
 		{
-			q: 'Зачем create info messenger-а вешают ещё и на create info instance?',
+			q: 'Зачем create info для messenger вешают ещё и на create info instance?',
 			options: [
 				{
 					text: 'Чтобы проверялись vkCreateInstance и vkDestroyInstance',
@@ -185,7 +185,7 @@ The Vulkan spec states: All child objects that were created with instance or wit
 				},
 				{
 					text: 'Потому что именно так включается слой валидации',
-					why: 'Слой включается по имени в списке слоёв, ppEnabledLayerNames. Структура messenger-а его не включает.',
+					why: 'Слой включается по имени в списке слоёв, ppEnabledLayerNames. Структура для messenger его не включает.',
 				},
 			],
 			answer: 0,

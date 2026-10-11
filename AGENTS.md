@@ -102,7 +102,7 @@ shader objects, mesh shaders, ray tracing, tile-based mobile GPUs. Capstone: min
 
 ## State (2026-10-10)
 
-- Engine: `github:ssoj13/course-kit#v0.3.3` (public). Bump the tag in package.json for engine changes.
+- Engine: `github:ssoj13/course-kit#v0.3.4` (public). Bump the tag in package.json for engine changes.
 - examples 01-05 in Rust (ash git master, Vulkan 1.4) and C++ (vk::raii, ApiVersion14, C++23 for std::print):
   built and run on RTX 3080 Ti; reviewed by two independent reviewers (code vs spec, lesson facts) and fixed.
   Rust and C++ print identical output except handle addresses (verified 2026-10-10 by diffing real runs; before that
