@@ -220,23 +220,43 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
   (shader-module -> pipeline: destroying the module leaves the pipeline valid, spec of vkDestroyShaderModule).
   ObjectGraph.astro draws a parent that is outside the scope through the in-scope objects that are a kind of it (`isA`).
 
+- examples 10-12 (module 7, 2026-10-11): 10_frames_in_flight (per-slot cmd/fence/acquire semaphore, render_finished per
+  image; --frames/--cpu-ms/--draws/--seconds), 11_resize, 12_timeline; CMake STEPS/WINDOW_STEPS include 11, 12.
+  Measured 10 (validation on, 4 s, default 2 ms CPU + 5000 instances, shared machine): Rust/C++ 1 frame 217/217 fps,
+  fence wait 1.87/1.92 ms/frame (40-42% of the time); 2 frames 389/419 fps, 0.05 ms; 3 frames 393/395 fps, 0.05-0.06 ms.
+  12: timeline counter replaces fences (frame n signals n at ALL_COMMANDS; host waits n - frames); binary
+  image_available/render_finished for acquire/present (VUID-vkAcquireNextImageKHR-semaphore-03265,
+  VUID-vkQueuePresentKHR-pWaitSemaphores-03267); one offscreen 400x300 B8G8R8A8_SRGB image (memory type 1, DEVICE_LOCAL),
+  NEAREST blit to the swapchain; acquire semaphore waited at BLIT, render_finished signaled at BLIT; region `barriers` =
+  4 sync2 barriers (offscreen UNDEFINED->COLOR_ATTACHMENT src BLIT/NONE = WAR on the previous frame's blit read).
+  Sync validation proven live: removing that src BLIT gives "WRITE_AFTER_READ hazard ... vkCmdPipelineBarrier2 writes to
+  VkImage ..., which was previously read by vkCmdBlitImage2" (lesson material). Swapchain usage is TRANSFER_DST +
+  COLOR_ATTACHMENT: with TRANSFER_DST only, VK_LAYER_bandicam_helper creates views/framebuffers on the swapchain images
+  and validation reports VUID-VkImageViewCreateInfo-image-04441 + VUID-VkFramebufferCreateInfo-pAttachments-00877
+  (gone with VK_LAYER_bandicam_helper_DEBUG_1=1, the layer's disable_environment; VK_LOADER_LAYERS_DISABLE did not
+  disable it). Counter values after the host wait are `[timing]` (frame 3 waits for 1, reads 2).
+  11: VK_KHR_swapchain_maintenance1 (+ instance VK_KHR_surface_maintenance1 + VK_KHR_get_surface_capabilities2) is used
+  on the dev GPU: present fence per slot, waited with a 1 s timeout (spec silent on fences of a present that returned
+  OUT_OF_DATE; timeout -> vkDeviceWaitIdle, fence abandoned until exit - never triggered in runs); retired chain destroyed
+  once frame >= retired_at + FRAMES - 1 has waited its slot's present fence. `--no-present-fences` = vkDeviceWaitIdle
+  before each recreation. `--demo-resize`: 1 s 1000x700, 2 s 640x480, 3 s minimize, 4 s restore; 3 recreations in every
+  run, all triggered by resize events (no OUT_OF_DATE/SUBOPTIMAL was returned on this machine in these runs). winit
+  delivers a stale Resized (2564x984) right after creation, so 11 compares the window's current inner_size with the
+  swapchain extent. VUID for the 0x0 surface: VUID-VkSwapchainCreateInfoKHR-imageExtent-01689. Run with --seconds
+  closing the window itself; no `sync:vuids` run yet for the VUIDs named in examples (they are in code comments only).
+
 ## TODO
 
-- [ ] RESUME module 7 (paused 2026-10-11 by operator order; WIP commit 7b36597, not pushed):
-  - 10_frames_in_flight: written in both languages, Rust built+ran, C++ built (/W4) but never run. Flags --frames
-    1|2|3, --cpu-ms (2), --draws (5000), --seconds; timing lines start with `[timing]` (drop them to diff Rust/C++).
-    Measured (Rust): 1 frame 167 fps, fence wait 1.691 ms/frame (28%); 2 frames 281 fps, 0.089 ms; 3 frames 306 fps.
-    Next: fmt + clippy via buildlock, full run with VK_KHRONOS_VALIDATION_VALIDATE_SYNC=1, C++ run + diff, screenshot.
-  - 12_timeline (stub file only): one timeline semaphore (frame n signals n at ALL_COMMANDS, host vkWaitSemaphores
-    n - framesInFlight); acquire/present stay binary (VUID-vkAcquireNextImageKHR-semaphore-03265,
-    VUID-vkQueuePresentKHR-pWaitSemaphores-03267); offscreen 400x300 color image blitted to the swapchain (TRANSFER_DST
-    usage), region `barriers` with the exact sync2 transitions.
-  - 11_resize (stub file only): recreate on OUT_OF_DATE/SUBOPTIMAL/size change with oldSwapchain; present fences
-    (VK_KHR_swapchain_maintenance1 is supported on the dev GPU, plus surface_maintenance1 + get_surface_capabilities2;
-    ash pin has both) — wait on them with a timeout (spec is silent on fences when present returns OUT_OF_DATE);
-    fallback vkDeviceWaitIdle; minimized → wait for non-zero extent; --demo-resize + --seconds.
-  - Then: CMakeLists (add 11, 12), READMEs, AGENTS State note, reviews, lessons EN/RU for module 7.
-  - Step numbering: 10-12 are taken by module 7, so module 8+ examples shift (12_vertex_buffer → 13_...).
+- [x] Module 7 examples 10-12 (2026-10-11; resumed from WIP 7b36597): fmt + clippy -D warnings, C++ /W4 clean, run on
+  the RTX 3080 Ti with VK_KHRONOS_VALIDATION_VALIDATE_SYNC=true: zero messages except the bandicam API-version warning;
+  stdout identical Rust vs C++ without `[timing]` lines (10: --frames 1/2/3; 11: both present paths; 12: --frames 1/2/3).
+  Details in State "examples 10-12". Logs: scratchpad m7/ (session-local).
+- [ ] Screenshots of 10/11/12: NOT taken. On 2026-10-11 ~03:00 every Vulkan window (also step 09, which worked on 10-10)
+  showed a white client area in GDI/PrintWindow/MCP captures and in a full-screen capture; retake when the desktop shows
+  them again (`examples/screenshots/{10_frames_in_flight,11_resize,12_timeline}.png`, 11 after --demo-resize).
+- [ ] Module 7: reviews of 10-12 (code vs spec), lessons EN/RU (fences-and-semaphores, frames-in-flight,
+  barriers-and-layouts, timeline-semaphores, swapchain-recreation), embed queue-sync lab.
+- Step numbering: 10-12 = module 7, so module 8+ examples shift by one vs the course plan (12_vertex_buffer -> 13_...).
 
 - [x] Stage 1: course-kit engine; [x] site on the kit; [x] examples 01-05 both languages; [x] lessons 1-10
 - [x] ObjectGraph map + build modes; [x] two reviewers, findings fixed; [x] CI (tests, clippy/fmt, Pages)

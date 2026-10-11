@@ -48,13 +48,19 @@ cargo run --bin 01_instance
 | `07_swapchain` | Device with `VK_KHR_swapchain`; choose format, present mode, extent, image count; swapchain and image views |
 | `08_pipeline` | Slang shaders as SPIR-V, shader module, empty pipeline layout, graphics pipeline with dynamic rendering |
 | `09_triangle` | Command pool and buffer, fence + semaphores, the frame loop (acquire, record, submit, present): the first triangle |
+| `10_frames_in_flight` | One command buffer, fence and acquire semaphore per frame in flight (`--frames 1\|2\|3`); simulated CPU/GPU work (`--cpu-ms`, `--draws`) and fence-wait statistics |
+| `11_resize` | Resizable window: swapchain recreation on resize / OUT_OF_DATE / SUBOPTIMAL with `oldSwapchain`, present fences (`VK_KHR_swapchain_maintenance1`) and a retire list, or `--no-present-fences` (vkDeviceWaitIdle); minimized = paused; `--demo-resize` |
+| `12_timeline` | One timeline semaphore instead of the fences; binary semaphores stay for acquire/present; offscreen 400x300 image blitted to the swapchain with four exact sync2 barriers |
 
-Steps 06-09 keep their window open until you close it. The window has a fixed size:
-resizing (and minimizing, which makes the swapchain out of date) needs swapchain
-recreation, which is module 7 - step 09 stops cleanly with a message instead.
+Steps 06-12 keep their window open until you close it; steps 10-12 also take
+`--seconds S` to close it after S seconds. Lines that depend on timing start with
+`[timing]` (drop them to compare the Rust and C++ output). Steps 06-10 and 12 have a
+fixed-size window: resizing (and minimizing, which makes the swapchain out of date)
+needs swapchain recreation, which is step 11 - the others stop cleanly with a message.
+Module 8 (memory) continues at step 13.
 
 ![Step 09](../screenshots/09_triangle.png)
 
-The debug messenger in steps 02-09 reports only `[WARNING]` and `[ERROR]`.
+The debug messenger in steps 02-12 reports only `[WARNING]` and `[ERROR]`.
 A warning from a third-party implicit layer (screen recorders, overlays) is
 not about our code: implicit layers are explained in the loader lesson.

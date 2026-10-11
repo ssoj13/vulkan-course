@@ -44,13 +44,18 @@ as `SHADER_DIR` by CMake), the same file the Rust examples embed. It is compiled
 | 07 | `src/07_swapchain.cpp` | `VK_KHR_swapchain` device; format, present mode, extent, image count; `SwapchainKHR`, `ImageView`s |
 | 08 | `src/08_pipeline.cpp` | SPIR-V from Slang, `ShaderModule`, empty `PipelineLayout`, graphics `Pipeline` with dynamic rendering |
 | 09 | `src/09_triangle.cpp` | `CommandPool`/`CommandBuffer`, fence + semaphores, the frame loop (acquire, record, submit, present): the first triangle |
+| 10 | `src/10_frames_in_flight.cpp` | per-frame command buffer, fence and acquire semaphore (`--frames 1\|2\|3`); simulated CPU/GPU work (`--cpu-ms`, `--draws`), fence-wait statistics |
+| 11 | `src/11_resize.cpp` | resizable window; swapchain recreation (`oldSwapchain`) on resize / OUT_OF_DATE / SUBOPTIMAL; present fences (`VK_KHR_swapchain_maintenance1`) + retire list, or `--no-present-fences`; minimized = paused; `--demo-resize` |
+| 12 | `src/12_timeline.cpp` | timeline semaphore instead of fences; binary acquire/present semaphores; offscreen 400x300 image blitted to the swapchain with exact sync2 barriers |
 
 Lessons embed code by `// #region <name>` ... `// #endregion` markers; the names
 match the Rust examples.
 
-Steps 06-09 keep their window open until you close it. The window has a fixed size:
-resizing (and minimizing, which makes the swapchain out of date) needs swapchain
-recreation, which is module 7 - step 09 stops cleanly with a message instead.
+Steps 06-12 keep their window open until you close it; steps 10-12 also take
+`--seconds S`. Lines that depend on timing start with `[timing]` (drop them to compare
+with the Rust output). Steps 06-10 and 12 have a fixed-size window: resizing (and
+minimizing, which makes the swapchain out of date) needs swapchain recreation, which is
+step 11 - the others stop cleanly with a message. Module 8 (memory) continues at step 13.
 Short enum names (`B8G8R8A8_SRGB`, `MAILBOX`) come from the SDK's `vk_enum_string_helper.h`,
 so both languages print identical output.
 
