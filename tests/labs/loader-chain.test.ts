@@ -3,7 +3,7 @@ import { TEXT } from '../../src/components/labs/loader-chain.text';
 import { CALLS, IMPLICIT_LAYERS, VALIDATION, activeLayers, implicitActive, layerNode, trace, type Setup } from '../../src/lib/labs/loader-chain';
 import { textErrors } from '../../src/lib/text';
 
-const base: Setup = { call: 'vkCreateInstance', env: new Set(), validation: true, second: false, gpu: 'nvidia', via: 'gdpa' };
+const base: Setup = { call: 'vkCreateInstance', env: new Map(), validation: true, second: false, gpu: 'nvidia', via: 'gdpa' };
 const run = (patch: Partial<Setup>) => trace({ ...base, ...patch });
 const names = (p: Partial<Setup>) => activeLayers({ ...base, ...p }).map((l) => l.name);
 
@@ -25,15 +25,24 @@ describe('implicit layers (manifests of the course machine)', () => {
 	});
 	test('a layer with an enable variable joins only when it is set', () => {
 		const rd = IMPLICIT_LAYERS.find((l) => l.name === 'VK_LAYER_RENDERDOC_Capture')!;
-		expect(implicitActive(rd, new Set())).toBe(false);
-		expect(implicitActive(rd, new Set([rd.enableEnv!]))).toBe(true);
+		const on = new Map([[rd.enableEnv!.name, '1']]);
+		expect(rd.enableEnv!.value).toBe('1');
+		expect(implicitActive(rd, new Map())).toBe(false);
+		expect(implicitActive(rd, on)).toBe(true);
 		// Discovery order: RenderDoc's manifest comes between the driver's layers and Bandicam's.
-		expect(names({ env: new Set([rd.enableEnv!]) })[2]).toBe(rd.name);
+		expect(names({ env: on })[2]).toBe(rd.name);
 	});
-	test('the disable variable wins, even over a set enable variable', () => {
+	test('the enable variable must hold the manifest value exactly (loader.c compares with strcmp)', () => {
+		for (const l of IMPLICIT_LAYERS.filter((l) => l.enableEnv)) {
+			expect(implicitActive(l, new Map([[l.enableEnv!.name, 'true']]))).toBe(false);
+			expect(implicitActive(l, new Map([[l.enableEnv!.name, '1 ']]))).toBe(false);
+			expect(implicitActive(l, new Map([[l.enableEnv!.name, l.enableEnv!.value]]))).toBe(true);
+		}
+	});
+	test('the disable variable wins with any value, even over a matching enable variable', () => {
 		const rd = IMPLICIT_LAYERS.find((l) => l.enableEnv)!;
-		expect(implicitActive(rd, new Set([rd.enableEnv!, rd.disableEnv]))).toBe(false);
-		expect(names({ env: new Set(['DISABLE_LAYER_NV_OPTIMUS_1']) })).not.toContain('VK_LAYER_NV_optimus');
+		expect(implicitActive(rd, new Map([[rd.enableEnv!.name, '1'], [rd.disableEnv, 'yes']]))).toBe(false);
+		expect(names({ env: new Map([['DISABLE_LAYER_NV_OPTIMUS_1', '0']]) })).not.toContain('VK_LAYER_NV_optimus');
 	});
 	test('the explicit layer comes after the implicit ones, and only when the app enables it', () => {
 		expect(names({}).at(-1)).toBe(VALIDATION);
@@ -77,10 +86,27 @@ describe('call paths (Vulkan-Loader docs)', () => {
 		expect(tr.path.has('icd:nvidia')).toBe(true);
 		expect(tr.icds).toEqual(['nvidia']);
 	});
-	test('with no layers at all the trampoline hands straight to the terminator', () => {
-		const env = new Set(['DISABLE_LAYER_NV_OPTIMUS_1', 'DISABLE_LAYER_NV_PRESENT_1', 'VK_LAYER_bandicam_helper_DEBUG_1']);
-		const tr = run({ call: 'vkEnumeratePhysicalDevices', env, validation: false });
+	const bare = new Map(['DISABLE_LAYER_NV_OPTIMUS_1', 'DISABLE_LAYER_NV_PRESENT_1', 'VK_LAYER_bandicam_helper_DEBUG_1'].map((n) => [n, '1']));
+	test('with no layers at all the trampoline hands an instance call straight to the terminator', () => {
+		const tr = run({ call: 'vkEnumeratePhysicalDevices', env: bare, validation: false });
 		expect(tr.layers).toEqual([]);
 		expect(tr.hops.map((h) => h.at[0])).toEqual(['app', 'trampoline', 'terminator', 'icd:nvidia', 'app']);
+	});
+	test('with no layers a device call goes from the trampoline, or the program itself, straight into the driver', () => {
+		const exp = run({ call: 'vkQueueSubmit', env: bare, validation: false, via: 'export' });
+		expect(exp.hops.map((h) => [h.at[0], h.key])).toEqual([
+			['app', 'capAppSubmitExport'],
+			['trampoline', 'capTrampDeviceDirect'],
+			['icd:nvidia', 'capIcdSubmitTramp'],
+			['app', 'capReturn'],
+		]);
+		const gdpa = run({ call: 'vkQueueSubmit', env: bare, validation: false, via: 'gdpa' });
+		expect(gdpa.hops.map((h) => [h.at[0], h.key])).toEqual([
+			['app', 'capAppSubmitGdpaDirect'],
+			['icd:nvidia', 'capIcdSubmitDirect'],
+			['app', 'capReturn'],
+		]);
+		// No caption of a layer-less device call talks about a layer.
+		for (const h of [...exp.hops, ...gdpa.hops]) expect(TEXT.en[h.key]).not.toMatch(/layer calls|first layer/);
 	});
 });

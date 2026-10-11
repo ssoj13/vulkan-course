@@ -53,9 +53,11 @@ any Vulkan program is exactly what `vulkaninfo` will show after the switch - rec
 
 ## Course decision after switching
 
-The labs currently teach with ReBAR off (the small BAR window is the common case on older systems and the clearer
-lesson). After switching, either keep the ReBAR-off snapshot as the main data and add the ReBAR-on one as a second
-profile in `memory-path`/`buffer-memory`, or switch the labs to the new data and mention the old one in the text.
+Decided (2026-10-10): the course teaches ReBAR OFF vs ON as a common misconfiguration the reader should check on their
+own machine (it was off here and nobody noticed until a glitch). `src/data/gpu.json` stays the measured ReBAR-off
+snapshot; the memory labs and the gpu lesson explain both states and how to check. After enabling ReBAR, capture a
+second snapshot (ReBAR on) and let the memory labs switch between the two measured profiles; until then the ON state is
+described qualitatively, never with invented numbers.
 
 ## Undo
 

@@ -13,9 +13,10 @@
  * - A semaphore wait's second scope: every command of its batch and all commands later in submission order on that
  *   queue, limited by its stageMask and the logically later stages ("its second synchronization scope only includes
  *   execution of the pipeline stages specified in that mask and any logically later stages").
- * - Binary semaphores pair 1:1 (a wait unsignals); the signal must already be submitted when the wait is
- *   (VUID-vkQueueSubmit2-semaphore-03873). A timeline wait for v is satisfied by any signal of a value >= v, and may be
- *   submitted before that signal.
+ * - Binary semaphores pair 1:1 (a wait unsignals); the signal, and every signal it depends on, must already be submitted
+ *   when the wait is (VUID-vkQueueSubmit2-semaphore-03873). A timeline wait for v may take ANY signal of a value >= v
+ *   that is not ordered after the wait ("Semaphore Waiting"), and may be submitted before that signal; the checker is
+ *   conservative and orders the wait after a node only when every such candidate is.
  * - A fence signal's first scope: the batches of its vkQueueSubmit2 call and all commands earlier in submission order.
  * - Host write ordering: a submission happens after everything the host did before the call.
  * Valid-usage ids per issue kind are in ISSUE_VUID; their texts come from `vuid()` (src/lib/vuids.ts).
@@ -298,6 +299,7 @@ export function scenarioErrors(sc: Scenario): string[] {
 export type IssueKind =
 	| 'race'
 	| 'binaryNoSignal'
+	| 'binaryDepUnsubmitted'
 	| 'binarySignaled'
 	| 'timelineNotIncreasing'
 	| 'timelineSameBatch'
@@ -312,6 +314,7 @@ export type IssueKind =
 /** The valid-usage rule each issue kind breaks; races and deadlocks break none (every call is valid on its own). */
 export const ISSUE_VUID: Readonly<Partial<Record<IssueKind, string>>> = {
 	binaryNoSignal: 'VUID-vkQueueSubmit2-semaphore-03873',
+	binaryDepUnsubmitted: 'VUID-vkQueueSubmit2-semaphore-03873',
 	binarySignaled: 'VUID-vkQueueSubmit2-semaphore-03868',
 	timelineNotIncreasing: 'VUID-VkSubmitInfo2-semaphore-03882',
 	timelineSameBatch: 'VUID-VkSubmitInfo2-semaphore-03881',
@@ -367,6 +370,44 @@ export function pairBinary(sc: Scenario): Map<string, string | null> {
 	return pairs;
 }
 
+/**
+ * The second half of VUID-vkQueueSubmit2-semaphore-03873: "any semaphore signal operations on which it depends must have
+ * also been submitted". The signals of submit `j` depend on the waits of `j` and of every earlier batch of its queue
+ * (their first scope covers those batches). Each such wait needs a signal submitted before host op `at` whose own
+ * dependencies are submitted too (a binary wait: its paired signal; a timeline wait: any signal of a value >= the
+ * wait's). Returns the semaphore of the first wait that nothing submitted before `at` can satisfy, or null.
+ */
+export function unsubmittedDep(sc: Scenario, pairs: Map<string, string | null>, j: number, at: number): string | null {
+	const ops = sc.ops;
+	const type = new Map(sc.sems.map((s) => [s.id, s.type]));
+	// Submits on the current dependency path: a cycle can never be satisfied. No memo: a result found while a cycle is
+	// cut would be wrong elsewhere, and the scenarios have a handful of ops.
+	const path = new Set<number>([j]);
+	const missing = (b: number): string | null => {
+		const q = (ops[b] as SubmitOp).queue;
+		for (let e = 0; e <= b; e++) {
+			const op = ops[e]!;
+			if (op.kind !== 'submit' || op.queue !== q) continue;
+			for (const [k, w] of op.waits.entries()) {
+				const srcs =
+					type.get(w.sem) === 'binary'
+						? [pairs.get(key(e, k))].flatMap((p) => (p ? [Number(p.split(':')[0])] : []))
+						: ops.flatMap((o, m) => (o.kind === 'submit' && o.signals.some((s) => s.sem === w.sem && s.value >= w.value) ? [m] : []));
+				if (!srcs.some((m) => m < at && ready(m))) return w.sem;
+			}
+		}
+		return null;
+	};
+	const ready = (m: number): boolean => {
+		if (path.has(m)) return false;
+		path.add(m);
+		const r = missing(m) === null;
+		path.delete(m);
+		return r;
+	};
+	return missing(j);
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // Happens-before graph (the rules, independent of any schedule)
 
@@ -379,6 +420,10 @@ export function pairBinary(sc: Scenario): Map<string, string | null> {
 export class Order {
 	private readonly next = new Map<string, Set<string>>();
 	private readonly memo = new Map<string, Set<string>>();
+	/** Timeline wait node -> the signal nodes that may satisfy it. No candidate left = the wait is never satisfied. */
+	private readonly gates = new Map<string, Set<string>>();
+	/** Candidate signal node -> the timeline waits it may satisfy. */
+	private readonly feeds = new Map<string, string[]>();
 
 	constructor(readonly sc: Scenario) {
 		const ops = sc.ops;
@@ -412,14 +457,11 @@ export class Order {
 					if (p) this.edge(`S:${p}`, `W:${i}:${k}`);
 					return;
 				}
-				// Timeline: the wait is satisfied by the first value >= w.value to arrive. Signal values increase on
-				// execution (VUID-VkSubmitInfo2-semaphore-03882), so every signal up to the smallest value >= w.value
-				// has happened by then.
-				const vals = ops.flatMap((o, j) => (o.kind === 'submit' ? o.signals.flatMap((s, m) => (s.sem === w.sem ? [{ j, m, v: s.value }] : [])) : []));
-				const reached = vals.filter((x) => x.v >= w.value).map((x) => x.v);
-				if (!reached.length) return;
-				const first = Math.min(...reached);
-				for (const x of vals) if (x.v <= first) this.edge(`S:${x.j}:${x.m}`, `W:${i}:${k}`);
+				// Timeline: any signal of a value >= w.value may be the one the wait takes ("If multiple semaphore signal
+				// operations meet these criteria, any of those operations may be included"), so the wait is a gate:
+				// ordered after a node only when EVERY candidate is. Candidates ordered after the wait are dropped below.
+				const cands = submits.flatMap((j) => (ops[j] as SubmitOp).signals.flatMap((s, m) => (s.sem === w.sem && s.value >= w.value ? [`S:${j}:${m}`] : [])));
+				this.gates.set(`W:${i}:${k}`, new Set(cands));
 			});
 		});
 		// Fences: the host wait happens after the latest submission that used the fence since its last reset.
@@ -432,6 +474,20 @@ export class Order {
 				lastUse.delete(op.fence);
 			}
 		});
+		// A candidate must be "not guaranteed to happen-after the semaphore wait operation". Dropping one can only open
+		// more gates, which can expose more such candidates: repeat until stable.
+		for (let changed = true; changed; ) {
+			changed = false;
+			this.reindex();
+			for (const [w, cs] of this.gates) for (const c of [...cs]) if (this.before(w, c)) (cs.delete(c), (changed = true));
+		}
+	}
+
+	/** Rebuilds the signal -> gate index and forgets reachability computed with older candidate sets. */
+	private reindex() {
+		this.memo.clear();
+		this.feeds.clear();
+		for (const [w, cs] of this.gates) for (const c of cs) this.feeds.set(c, [...(this.feeds.get(c) ?? []), w]);
 	}
 
 	private edge(a: string, b: string) {
@@ -440,14 +496,34 @@ export class Order {
 		s.add(b);
 	}
 
+	/** True when a timeline wait that no signal can satisfy covers node n: n never executes (the scheduler reports the hang). */
+	never(n: string): boolean {
+		return [...this.gates].some(([w, cs]) => cs.size === 0 && this.before(w, n));
+	}
+
 	/** True when a happens-before b (a chain of rules leads from a to b). */
 	before(a: string, b: string): boolean {
 		let seen = this.memo.get(a);
 		if (!seen) {
-			seen = new Set();
+			const reached = new Set<string>();
+			const hits = new Map<string, number>();
 			const stack = [a];
-			while (stack.length) for (const n of this.next.get(stack.pop()!) ?? []) if (!seen.has(n)) (seen.add(n), stack.push(n));
-			this.memo.set(a, seen);
+			const reach = (n: string) => {
+				if (!reached.has(n)) (reached.add(n), stack.push(n));
+			};
+			while (stack.length) {
+				const n = stack.pop()!;
+				for (const m of this.next.get(n) ?? []) reach(m);
+				// A timeline wait is reached once every one of its candidate signals is.
+				for (const w of this.feeds.get(n) ?? []) {
+					// The index lags while candidates are being dropped.
+					if (!this.gates.get(w)!.has(n)) continue;
+					const h = (hits.get(w) ?? 0) + 1;
+					hits.set(w, h);
+					if (h === this.gates.get(w)!.size) reach(w);
+				}
+			}
+			this.memo.set(a, (seen = reached));
 		}
 		return seen.has(b);
 	}
@@ -483,7 +559,12 @@ export function staticIssues(sc: Scenario): Issue[] {
 	sc.ops.forEach((op, i) => {
 		if (op.kind !== 'submit') return;
 		op.waits.forEach((w, k) => {
-			if (type.get(w.sem) === 'binary' && pairs.get(key(i, k)) === null) out.push(issue('binaryNoSignal', i, { sem: w.sem }));
+			if (type.get(w.sem) === 'binary') {
+				const p = pairs.get(key(i, k));
+				const dep = p ? unsubmittedDep(sc, pairs, Number(p.split(':')[0]), i) : null;
+				if (!p) out.push(issue('binaryNoSignal', i, { sem: w.sem }));
+				else if (dep !== null) out.push(issue('binaryDepUnsubmitted', i, { sem: w.sem, dep }));
+			}
 			if (!stageSupported(w.stage, op.queue)) out.push(issue('stageUnsupported', i, { sem: w.sem, stage: stageName(w.stage), queue: op.queue, family: queue(op.queue).family }));
 			if (type.get(w.sem) === 'timeline') {
 				const s = op.signals.find((s) => s.sem === w.sem && s.value <= w.value);
@@ -504,7 +585,7 @@ export function staticIssues(sc: Scenario): Issue[] {
 	ts.forEach((a, x) => {
 		for (const b of ts.slice(x + 1)) {
 			if (a.res !== b.res || (!a.write && !b.write) || a.op === b.op) continue;
-			if (ord.before(a.node, b.node) || ord.before(b.node, a.node)) continue;
+			if (ord.before(a.node, b.node) || ord.before(b.node, a.node) || ord.never(a.node) || ord.never(b.node)) continue;
 			out.push(issue('race', b.op, { res: a.res, a: a.write ? 'write' : 'read', b: b.write ? 'write' : 'read', aStage: a.stage, bStage: b.stage }, [a.op]));
 		}
 	});
@@ -787,9 +868,22 @@ export function simulate(sc: Scenario): Run {
 	return { end, segs: merged, events, links, batches: bs.map((b) => b?.run ?? null), issues };
 }
 
-/** Submits with a binary wait that has no signal to pair with (reported once as binaryNoSignal, not again as never running). */
+/**
+ * Submits with a binary wait that breaks VUID 03873: no signal to pair with, or a paired signal that depends on one not
+ * yet submitted (reported once as binaryNoSignal / binaryDepUnsubmitted, not again as never running).
+ */
 function staticBinaryGaps(sc: Scenario, pairs: Map<string, string | null>): number[] {
-	return sc.ops.flatMap((op, i) => (op.kind === 'submit' && op.waits.some((_, k) => pairs.get(key(i, k)) === null) ? [i] : []));
+	const type = new Map(sc.sems.map((s) => [s.id, s.type]));
+	return sc.ops.flatMap((op, i) =>
+		op.kind === 'submit' &&
+		op.waits.some((w, k) => {
+			if (type.get(w.sem) !== 'binary') return false;
+			const p = pairs.get(key(i, k));
+			return !p || unsubmittedDep(sc, pairs, Number(p.split(':')[0]), i) !== null;
+		})
+			? [i]
+			: [],
+	);
 }
 
 // ---------------------------------------------------------------------------------------------------------------

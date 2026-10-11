@@ -47,6 +47,6 @@
     { "slug": "object-builder", "lesson": "logical-device", "title": "Build the object tree", "summary": "Create and destroy Vulkan objects in any order; the simulator answers with the real validation rules." },
     { "slug": "queue-sync", "title": "Queues, semaphores and fences", "summary": "Submit batches to several queues with wait and signal semaphores and a fence: see what overlaps, what waits and where a race appears." },
     { "slug": "graphics-pipeline", "title": "The graphics pipeline", "summary": "Walk the stages from vertex input to color output, and see which state is baked into a pipeline and which is dynamic in Vulkan 1.4." },
-    { "slug": "buffer-memory", "title": "Buffers and memory", "summary": "From buffer usage to memory requirements to a memory type of the real course GPU, and a staging upload through the BAR window." }
+    { "slug": "buffer-memory", "title": "Buffers and memory", "summary": "From buffer usage to memory requirements to a memory type of the real course GPU, and a staging upload or a direct write through the BAR window." }
   ]
 }

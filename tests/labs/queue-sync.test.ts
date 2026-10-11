@@ -97,6 +97,27 @@ describe('(a) upload, then render waiting on a binary semaphore', () => {
 		expect(r.issues).toEqual([]);
 		expect(r.run.batches[1]!.started).toBe(r.run.batches[0]!.done);
 	});
+	test('a binary signal that depends on a wait only a later call can satisfy breaks VUID 03873 too', () => {
+		// The upload waits for tl >= 1, which only the render (submitted after it) signals; the render waits on the upload.
+		const sc = edit('upload', (sc) => {
+			sc.sems.push({ id: 'tl', type: 'timeline' });
+			sub(sc, 0).waits = [{ sem: 'tl', value: 1, stage: 'COPY' }];
+			sub(sc, 1).signals = [{ sem: 'tl', value: 1 }];
+		});
+		expect(vuid(ISSUE_VUID.binaryDepUnsubmitted!)).toContain('any semaphore signal operations on which it depends must have also been submitted');
+		expect(analyze(sc).issues.map((i) => [i.kind, i.op, i.vuid, i.vars])).toEqual([
+			['neverRuns', 0, undefined, { sem: 'tl' }],
+			['binaryDepUnsubmitted', 1, 'VUID-vkQueueSubmit2-semaphore-03873', { sem: 'uploaded', dep: 'tl' }],
+		]);
+	});
+	test('the same dependency is fine when its timeline signal was submitted before the binary wait', () => {
+		const sc = edit('upload', (sc) => {
+			sc.sems.push({ id: 'tl', type: 'timeline' });
+			sub(sc, 0).waits = [{ sem: 'tl', value: 1, stage: 'COPY' }];
+			sc.ops.splice(1, 0, { ...structuredClone(sub(sc, 1)), name: 'gbuffer', cb: 'cbG', waits: [], uses: [], signals: [{ sem: 'tl', value: 1 }] });
+		});
+		expect(analyze(sc).issues).toEqual([]);
+	});
 	test('a binary wait submitted before its signal breaks VUID 03873 and never runs', () => {
 		const sc = edit('upload', (sc) => sc.ops.reverse());
 		const r = analyze(sc);
@@ -180,6 +201,26 @@ describe('(c) async compute joined by a timeline semaphore', () => {
 		const r = analyze(sc);
 		expect(r.issues.map((i) => [i.kind, i.op, i.vuid])).toEqual([['neverRuns', 3, undefined]]);
 		expect(r.run.end).toBeLessThan(MAX_T);
+	});
+	test('a timeline wait may take ANY signal >= its value: a smaller earlier value orders nothing', () => {
+		// The G-buffer pass signals 2, so the particle draw's wait for >= 2 may be satisfied by it alone, before the
+		// first simulation (value 1) has finished: its particle writes race with the draw and the second simulation.
+		const sc = edit('async', (sc) => {
+			sub(sc, 1).signals = [{ sem: 'timeline', value: 2 }];
+			sub(sc, 2).waits[0]!.value = 2;
+			sub(sc, 2).signals[0]!.value = 3;
+			sub(sc, 3).waits[0]!.value = 3;
+			sub(sc, 3).signals[0]!.value = 4;
+		});
+		const r = analyze(sc).issues;
+		expect(r.map((i) => [i.kind, i.others[0], i.op, i.vars.res])).toEqual([
+			['race', 0, 2, 'particles'],
+			['race', 0, 3, 'particles'],
+		]);
+	});
+	test('signals ordered after the wait are not candidates for it', () => {
+		// Value 3 of the second simulation also satisfies ">= 1", but it depends on the draw that waits: no race.
+		expect(analyze(PRESETS.async).issues).toEqual([]);
 	});
 	test('a timeline signal must increase the value (VUID-VkSubmitInfo2-semaphore-03882)', () => {
 		const sc = edit('async', (sc) => (sub(sc, 3).signals[0]!.value = 2));

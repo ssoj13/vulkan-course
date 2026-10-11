@@ -12,7 +12,7 @@ import { fmt } from 'course-kit/i18n.mjs';
 
 const v = courseIn(langOf(Astro.url.pathname));
 const t = pick(TEXT, v.lang, 'loader-chain');
-const env = new Set<string>();
+const env = new Map<string, string>();
 const chain = activeLayers({ env, validation: true }).map((l) => l.name).join(', ');
 const paths = CALLS.map((call) => {
 	const tr = trace({ call, env, validation: true, second: false, gpu: 'nvidia', via: 'gdpa' });

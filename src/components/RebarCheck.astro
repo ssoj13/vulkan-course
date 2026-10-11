@@ -1,0 +1,87 @@
+---
+/**
+ * "Check your machine: is Resizable BAR on?" aside, shared by the memory labs (memory-path, buffer-memory) in both
+ * languages so the facts live in one place. The course data (src/data/gpu.json) is a measured ReBAR-OFF snapshot; the
+ * ON state is not measured yet, so it is described without numbers (see REBAR.md).
+ */
+import { Aside } from '@astrojs/starlight/components';
+import gpu from '../data/gpu.json';
+import { courseIn, langOf } from 'course-kit/lib/course.ts';
+
+const v = courseIn(langOf(Astro.url.pathname));
+const MiB = 1024 * 1024;
+// The heap that is both DEVICE_LOCAL and reachable by a HOST_VISIBLE type: the BAR window as Vulkan reports it.
+const barHeap = gpu.memory.heaps.findIndex(
+	(h, i) =>
+		h.flags.includes('VK_MEMORY_HEAP_DEVICE_LOCAL_BIT') &&
+		gpu.memory.types.some((t) => t.heapIndex === i && t.propertyFlags.includes('VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT')),
+);
+const barMiB = Math.floor(gpu.memory.heaps[barHeap]!.size / MiB);
+// Heap 0 is the VRAM heap; printed in GiB like vulkaninfo (11.8 GiB on the 12 GB card).
+const vramGiB = (gpu.memory.heaps[0]!.size / (1024 * MiB)).toFixed(1);
+---
+
+{
+	v.lang === 'ru' ? (
+		<Aside type="caution" title="Проверьте свою машину: включён ли Resizable BAR?">
+			<p>
+				CPU видит память видеокарты через окно на шине PCIe — BAR. Без <b>Resizable BAR</b> (ReBAR) это окно всего
+				256 MiB; с ReBAR оно растёт до размера всей VRAM. Выключен ReBAR очень часто, и никто этого не замечает: в BIOS
+				по умолчанию выключены «Above 4G Decoding» и/или «Re-Size BAR Support», или включён CSM (legacy-загрузка). Нужны
+				ещё поддержка со стороны VBIOS видеокарты, драйвер NVIDIA не старше 465.89 для RTX 30 и подходящий процессор
+				(AMD Zen 3 или Intel 10-го поколения и новее).
+			</p>
+			<p>Как проверить:</p>
+			<ul>
+				<li>
+					<code>nvidia-smi -q -d MEMORY</code>: если в разделе BAR1 <code>Total</code> равен 256 MiB, ReBAR выключен;
+				</li>
+				<li>NVIDIA Control Panel → System Information → строка Resizable BAR;</li>
+				<li>
+					<code>vulkaninfo</code>, раздел memory heaps: куча, у которой есть тип DEVICE_LOCAL | HOST_VISIBLE, при выключенном
+					ReBAR около 256 MiB (здесь {barMiB} MiB доступно), при включённом — примерно размером с VRAM.
+				</li>
+			</ul>
+			<p>
+				Что это меняет в Vulkan: через эту кучу CPU пишет прямо в VRAM (vkMapMemory и memcpy), без staging-буфера и
+				копирования. Пока окно 256 MiB, большие загрузки идут через staging; с ReBAR туда помещаются и крупные буферы.
+			</p>
+			<p>
+				Данные этих лаб — настоящий снимок машины курса <b>с выключенным ReBAR</b> (куча {barHeap}: {barMiB} MiB при{' '}
+				{vramGiB} GiB VRAM). С включённым ReBAR цифры другие: куча должна вырасти примерно до размера VRAM. Этот вариант
+				ещё не измерен, поэтому здесь он описан только словами.
+			</p>
+		</Aside>
+	) : (
+		<Aside type="caution" title="Check your machine: is Resizable BAR on?">
+			<p>
+				The CPU sees the card's memory through a window on the PCIe bus, the BAR. Without <b>Resizable BAR</b> (ReBAR) that
+				window is 256 MiB; with ReBAR it grows to the whole VRAM. ReBAR is off surprisingly often, and nobody notices:
+				BIOS defaults leave "Above 4G Decoding" and/or "Re-Size BAR Support" off, or CSM (legacy boot) on. It also needs
+				a GPU VBIOS that supports it, an NVIDIA driver 465.89 or newer for the RTX 30 series, and a supported CPU (AMD Zen
+				3 or Intel 10th gen and newer).
+			</p>
+			<p>How to check:</p>
+			<ul>
+				<li>
+					<code>nvidia-smi -q -d MEMORY</code>: a BAR1 <code>Total</code> of 256 MiB means ReBAR is off;
+				</li>
+				<li>NVIDIA Control Panel → System Information → the Resizable BAR line;</li>
+				<li>
+					<code>vulkaninfo</code>, memory heaps: the heap that has a DEVICE_LOCAL | HOST_VISIBLE type is about 256 MiB with
+					ReBAR off ({barMiB} MiB usable here) and roughly the size of VRAM with it on.
+				</li>
+			</ul>
+			<p>
+				What it changes for Vulkan: through that heap the CPU writes straight into VRAM (vkMapMemory and memcpy), with
+				no staging buffer and no copy. While the window is 256 MiB, large uploads go through staging; with ReBAR large
+				buffers fit there too.
+			</p>
+			<p>
+				The data in these labs is a real snapshot of the course machine <b>with ReBAR off</b> (heap {barHeap}: {barMiB}{' '}
+				MiB next to {vramGiB} GiB of VRAM). With ReBAR on the numbers differ: the heap should grow to about the size of
+				VRAM. That state has not been measured yet, so it is only described here, not shown.
+			</p>
+		</Aside>
+	)
+}

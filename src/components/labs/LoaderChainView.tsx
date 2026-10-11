@@ -28,7 +28,7 @@ import { pick } from '../../lib/text';
 import { TEXT } from './loader-chain.text';
 import './loader-chain.css';
 
-const INITIAL: Setup = { call: 'vkCreateInstance', env: new Set(), validation: true, second: false, gpu: 'nvidia', via: 'gdpa' };
+const INITIAL: Setup = { call: 'vkCreateInstance', env: new Map(), validation: true, second: false, gpu: 'nvidia', via: 'gdpa' };
 
 export default function LoaderChainView({ lang }: { lang: string }) {
 	const t = pick(TEXT, lang, 'loader-chain');
@@ -41,10 +41,11 @@ export default function LoaderChainView({ lang }: { lang: string }) {
 		setSetup((s) => ({ ...s, ...patch }));
 		tl.reset();
 	};
-	const toggleEnv = (name: string) => {
-		const env = new Set(setup.env);
-		if (env.has(name)) env.delete(name);
-		else env.add(name);
+	/** Sets a variable to a value; an empty value unsets it. */
+	const setEnv = (name: string, value: string) => {
+		const env = new Map(setup.env);
+		if (value) env.set(name, value);
+		else env.delete(name);
 		change({ env });
 	};
 	const reset = () => {
@@ -120,7 +121,7 @@ export default function LoaderChainView({ lang }: { lang: string }) {
 						<b>{t.trampoline}</b> <span className="lc-sub">{t.trampolineSub}</span>
 						{off('trampoline')}
 					</li>
-					{tr.layers.length === 0 && <li className="lc-note">{t.noLayers}</li>}
+					{tr.layers.length === 0 && <li className="lc-note">{level !== 'device' ? t.noLayers : setup.via === 'export' ? t.noLayersDevice : t.noLayersGdpa}</li>}
 					{tr.layers.map((l) => (
 						<li key={l.name} className={`${cls(layerNode(l.name))} is-layer is-${l.kind}`}>
 							<code>{l.name}</code> <span className="lc-tag">{l.kind === 'implicit' ? t.implicit : t.explicit}</span>
@@ -161,10 +162,25 @@ export default function LoaderChainView({ lang }: { lang: string }) {
 						<tbody>
 							{IMPLICIT_LAYERS.map((l) => {
 								const on = implicitActive(l, setup.env);
+								// A disable variable counts with any value, so a checkbox (sets "1") is enough.
 								const box = (name: string) => (
 									<label className="lc-var">
-										<input type="checkbox" checked={setup.env.has(name)} onChange={() => toggleEnv(name)} aria-label={fmt(t.setVar, { name })} />
+										<input type="checkbox" checked={setup.env.has(name)} onChange={(e) => setEnv(name, e.currentTarget.checked ? '1' : '')} aria-label={fmt(t.setVar, { name })} />
 										<code>{name}</code>
+									</label>
+								);
+								// An enable variable must match the manifest's value, so the reader types the value.
+								const field = ({ name, value }: { name: string; value: string }) => (
+									<label className="lc-var">
+										<code>{name}</code> =
+										<input
+											type="text"
+											size={4}
+											value={setup.env.get(name) ?? ''}
+											placeholder={t.envUnset}
+											onChange={(e) => setEnv(name, e.currentTarget.value)}
+											aria-label={fmt(t.envValue, { name, value })}
+										/>
 									</label>
 								);
 								return (
@@ -173,7 +189,7 @@ export default function LoaderChainView({ lang }: { lang: string }) {
 											<code>{l.name}</code>
 										</td>
 										<td>{l.by}</td>
-										<td>{l.enableEnv ? box(l.enableEnv) : t.none}</td>
+										<td>{l.enableEnv ? field(l.enableEnv) : t.none}</td>
 										<td>{box(l.disableEnv)}</td>
 										<td>{on ? t.stateOn : t.stateOff}</td>
 									</tr>

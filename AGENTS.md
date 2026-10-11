@@ -147,7 +147,8 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
   `tests/vuids.test.ts` fails for an id without its synced text.
 - `tools/vk-probe` (cargo, ash at the examples' pin): binaries `buffer-requirements` and `validation-log`, see its
   README. Its output is machine-specific by design; handle values in messages change every run (the lesson quotes
-  its own run), `date` is UTC. CI lints it (clippy/fmt) next to examples/rust; running needs a GPU.
+  its own run). Every capture's `date` is the UTC calendar date (vk-probe and scripts/sync-gpu.ts alike; the
+  current gpu.json predates the rule and carries the local date of its run). CI lints it (clippy/fmt) next to examples/rust; running needs a GPU.
 - `REBAR.md`: Resizable BAR on the dev machine (off now: the DEVICE_LOCAL|HOST_VISIBLE heap is 214 MiB). If it is
   switched on, rerun sync:gpu and sync:buffers, then fix the facts the memory labs, lessons and tests state.
 
@@ -195,4 +196,8 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
 - [ ] Embed queue-sync, graphics-pipeline and buffer-memory in their lessons once modules 5/7/8 exist
 - [ ] C++ examples in CI (needs Vulkan SDK headers 1.4.341 with vulkan_raii.hpp on the runner)
 - [ ] Decide with the user: term maps put foundations at the bottom, ObjectGraph puts the root on top
+- [ ] After enabling ReBAR on the dev machine (steps in REBAR.md): capture a second snapshot (`sync:gpu` ->
+  `gpu-rebar.json` or a profile field) and let the memory labs switch between OFF (measured) and ON (measured).
+  `src/data/gpu.json` stays the ReBAR-off snapshot; until then the ON state is described in words only
+  (`src/components/RebarCheck.astro`, lab notes).
 - [ ] User review, then modules 4+ (presentation, pipeline, commands, sync, memory, descriptors, images, compute)

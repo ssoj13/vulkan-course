@@ -23,9 +23,10 @@ implicit-слои ближе всех к программе, за ними сл�
 
 - добавить второй драйвер и сравнить `vkEnumeratePhysicalDevices` с `vkGetPhysicalDeviceProperties`;
 - переключить `vkQueueSubmit` между экспортом загрузчика и `vkGetDeviceProcAddr`;
-- задать `ENABLE_VULKAN_RENDERDOC_CAPTURE` и посмотреть, как RenderDoc входит в цепочку, а потом задать и его переменную
-  отключения;
-- задать `DISABLE_LAYER_NV_OPTIMUS_1` и выключить слой валидации, пока слоёв не останется совсем.
+- задать `ENABLE_VULKAN_RENDERDOC_CAPTURE` равной `true`: ничего не изменится, загрузчик сравнивает значение с `1` из
+  манифеста; задать `1` — и RenderDoc войдёт в цепочку, а потом задать и его переменную отключения;
+- задать `DISABLE_LAYER_NV_OPTIMUS_1` и выключить слой валидации, пока слоёв не останется совсем; потом посмотреть на
+  `vkQueueSubmit` через `vkGetDeviceProcAddr`: указатель ведёт прямо в функцию драйвера.
 
 Сообщениям, которые печатают эти слои, посвящена следующая лаба — [Фильтры debug messenger](lab:messenger-filter).
 

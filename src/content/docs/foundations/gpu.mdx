@@ -61,6 +61,10 @@ this reason.
 Put numbers on it: choose how much data a frame touches and where it lives, and compare the time with a 60 fps
 frame (also on its own page, [Where the data lives](lab:memory-path)).
 
+The CPU reaches VRAM directly only through a window on the bus, the BAR. Without Resizable BAR that window is 256 MiB,
+and on many machines it is off by default in the BIOS; it was off on the course machine too. It is worth checking on
+yours: [Where the data lives](lab:memory-path) shows how.
+
 <MemoryPath />
 
 GPUs hide memory latency differently from CPUs: rather than relying mainly on big caches, an SM keeps many warps in flight and switches

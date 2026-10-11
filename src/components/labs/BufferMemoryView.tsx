@@ -15,7 +15,7 @@ import {
 	LIMITS,
 	PLACEMENTS,
 	REQUESTS,
-	STEP_API,
+	WRITER,
 	USAGES,
 	VUIDS,
 	WANT,
@@ -23,6 +23,7 @@ import {
 	bytes,
 	flow,
 	short,
+	stepApi,
 	typesIn,
 	type FlowStep,
 	type Placement,
@@ -41,6 +42,8 @@ type T = (typeof TEXT)['en'];
 const DMA = COPY_FAMILIES.find((f) => f.dedicated);
 const BAR_HEAP = HEAPS.find((h) => TYPES.some((t) => t.heapIndex === h.index && t.flags.includes(DL) && t.flags.length > 1));
 const flags = (fs: readonly string[]) => fs.map(short).join(' | ');
+/** A sync2 stage or access flag without its prefix and `_BIT`: `COPY`, `TRANSFER_WRITE`. */
+const plain = (f: string) => f.replace(/^VK_(PIPELINE_STAGE|ACCESS)_2_/, '').replace(/_BIT$/, '');
 
 /** Caption of a flow step in the reader's language, plus the call it makes. */
 export function stepText(t: T, s: FlowStep): string {
@@ -83,6 +86,18 @@ export function stepText(t: T, s: FlowStep): string {
 			const list = c.length ? c.map((x) => `${x.stages.map((st) => st.replace('VK_PIPELINE_STAGE_2_', '')).join(' | ')} / ${x.access.replace('VK_ACCESS_2_', '')}`).join(', ') : t.consumersNone;
 			return fmt(t['step.sync'], { consumers: list });
 		}
+		case 'gpuWrite':
+			if (!s.writer) return fmt(t.gpuWriteNone, { vuid: VUIDS.copyDst });
+			return fmt(s.writer === 'copy' ? t['step.gpuWrite'] : t.gpuWriteDispatch, { request: bytes(s.request) });
+		case 'hostSync':
+			return fmt(t['step.hostSync'], { stage: plain(WRITER[s.writer].stage), access: plain(WRITER[s.writer].access) });
+		case 'fence':
+			return t['step.fence'];
+		case 'read':
+			return [
+				fmt(t['step.read'], { request: bytes(s.request), type: s.type.index, heap: s.type.heapIndex }),
+				s.coherent ? t.readCoherent : fmt(t.readNonCoherent, { vuid: VUIDS.flushAtom }),
+			].join(' ');
 	}
 }
 
@@ -107,6 +122,17 @@ function call(s: FlowStep): string {
 			return `vkCmdCopyBuffer(cmd, staging, buffer, 1, { srcOffset = 0, dstOffset = 0, size = ${s.request} })`;
 		case 'sync':
 			return 'vkCmdPipelineBarrier2(cmd, { COPY / TRANSFER_WRITE -> consumer stage / access })';
+		case 'gpuWrite':
+			if (!s.writer) return 'vkCmdCopyBuffer(cmd, results, buffer, ...) // buffer lacks TRANSFER_DST';
+			return s.writer === 'copy' ? `vkCmdCopyBuffer(cmd, results, buffer, 1, { srcOffset = 0, dstOffset = 0, size = ${s.request} })` : 'vkCmdDispatch(cmd, x, y, z) // the shader stores into buffer';
+		case 'hostSync': {
+			const w = WRITER[s.writer];
+			return `vkCmdPipelineBarrier2(cmd, { ${plain(w.stage)} / ${plain(w.access)} -> HOST / HOST_READ })`;
+		}
+		case 'fence':
+			return 'vkQueueSubmit2(queue, 1, &submit, fence); vkWaitForFences(device, 1, &fence, VK_TRUE, UINT64_MAX)';
+		case 'read':
+			return `${s.coherent ? '' : 'vkInvalidateMappedMemoryRanges(device, 1, &range); '}memcpy(out, ptr, ${s.request})`;
 	}
 }
 
@@ -169,7 +195,7 @@ export default function BufferMemoryView({ lang }: { lang: string }) {
 		setPlacement('device');
 		tl.reset();
 	};
-	const isError = s.kind === 'copy' && !s.ok;
+	const isError = (s.kind === 'copy' && !s.ok) || (s.kind === 'gpuWrite' && !s.writer);
 
 	return (
 		<LabFrame lang={lang} title={t.title} onReset={reset}>
@@ -217,8 +243,8 @@ export default function BufferMemoryView({ lang }: { lang: string }) {
 				<div className="bm-flow">
 					<ol className="bm-steps" aria-hidden="true">
 						{steps.map((x, i) => (
-							<li key={i} className={`${i === tl.index ? 'is-current' : i < tl.index ? 'is-done' : ''}${x.kind === 'copy' && !x.ok ? ' is-error' : ''}${'which' in x && x.which === 'staging' ? ' is-staging' : ''}`}>
-								{STEP_API[x.kind]}
+							<li key={i} className={`${i === tl.index ? 'is-current' : i < tl.index ? 'is-done' : ''}${(x.kind === 'copy' && !x.ok) || (x.kind === 'gpuWrite' && !x.writer) ? ' is-error' : ''}${'which' in x && x.which === 'staging' ? ' is-staging' : ''}`}>
+								{stepApi(x)}
 							</li>
 						))}
 					</ol>

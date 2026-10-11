@@ -39,10 +39,10 @@ const en = {
 	'what.geometry':
 		'Optional: a shader that sees a whole primitive and may emit new ones. Slow on most GPUs; modern renderers use mesh shaders (an extension) instead.',
 	'what.rasterization':
-		'Fixed hardware turns triangles into fragments: clipping, perspective divide and the viewport transform to pixels, face culling (front face + cull mode), depth bias, and which pixel samples each triangle covers (multisampling). The scissor test drops fragments outside a rectangle.',
+		'Fixed hardware turns triangles into fragments: clipping, perspective divide and the viewport transform to pixels, face culling (front face + cull mode), depth bias, and which pixel samples each triangle covers (multisampling). pViewportState also holds the scissor rectangles, but the scissor test is not rasterization: it is the first per-fragment test (spec: Fragment Operations) and drops fragments outside the rectangle before the fragment shader runs.',
 	'what.fragment-shader': 'Your program, run once per fragment: it computes the color and may discard the fragment. The surface shader.',
 	'what.fragment-ops':
-		'The depth test (is this fragment nearer than what is already drawn?) and the stencil test; fragments that pass may write their depth. In the spec they come after the fragment shader unless the shader asks for early fragment tests; GPUs also run them earlier on their own whenever the result cannot differ.',
+		'The depth test (is this fragment nearer than what is already drawn?) and the stencil test; fragments that pass may write their depth. In the spec they come after the fragment shader unless the shader asks for early fragment tests; GPUs also run them earlier on their own whenever the result cannot differ. The scissor test is a fragment operation too, but always the first one, before the fragment shader; its rectangle lives with the viewport (pViewportState).',
 	'what.color-blend':
 		'Combines the fragment color with what the attachment already holds: off (replace), alpha blending, additive and so on, per attachment, plus a write mask per channel.',
 	'what.attachments':
@@ -132,10 +132,10 @@ const ru: typeof en = {
 	'what.geometry':
 		'Необязательный: шейдер, который видит примитив целиком и может выпускать новые. На большинстве GPU медленный; современные рендереры вместо него используют mesh-шейдеры (расширение).',
 	'what.rasterization':
-		'Железо превращает треугольники во фрагменты: отсечение, перспективное деление и viewport-преобразование в пиксели, отбраковка граней (front face + cull mode), depth bias и покрытие сэмплов пикселей (мультисэмплинг). Scissor-тест выбрасывает фрагменты вне прямоугольника.',
+		'Железо превращает треугольники во фрагменты: отсечение, перспективное деление и viewport-преобразование в пиксели, отбраковка граней (front face + cull mode), depth bias и покрытие сэмплов пикселей (мультисэмплинг). В pViewportState лежат и scissor-прямоугольники, но сам scissor-тест к растеризации не относится: это первый из пофрагментных тестов (глава спецификации Fragment Operations), он выбрасывает фрагменты вне прямоугольника ещё до фрагментного шейдера.',
 	'what.fragment-shader': 'Ваша программа, по запуску на фрагмент: считает цвет и может фрагмент выбросить (discard). Шейдер поверхности.',
 	'what.fragment-ops':
-		'Тест глубины (ближе ли фрагмент, чем то, что уже нарисовано?) и тест стенсила; прошедшие фрагменты могут записать свою глубину. По спецификации тесты идут после фрагментного шейдера, если шейдер не просит early fragment tests; GPU и сам запускает их раньше, когда результат от этого не меняется.',
+		'Тест глубины (ближе ли фрагмент, чем то, что уже нарисовано?) и тест стенсила; прошедшие фрагменты могут записать свою глубину. По спецификации тесты идут после фрагментного шейдера, если шейдер не просит early fragment tests; GPU и сам запускает их раньше, когда результат от этого не меняется. Scissor-тест — тоже фрагментная операция, но всегда первая, до фрагментного шейдера; его прямоугольник задаётся вместе с viewport (pViewportState).',
 	'what.color-blend':
 		'Смешивает цвет фрагмента с тем, что уже лежит в аттачменте: выключено (замена), альфа-блендинг, аддитивное и так далее, для каждого аттачмента, плюс маска записи по каналам.',
 	'what.attachments':

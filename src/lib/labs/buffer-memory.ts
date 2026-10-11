@@ -3,7 +3,8 @@
  * vkCreateBuffer -> vkGetBufferMemoryRequirements (REAL values captured on the dev machine, src/data/
  * buffer-requirements.json) -> pick a memory type with the spec's find-memory-type rule (lib/labs/memory.ts) over the
  * REAL memory types (src/data/gpu.json) -> vkAllocateMemory -> vkBindBufferMemory -> map (host-visible) or a staging upload
- * (device-local only). Pure module: no DOM, no React, tested with `bun test`.
+ * (device-local only); a readback buffer instead gets the GPU-writes-then-CPU-reads path (GPU write, HOST barrier, fence,
+ * optional invalidate, CPU read). Pure module: no DOM, no React, tested with `bun test`.
  */
 import gpu from '../../data/gpu.json';
 import reqJson from '../../data/buffer-requirements.json';
@@ -21,6 +22,7 @@ export type Usage = (typeof USAGES)[number];
 
 const SRC: Usage = 'VK_BUFFER_USAGE_TRANSFER_SRC_BIT';
 const DST: Usage = 'VK_BUFFER_USAGE_TRANSFER_DST_BIT';
+const STORAGE: Usage = 'VK_BUFFER_USAGE_STORAGE_BUFFER_BIT';
 
 /** Buffer sizes the capture asked for (bytes); the lab offers exactly these, so every number shown is measured. */
 export const REQUESTS: readonly number[] = reqJson.meta.requests;
@@ -128,6 +130,15 @@ export const CONSUMER: Readonly<Partial<Record<Usage, { stages: readonly string[
 	VK_BUFFER_USAGE_STORAGE_BUFFER_BIT: { stages: ['VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT'], access: 'VK_ACCESS_2_SHADER_STORAGE_READ_BIT' },
 };
 
+/** How the GPU writes a readback buffer: a copy into it (TRANSFER_DST) or a compute shader store (STORAGE_BUFFER). */
+export type Writer = 'copy' | 'dispatch';
+
+/** The sync2 stage and access of a GPU write: the first scope of the barrier that hands the data to the host. */
+export const WRITER: Readonly<Record<Writer, { stage: string; access: string }>> = {
+	copy: { stage: 'VK_PIPELINE_STAGE_2_COPY_BIT', access: 'VK_ACCESS_2_TRANSFER_WRITE_BIT' },
+	dispatch: { stage: 'VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT', access: 'VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT' },
+};
+
 /** Which buffer a step is about: the reader's buffer, or the staging buffer of an upload. */
 export type Which = 'dst' | 'staging';
 
@@ -139,7 +150,15 @@ export type FlowStep =
 	| { kind: 'bind'; which: Which; alignment: number; size: number }
 	| { kind: 'map'; which: Which; type: MemType; request: number }
 	| { kind: 'copy'; request: number; ok: boolean }
-	| { kind: 'sync'; consumers: readonly Usage[] };
+	| { kind: 'sync'; consumers: readonly Usage[] }
+	/** Readback: the GPU writes the buffer; null = the usage allows no GPU write at all. */
+	| { kind: 'gpuWrite'; writer: Writer | null; request: number }
+	/** Readback: barrier from the GPU write to HOST / HOST_READ (a fence alone does not make device writes host-visible). */
+	| { kind: 'hostSync'; writer: Writer }
+	/** Readback: vkQueueSubmit2 with a fence, then vkWaitForFences on the host. */
+	| { kind: 'fence' }
+	/** Readback: the CPU reads through the mapping; `coherent` = no vkInvalidateMappedMemoryRanges needed first. */
+	| { kind: 'read'; type: MemType; request: number; coherent: boolean };
 
 /**
  * create -> requirements -> choose -> allocate -> bind for one buffer. Every placement has a type on the course GPU
@@ -169,6 +188,7 @@ function setup(which: Which, usage: readonly Usage[], request: number, placement
  */
 export function flow(usage: readonly Usage[], request: number, placement: Placement): FlowStep[] {
 	const main = setup('dst', usage, request, placement);
+	if (placement === 'readback') return [...main.steps, ...readback(usage, request, main.type)];
 	if (main.type.flags.includes(HV)) return [...main.steps, { kind: 'map', which: 'dst', type: main.type, request }];
 	const st = setup('staging', [SRC], request, 'upload');
 	const ok = usage.includes(DST);
@@ -182,17 +202,51 @@ export function flow(usage: readonly Usage[], request: number, placement: Placem
 	return steps;
 }
 
-/** The API name each step stands for (language-neutral labels of the step strip). */
-export const STEP_API: Readonly<Record<FlowStep['kind'], string>> = {
-	create: 'vkCreateBuffer',
-	reqs: 'vkGetBufferMemoryRequirements',
-	choose: 'memoryTypeIndex',
-	allocate: 'vkAllocateMemory',
-	bind: 'vkBindBufferMemory',
-	map: 'vkMapMemory',
-	copy: 'vkCmdCopyBuffer',
-	sync: 'vkCmdPipelineBarrier2',
-};
+/**
+ * GPU writes, CPU reads back: the GPU writes the buffer (a copy if it is TRANSFER_DST, else a compute store if it is
+ * STORAGE_BUFFER), a barrier makes the write available to the host domain (dst HOST / HOST_READ), the submit carries a
+ * fence the host waits on, and the CPU reads through the mapping, invalidating first unless the type is HOST_COHERENT.
+ * A usage the GPU cannot write at all stops the flow at the write.
+ */
+function readback(usage: readonly Usage[], request: number, type: MemType): FlowStep[] {
+	const writer: Writer | null = usage.includes(DST) ? 'copy' : usage.includes(STORAGE) ? 'dispatch' : null;
+	if (!writer) return [{ kind: 'gpuWrite', writer, request }];
+	return [
+		{ kind: 'gpuWrite', writer, request },
+		{ kind: 'hostSync', writer },
+		{ kind: 'fence' },
+		{ kind: 'read', type, request, coherent: type.flags.includes(HC) },
+	];
+}
+
+/** The API name a step stands for (language-neutral labels of the step strip). */
+export function stepApi(s: FlowStep): string {
+	switch (s.kind) {
+		case 'create':
+			return 'vkCreateBuffer';
+		case 'reqs':
+			return 'vkGetBufferMemoryRequirements';
+		case 'choose':
+			return 'memoryTypeIndex';
+		case 'allocate':
+			return 'vkAllocateMemory';
+		case 'bind':
+			return 'vkBindBufferMemory';
+		case 'map':
+			return 'vkMapMemory';
+		case 'copy':
+			return 'vkCmdCopyBuffer';
+		case 'sync':
+		case 'hostSync':
+			return 'vkCmdPipelineBarrier2';
+		case 'gpuWrite':
+			return s.writer === 'dispatch' ? 'vkCmdDispatch' : 'vkCmdCopyBuffer';
+		case 'fence':
+			return 'vkWaitForFences';
+		case 'read':
+			return s.coherent ? 'memcpy' : 'vkInvalidateMappedMemoryRanges';
+	}
+}
 
 /** Indices of the memory types a memoryTypeBits mask allows. */
 export const typesIn = (bits: number): number[] => TYPES.filter((t) => allows(bits, t)).map((t) => t.index);

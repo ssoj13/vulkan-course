@@ -26,6 +26,7 @@ export const TEXT = {
 		why: 'Why you choose: the same bytes cost {fast} ms from VRAM and {slow} ms across the bus. Vulkan does not guess where a buffer should live; you pick the memory type.',
 		note: 'Times are bytes ÷ theoretical peak bandwidth, for one pass over the data. Real transfers reach less than the peak, and caches, latency and other traffic are left out.',
 		heapsHead: 'Heaps and types of the course GPU (vulkaninfo)',
+		rebarNote: 'ReBAR off on the course machine (snapshot): heap {index} ({size}) is the 256 MiB BAR window, not the whole VRAM.',
 	},
 	ru: {
 		title: 'Где живут данные',
@@ -52,6 +53,7 @@ export const TEXT = {
 		why: 'Поэтому выбор за вами: одни и те же байты стоят {fast} мс из VRAM и {slow} мс через шину. Vulkan не угадывает, где должен жить буфер, — тип памяти выбираете вы.',
 		note: 'Время — это байты, делённые на теоретическую пиковую пропускную способность, за один проход по данным. Реальные передачи до пика не дотягивают, а кэши, задержки и чужой трафик здесь не учтены.',
 		heapsHead: 'Кучи (heaps) и типы памяти GPU курса (vulkaninfo)',
+		rebarNote: 'На машине курса ReBAR выключен (снимок): heap {index} ({size}) — это окно BAR в 256 MiB, а не вся VRAM.',
 	},
 };
 

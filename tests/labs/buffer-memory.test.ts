@@ -14,7 +14,9 @@ import {
 	chooseType,
 	flow,
 	requirements,
+	stepApi,
 	typesIn,
+	WRITER,
 	type Usage,
 } from '../../src/lib/labs/buffer-memory';
 import { HC, HV, TYPES } from '../../src/lib/labs/memory';
@@ -103,8 +105,28 @@ describe('the flow', () => {
 		expect(sync.kind === 'sync' && sync.consumers).toEqual([V]);
 	});
 
-	test('host-visible placements map the buffer itself: no staging', () => {
-		for (const p of ['upload', 'bar', 'readback'] as const) expect(kinds([V], p)).toEqual(['create:dst', 'reqs:dst', 'choose:dst', 'allocate:dst', 'bind:dst', 'map:dst']);
+	test('upload placements map the buffer itself: no staging', () => {
+		for (const p of ['upload', 'bar'] as const) expect(kinds([V], p)).toEqual(['create:dst', 'reqs:dst', 'choose:dst', 'allocate:dst', 'bind:dst', 'map:dst']);
+	});
+
+	test('readback: GPU write, barrier to HOST, fence, then the CPU reads (HOST_CACHED type 4, coherent: no invalidate)', () => {
+		const setup = ['create:dst', 'reqs:dst', 'choose:dst', 'allocate:dst', 'bind:dst'];
+		expect(kinds([V, DST], 'readback')).toEqual([...setup, 'gpuWrite', 'hostSync', 'fence', 'read']);
+		const f = flow([V, DST], 65536, 'readback');
+		const w = f.find((s) => s.kind === 'gpuWrite');
+		expect(w?.kind === 'gpuWrite' && w.writer).toBe('copy');
+		const r = f.at(-1)!;
+		expect(r.kind === 'read' && [r.type.index, r.coherent]).toEqual([4, true]);
+		expect(stepApi(f.find((s) => s.kind === 'hostSync')!)).toBe('vkCmdPipelineBarrier2');
+		expect(WRITER.copy).toEqual({ stage: 'VK_PIPELINE_STAGE_2_COPY_BIT', access: 'VK_ACCESS_2_TRANSFER_WRITE_BIT' });
+	});
+
+	test('readback without TRANSFER_DST: a STORAGE buffer is written by a dispatch; with neither the GPU cannot write it', () => {
+		const st = flow(['VK_BUFFER_USAGE_STORAGE_BUFFER_BIT'], 65536, 'readback').find((s) => s.kind === 'gpuWrite');
+		expect(st?.kind === 'gpuWrite' && st.writer).toBe('dispatch');
+		expect(kinds([V], 'readback').slice(-1)).toEqual(['gpuWrite']);
+		const none = flow([V], 65536, 'readback').at(-1)!;
+		expect(none.kind === 'gpuWrite' && none.writer).toBeNull();
 	});
 
 	test('a copy into a buffer without TRANSFER_DST is the real validation error, and the flow stops there', () => {

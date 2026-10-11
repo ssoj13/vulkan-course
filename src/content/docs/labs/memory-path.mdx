@@ -3,6 +3,7 @@ title: Where the data lives
 description: VRAM, system RAM and the PCIe bus between them, with the real bandwidths of the course GPU. What a frame costs if a buffer crosses the bus.
 ---
 import MemoryPath from '../../../components/labs/MemoryPath.astro';
+import RebarCheck from '../../../components/RebarCheck.astro';
 
 A discrete GPU has its own memory, and everything else sits on the other side of a bus. This lab answers one question:
 **how much does it cost per frame when data lives in the wrong place?** The background is in the lesson
@@ -29,8 +30,11 @@ Things to try:
 
 - 64 MiB from VRAM, then the same 64 MiB from system RAM: the same bytes, almost 30 times the cost;
 - 1 GiB over PCIe: one pass no longer fits in a frame;
-- the BAR window with 256 MiB: it does not fit at all. Without Resizable BAR this GPU exposes only a 214 MiB window of
-  VRAM to the CPU, which is why uploads usually go through a staging buffer and a copy instead.
+- the BAR window with 256 MiB: it does not fit at all. Resizable BAR is off on the course machine, so this GPU exposes
+  only a 214 MiB window of VRAM to the CPU, which is why uploads usually go through a staging buffer and a copy
+  instead. Check your own machine (below): this is a common misconfiguration.
+
+<RebarCheck />
 
 <MemoryPath />
 

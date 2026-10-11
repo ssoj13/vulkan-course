@@ -28,7 +28,8 @@ Things to try:
 
 - `x < T` with the lane ids, T = 16: half the lanes on each side, both paths run;
 - move T to 0 or to 32: no divergence, one branch is skipped entirely;
-- `x % 2 == 0`: every other lane, the worst case for a warp, yet the same cost as T = 16;
+- `x % 2 == 0`: every other lane takes each branch, and it costs exactly what T = 16 costs: in this model any
+  divergence runs both paths, whatever the pattern;
 - random inputs with `x < T`: almost every T gives a divergent warp, which is why sorting work by the branch it takes
   (for example, binning materials before shading) pays off.
 

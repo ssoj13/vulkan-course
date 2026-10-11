@@ -135,8 +135,8 @@ try {
 			vulkaninfo: `${basename(exe)} --json=0 (device, features, limits, queue families) + --text (memory, driverVersion)`,
 			sdk: sdk ? basename(sdk) : null,
 			instanceVersion: must(text.match(/^Vulkan Instance Version:\s*(\S+)/m), 'Vulkan Instance Version'),
-			// Local calendar date (the 'sv' locale formats as YYYY-MM-DD); toISOString would give the UTC date.
-			date: new Date().toLocaleDateString('sv'),
+			// UTC calendar date: every capture (this script and tools/vk-probe) dates its snapshot the same way.
+			date: new Date().toISOString().slice(0, 10),
 		},
 		device: {
 			name: props.deviceName,

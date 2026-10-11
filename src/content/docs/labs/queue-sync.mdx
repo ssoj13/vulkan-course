@@ -31,6 +31,10 @@ Each `vkQueueSubmit2` carries one batch, and signals use stage mask `ALL_COMMAND
 created with `VK_SHARING_MODE_CONCURRENT`, so no queue family ownership transfer is needed, and mapped memory is
 assumed host-coherent. In *Frames in flight* two frames overlap on the graphics queue because nothing here orders
 them; a real renderer orders writes to its shared color and depth images with barriers and the swapchain's semaphores.
+The frames record `cb0` and `cb1` again and again, which assumes their pool was created with
+`VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT`: then `vkBeginCommandBuffer` resets the buffer implicitly. Without
+that flag the buffer must be in the initial state when recording begins (`VUID-vkBeginCommandBuffer-commandBuffer-00050`),
+so after the fence wait you reset the frame's whole pool with `vkResetCommandPool`.
 
 Things to try:
 

@@ -141,6 +141,7 @@ export default function MemoryPathView({ lang }: { lang: string }) {
 						</li>
 					))}
 				</ul>
+				<p className="lab-muted">{fmt(t.rebarNote, { index: heapOf('bar').index, size: bytes(heapOf('bar').size, lang) })}</p>
 				<p className="lab-muted">{fmt(t.typeHead, { bits: BUFFER_TYPE_BITS, flags: PATH[path].need.map(shortFlag).join(' | ') })}</p>
 				<ul>
 					{TYPES.map((ty) => (

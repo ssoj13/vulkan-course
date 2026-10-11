@@ -4,11 +4,14 @@
  * Sources (verified 2026-10-10):
  * - Vulkan-Loader docs (KhronosGroup/Vulkan-Loader, docs/LoaderInterfaceArchitecture.md "Dispatch Tables and Call
  *   Chains", LoaderApplicationInterface.md "Best Application Performance Setup" and "Overall Layer Ordering",
- *   LoaderLayerInterface.md manifest fields `enable_environment` / `disable_environment`): instance calls go
+ *   LoaderLayerInterface.md manifest fields `enable_environment` / `disable_environment`, and loader.c
+ *   `loader_implicit_layer_is_enabled`: the enable variable must equal the manifest's value (strcmp), the disable
+ *   variable counts when set to anything): instance calls go
  *   trampoline -> layers -> terminator -> every driver; physical-device calls end in a terminator that calls only the
  *   owning driver; device calls have no loader terminator (the driver ends the chain), and a pointer from
- *   vkGetDeviceProcAddr skips the trampoline too. Implicit layers sit closest to the application, layers the app
- *   enables come after them.
+ *   vkGetDeviceProcAddr skips the trampoline too; with no layers such a pointer points directly to the driver
+ *   (LoaderApplicationInterface.md). Implicit layers sit closest to the application, layers the app enables come after
+ *   them.
  * - The machine itself: the 8 implicit-layer manifests registered there (HKLM\SOFTWARE\Khronos\Vulkan\ImplicitLayers
  *   plus the NVIDIA driver's nv-vk64.json) and the loader's own "vkCreateInstance layer callstack" printout from a run
  *   of step 02: NV_optimus, NV_present, bandicam_helper, then KHRONOS_validation. The other five layers declare an
@@ -22,8 +25,8 @@ export interface ImplicitLayer {
 	name: string;
 	/** Who installed it (shown to the reader). */
 	by: string;
-	/** Set => the layer loads only when this variable is set (manifest `enable_environment`). */
-	enableEnv?: string;
+	/** Set => the layer loads only when this variable holds exactly this value (manifest `enable_environment`). */
+	enableEnv?: { name: string; value: string };
 	/** Set => the layer is skipped (manifest `disable_environment`, required for implicit layers). */
 	disableEnv: string;
 }
@@ -32,12 +35,12 @@ export interface ImplicitLayer {
 export const IMPLICIT_LAYERS: readonly ImplicitLayer[] = [
 	{ name: 'VK_LAYER_NV_optimus', by: 'NVIDIA driver', disableEnv: 'DISABLE_LAYER_NV_OPTIMUS_1' },
 	{ name: 'VK_LAYER_NV_present', by: 'NVIDIA driver', disableEnv: 'DISABLE_LAYER_NV_PRESENT_1' },
-	{ name: 'VK_LAYER_RENDERDOC_Capture', by: 'RenderDoc', enableEnv: 'ENABLE_VULKAN_RENDERDOC_CAPTURE', disableEnv: 'DISABLE_VULKAN_RENDERDOC_CAPTURE_1_39' },
+	{ name: 'VK_LAYER_RENDERDOC_Capture', by: 'RenderDoc', enableEnv: { name: 'ENABLE_VULKAN_RENDERDOC_CAPTURE', value: '1' }, disableEnv: 'DISABLE_VULKAN_RENDERDOC_CAPTURE_1_39' },
 	{ name: 'VK_LAYER_bandicam_helper', by: 'Bandicam', disableEnv: 'VK_LAYER_bandicam_helper_DEBUG_1' },
-	{ name: 'VK_LAYER_EOS_Overlay', by: 'Epic Games overlay', enableEnv: 'EOS_OVERLAY_ENABLE_VULKAN_WIN64', disableEnv: 'EOS_OVERLAY_DISABLE_VULKAN_WIN64' },
-	{ name: 'VK_LAYER_VALVE_steam_overlay', by: 'Steam overlay', enableEnv: 'ENABLE_VK_LAYER_VALVE_steam_overlay_1', disableEnv: 'DISABLE_VK_LAYER_VALVE_steam_overlay_1' },
-	{ name: 'VK_LAYER_VALVE_steam_fossilize', by: 'Steam Fossilize', enableEnv: 'ENABLE_VK_LAYER_VALVE_steam_fossilize_1', disableEnv: 'DISABLE_VK_LAYER_VALVE_steam_fossilize_1' },
-	{ name: 'VK_LAYER_NV_nsight-sys', by: 'Nsight Systems', enableEnv: 'ENABLE_VK_LAYER_NV_nsight_sys', disableEnv: 'DISABLE_VK_LAYER_NV_nsight_sys' },
+	{ name: 'VK_LAYER_EOS_Overlay', by: 'Epic Games overlay', enableEnv: { name: 'EOS_OVERLAY_ENABLE_VULKAN_WIN64', value: '1' }, disableEnv: 'EOS_OVERLAY_DISABLE_VULKAN_WIN64' },
+	{ name: 'VK_LAYER_VALVE_steam_overlay', by: 'Steam overlay', enableEnv: { name: 'ENABLE_VK_LAYER_VALVE_steam_overlay_1', value: '1' }, disableEnv: 'DISABLE_VK_LAYER_VALVE_steam_overlay_1' },
+	{ name: 'VK_LAYER_VALVE_steam_fossilize', by: 'Steam Fossilize', enableEnv: { name: 'ENABLE_VK_LAYER_VALVE_steam_fossilize_1', value: '1' }, disableEnv: 'DISABLE_VK_LAYER_VALVE_steam_fossilize_1' },
+	{ name: 'VK_LAYER_NV_nsight-sys', by: 'Nsight Systems', enableEnv: { name: 'ENABLE_VK_LAYER_NV_nsight_sys', value: '1' }, disableEnv: 'DISABLE_VK_LAYER_NV_nsight_sys' },
 ];
 
 /** The explicit layer the course's step 02 enables by name. */
@@ -73,8 +76,8 @@ export type Via = 'export' | 'gdpa';
 
 export interface Setup {
 	call: CallId;
-	/** Environment variables that are set (any non-empty value). */
-	env: ReadonlySet<string>;
+	/** Environment variables that are set, with their values (an empty value counts as unset, as on Windows). */
+	env: ReadonlyMap<string, string>;
 	/** The app names VK_LAYER_KHRONOS_validation in ppEnabledLayerNames. */
 	validation: boolean;
 	/** The hypothetical second driver is installed. */
@@ -84,9 +87,12 @@ export interface Setup {
 	via: Via;
 }
 
-/** Loader rule for implicit layers: an enable variable, if declared, must be set; a set disable variable wins. */
-export function implicitActive(l: ImplicitLayer, env: ReadonlySet<string>): boolean {
-	return (!l.enableEnv || env.has(l.enableEnv)) && !env.has(l.disableEnv);
+/**
+ * Loader rule for implicit layers: an enable variable, if declared, must hold the manifest's value exactly; a disable
+ * variable set to any value wins.
+ */
+export function implicitActive(l: ImplicitLayer, env: ReadonlyMap<string, string>): boolean {
+	return (!l.enableEnv || env.get(l.enableEnv.name) === l.enableEnv.value) && !env.has(l.disableEnv);
 }
 
 export interface ChainLayer {
@@ -113,9 +119,11 @@ export type CaptionKey =
 	| 'capAppInstance'
 	| 'capAppSubmitExport'
 	| 'capAppSubmitGdpa'
+	| 'capAppSubmitGdpaDirect'
 	| 'capTrampCreate'
 	| 'capTramp'
 	| 'capTrampDevice'
+	| 'capTrampDeviceDirect'
 	| 'capLayerCreate'
 	| 'capLayer'
 	| 'capValidationCreate'
@@ -127,6 +135,8 @@ export type CaptionKey =
 	| 'capIcdEnum'
 	| 'capIcdPhysical'
 	| 'capIcdSubmit'
+	| 'capIcdSubmitTramp'
+	| 'capIcdSubmitDirect'
 	| 'capReturnCreate'
 	| 'capReturnEnum'
 	| 'capReturn';
@@ -159,17 +169,20 @@ export function trace(s: Setup): Trace {
 	const call = s.call;
 	const hops: Hop[] = [];
 	const create = call === 'vkCreateInstance';
+	// Without layers a device call has nothing between the loader (or the program) and the driver.
+	const bare = layers.length === 0;
 
 	// The program's own call.
 	if (create) hops.push({ at: ['app'], key: 'capAppCreate', vars: { call, n: s.validation ? 1 : 0 } });
-	else if (level === 'device') hops.push({ at: ['app'], key: s.via === 'gdpa' ? 'capAppSubmitGdpa' : 'capAppSubmitExport', vars: { call, gpu: ICD_INFO[owner].gpu } });
+	else if (level === 'device') hops.push({ at: ['app'], key: s.via === 'export' ? 'capAppSubmitExport' : bare ? 'capAppSubmitGdpaDirect' : 'capAppSubmitGdpa', vars: { call, gpu: ICD_INFO[owner].gpu } });
 	else hops.push({ at: ['app'], key: 'capAppInstance', vars: { call, handle } });
 
-	// The loader's trampoline, unless the pointer came from vkGetDeviceProcAddr (it then points into the first layer).
+	// The loader's trampoline, unless the pointer came from vkGetDeviceProcAddr (it then points into the first layer,
+	// or into the driver when there are no layers).
 	const tramp = !(level === 'device' && s.via === 'gdpa');
 	if (tramp) {
 		if (create) hops.push({ at: ['trampoline'], key: 'capTrampCreate', vars: { n: layers.length } });
-		else hops.push({ at: ['trampoline'], key: level === 'device' ? 'capTrampDevice' : 'capTramp', vars: { call, handle } });
+		else hops.push({ at: ['trampoline'], key: level !== 'device' ? 'capTramp' : bare ? 'capTrampDeviceDirect' : 'capTrampDevice', vars: { call, handle } });
 	}
 
 	for (const l of layers) {
@@ -190,7 +203,8 @@ export function trace(s: Setup): Trace {
 		hops.push({ at: [icdNode(owner)], key: 'capIcdPhysical', vars: { call, icd: ICD_INFO[owner].dll, gpu: ICD_INFO[owner].gpu } });
 		hops.push({ at: ['app'], key: 'capReturn', vars: { call } });
 	} else {
-		hops.push({ at: [icdNode(owner)], key: 'capIcdSubmit', vars: { call, icd: ICD_INFO[owner].dll, gpu: ICD_INFO[owner].gpu } });
+		const key: CaptionKey = !bare ? 'capIcdSubmit' : s.via === 'export' ? 'capIcdSubmitTramp' : 'capIcdSubmitDirect';
+		hops.push({ at: [icdNode(owner)], key, vars: { call, icd: ICD_INFO[owner].dll, gpu: ICD_INFO[owner].gpu } });
 		hops.push({ at: ['app'], key: 'capReturn', vars: { call } });
 	}
 

@@ -1,8 +1,9 @@
 ---
 title: Буферы и память
-description: От usage буфера к требованиям к памяти и к типу памяти настоящего GPU курса, плюс загрузка через staging и окно BAR.
+description: От usage буфера к требованиям к памяти и к типу памяти настоящего GPU курса, плюс загрузка через staging или прямая запись через окно BAR.
 ---
 import BufferMemory from '../../../../components/labs/BufferMemory.astro';
+import RebarCheck from '../../../../components/RebarCheck.astro';
 
 В Vulkan буфер и его память — два разных объекта. `vkCreateBuffer` лишь описывает буфер; затем драйвер сообщает, какая
 память ему нужна, вы выбираете тип памяти, выделяете блок и связываете одно с другим. Лаба отвечает на вопрос **как
@@ -16,9 +17,11 @@ import BufferMemory from '../../../../components/labs/BufferMemory.astro';
 показывает вызовы, а не выполняет их.
 
 На что смотреть: `memoryTypeBits` здесь у любого буфера 0b111011, то есть тип 2 не разрешён никогда; alignment
-зависит от usage (4, 16, 64); device-local память CPU отобразить не может, поэтому данные едут через staging-буфер и
+зависит от usage (4, 16, 64); device-local память без HOST_VISIBLE CPU отобразить не может, поэтому данные едут через staging-буфер и
 копирование в очереди, умеющей transfer ([семейства очередей](lesson:queue-families#настоящий-gpu)); а окно BAR на этой
 машине всего 214 МиБ, потому что Resizable BAR выключен.
+
+<RebarCheck />
 
 <BufferMemory />
 

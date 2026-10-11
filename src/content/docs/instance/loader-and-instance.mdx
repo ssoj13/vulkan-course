@@ -57,8 +57,8 @@ On Windows the loader finds layers through the registry: `SOFTWARE\Khronos\Vulka
 display-adapter entry. On the development machine there were **eight** implicit layers: six registered by installed
 software (RenderDoc, Bandicam, the Epic Games overlay, the Steam overlay, Steam's Fossilize, Nsight Systems) and two by
 the NVIDIA driver itself (`VK_LAYER_NV_optimus`, `VK_LAYER_NV_present`). Five of them (RenderDoc, Epic, both Steam
-layers and Nsight) also name an *enable* variable in their manifest and load only when it is set - the way Steam sets
-it for the games it starts. The other three, Bandicam's and the two NVIDIA layers, load into every Vulkan program on
+layers and Nsight) also name an *enable* variable in their manifest and load only when it is set to the value the
+manifest gives (`1` for all five) - the way Steam sets it for the games it starts. The other three, Bandicam's and the two NVIDIA layers, load into every Vulkan program on
 that PC, including ours - and Bandicam's layer even prints a warning that its API version is older than ours. That
 warning is not about our code. Each implicit layer's JSON manifest names an environment variable that disables it
 (for example `DISABLE_LAYER_NV_OPTIMUS_1`), should a layer ever get in your way.

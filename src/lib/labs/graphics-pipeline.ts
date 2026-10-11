@@ -101,6 +101,8 @@ export const DYN_USES: readonly DynUse[] = [
 	{ state: 'VK_DYNAMIC_STATE_PRIMITIVE_TOPOLOGY', stage: 'input-assembly', replaces: `${IA}::topology`, cmd: 'vkCmdSetPrimitiveTopology' },
 	{ state: 'VK_DYNAMIC_STATE_PRIMITIVE_RESTART_ENABLE', stage: 'input-assembly', replaces: `${IA}::primitiveRestartEnable`, cmd: 'vkCmdSetPrimitiveRestartEnable' },
 	{ state: 'VK_DYNAMIC_STATE_VIEWPORT', stage: 'rasterization', replaces: `${VP}::pViewports`, cmd: 'vkCmdSetViewport' },
+	// Listed with the struct that holds the rectangles (pViewportState); the scissor test itself is the first fragment
+	// operation, run before fragment shading (spec "Fragment Operations"), which the stage texts explain.
 	{ state: 'VK_DYNAMIC_STATE_SCISSOR', stage: 'rasterization', replaces: `${VP}::pScissors`, cmd: 'vkCmdSetScissor' },
 	{ state: 'VK_DYNAMIC_STATE_VIEWPORT_WITH_COUNT', stage: 'rasterization', replaces: `${VP}::viewportCount, pViewports`, cmd: 'vkCmdSetViewportWithCount' },
 	{ state: 'VK_DYNAMIC_STATE_SCISSOR_WITH_COUNT', stage: 'rasterization', replaces: `${VP}::scissorCount, pScissors`, cmd: 'vkCmdSetScissorWithCount' },

@@ -23,8 +23,10 @@ Things to try:
 
 - add the second driver and compare `vkEnumeratePhysicalDevices` with `vkGetPhysicalDeviceProperties`;
 - switch `vkQueueSubmit` between the loader export and `vkGetDeviceProcAddr`;
-- set `ENABLE_VULKAN_RENDERDOC_CAPTURE` and see RenderDoc join the chain; then set its disable variable too;
-- set `DISABLE_LAYER_NV_OPTIMUS_1`, and turn the validation layer off, until no layer is left.
+- set `ENABLE_VULKAN_RENDERDOC_CAPTURE` to `true`: nothing happens, the loader compares the value with the manifest's
+  `1`; set it to `1` and RenderDoc joins the chain; then set its disable variable too;
+- set `DISABLE_LAYER_NV_OPTIMUS_1`, and turn the validation layer off, until no layer is left; then look at
+  `vkQueueSubmit` through `vkGetDeviceProcAddr`: the pointer is the driver's own function.
 
 The messages these layers print are the subject of the next lab, [Debug messenger filters](lab:messenger-filter).
 
