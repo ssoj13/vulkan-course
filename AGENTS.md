@@ -129,8 +129,8 @@ Files per lab `<slug>`: model `src/lib/labs/<slug>.ts` (pure, no DOM), view `src
 | device-picker | DevicePicker | devices/physical-devices |
 | queue-planner | QueuePlanner | devices/queue-families |
 | object-builder | ObjectGraph (`src/components/ObjectGraph*`, model `src/lib/objects.ts`) | devices/logical-device |
-| queue-sync | QueueSync | sync/fences-and-semaphores (EN; RU when the RU lesson replaces its placeholder) |
-| graphics-pipeline | GraphicsPipeline | pipeline/graphics-pipeline (EN; RU when the RU lesson replaces its placeholder) |
+| queue-sync | QueueSync | sync/fences-and-semaphores (EN + RU) |
+| graphics-pipeline | GraphicsPipeline | pipeline/graphics-pipeline (EN + RU) |
 | buffer-memory | BufferMemory | none yet (module 8) |
 
 Widget texts: fill placeholders ONLY with `tfmt(lang, text, vars)` from `src/lib/text.ts` (never the engine `fmt`).
@@ -282,7 +282,8 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
   swapchain-recreation, old-swapchain, present-fence); vk-fence/vk-semaphore -> fences-and-semaphores, image-layout/
   pipeline-barrier -> barriers-and-layouts. frame-loop STAYS on first-triangle: <MindMap /> throws for a lesson that
   owns no term. The Rust runs of 10 in m7/ came from the debug build (m7run.ps1), C++ from release.
-- [ ] Module 7: independent reviews of 10-12 (code vs spec) and of the 5 EN lessons (facts vs spec); RU lessons.
+- [x] Module 7: review of 10-12 + EN lessons (fixed: barrier 5, release medians, fence analogy), RU lessons (2026-10-11).
+- [ ] Independent review of the RU lessons of modules 4-7 (language + facts vs EN).
 - Step numbering: 10-12 = module 7, so module 8+ examples shift by one vs the course plan (12_vertex_buffer -> 13_...).
 
 - [x] Stage 1: course-kit engine; [x] site on the kit; [x] examples 01-05 both languages; [x] lessons 1-10
@@ -292,7 +293,7 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
 - [x] 12 labs (2026-10-10); consolidation: tools/vk-probe, VUID single source, shared find-memory-type rule, astro check clean
 - [ ] Release course-kit v0.4.1 (declarations), bump the tag here, then add `bun run check` to the CI test job
 - [ ] Embed queue-sync and buffer-memory in their lessons once modules 7/8 exist ([x] graphics-pipeline, EN)
-- [ ] RU lessons of modules 4-6 (placeholders now); then embed GraphicsPipeline in ru/pipeline/graphics-pipeline
+- [x] RU lessons of modules 4-6 incl. GraphicsPipeline in ru/pipeline/graphics-pipeline
 - [ ] labs/graphics-pipeline.mdx (EN+RU) still says it previews the pipeline module: reword now that the lesson exists
 - [ ] C++ examples in CI (needs Vulkan SDK headers 1.4.341 with vulkan_raii.hpp on the runner)
 - [ ] Decide with the user: term maps put foundations at the bottom, ObjectGraph puts the root on top

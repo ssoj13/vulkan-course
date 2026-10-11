@@ -3,4 +3,317 @@ title: 'Timeline-семафоры'
 description: 'Один 64-битный счётчик, который только растёт, заменяет fence на каждый кадр; и почему acquire и present по-прежнему нужны бинарные семафоры.'
 ---
 
-Русская версия урока готовится.
+import { Aside } from '@astrojs/starlight/components';
+import MindMap from 'course-kit/components/MindMap.astro';
+import Quiz from 'course-kit/components/Quiz.astro';
+import Step from '../../../../components/Step.astro';
+
+В шаге 10 на каждый кадр в полёте свой fence, и каждый ждут, сбрасывают и снова отдают в отправку — маленький
+бухгалтерский ритуал на каждый слот. Бинарный семафор не лучше: один сигнал, одно ожидание, и хосту к нему не
+прикоснуться. Может ли один объект просто сказать, *докуда дошёл GPU*? Это и есть **timeline-семафор**, и в этом уроке
+он заменяет fence шага 10.
+
+## Место в курсе
+
+Четвёртый урок модуля «Синхронизация», на слое API. Он сливает два инструмента из урока [Fence и
+семафоры](lesson:fences-and-semaphores) в один и применяет его к слотам [кадров в полёте](lesson:frames-in-flight) в
+кадре «рендер, потом blit» из [урока о барьерах](lesson:barriers-and-layouts). Цепочка:
+
+`бинарный семафор (один сигнал, одно ожидание) → timeline-семафор (счётчик: сигнал n, ожидание ≥ n) → ожидание на хосте (vkWaitSemaphores) вместо fence на слот; бинарные семафоры остаются для acquire и present`
+
+[Timeline-семафор](term:timeline-semaphore) — это [VkSemaphore](term:vk-semaphore), построенный на 64-битном
+счётчике; он делает работу [fence](term:vk-fence) на каждый слот, а [бинарные семафоры](term:binary-semaphore)
+остаются на своём месте у swapchain.
+
+## От флажков к счётчику
+
+Рендер-ферма не вешает флажок «готово» на каждую задачу, чтобы потом сбрасывать его для следующей. У неё есть
+счётчик: «готово кадров: 41». Кому нужен кадр 39, проверяет, что счётчик не меньше 39; кому нужен кадр 45, ждёт, пока
+счётчик до него дойдёт. Ничего не сбрасывается, ничего не забирается, и на один счётчик могут смотреть сколько угодно
+людей.
+
+Timeline-семафор и есть такой счётчик:
+
+- он начинается с **начального значения**, заданного при создании, и только растёт;
+- **сигнал** ставит в него значение, которое должно быть больше текущего (`VUID-VkSubmitInfo2-semaphore-03882`);
+  отправка в очередь сигналит его, когда завершится работа из её первой области, а **хост** тоже может сигналить его,
+  через `vkSignalSemaphore` (`VUID-VkSemaphoreSignalInfo-value-03258`);
+- **ожидание** значения *v* длится, пока счётчик не станет **≥ v**. Оно ничего не забирает: сколько угодно ожиданий
+  в очередях или на хосте (`vkWaitSemaphores`) могут ждать одного и того же значения или разных;
+- хост может прочитать счётчик в любой момент через `vkGetSemaphoreCounterValue`.
+
+По сравнению с бинарным семафором из первого урока исчезли три ограничения. Ожидания и сигналы больше не идут парами
+1:1. Ожидание можно **отправить раньше** сигнала, которого оно ждёт: спецификация говорит лишь, что ожидание «will not
+complete until at least one semaphore signal operation» удовлетворит его условию. И хост может участвовать с обеих
+сторон. По сравнению с fence — нечего сбрасывать, и один объект покрывает все кадры.
+
+Аналогия на CPU — атомарный 64-битный счётчик в паре с условной переменной: «спи, пока счётчик не станет хотя бы *n*».
+Программистам D3D12 он знаком как `ID3D12Fence`: в разделе issues расширения `VK_KHR_timeline_semaphore` объекты fence
+D3D12 названы «semantically close/identical» к нему, а `VK_KHR_external_semaphore_win32` умеет импортировать хендл
+fence D3D12 в `VkSemaphore`. Где аналогия ломается: счётчик нельзя ставить назад или в то же значение; сигналимое
+значение не должно отличаться от текущего, а также от значения любого ещё не выполненного ожидания или сигнала,
+больше чем на лимит устройства `maxTimelineSemaphoreValueDifference` (`VUID-VkSubmitInfo2-semaphore-03883`); а
+ожидания на стороне GPU происходят внутри очереди, а не на каком-либо потоке.
+
+## Почему acquire и present остаются бинарными
+
+Функции swapchain старше timeline-семафоров и принимают только бинарные: семафор `vkAcquireNextImageKHR` должен быть
+бинарным (`VUID-vkAcquireNextImageKHR-semaphore-03265`), и каждый семафор ожидания `vkQueuePresentKHR` тоже
+(`VUID-vkQueuePresentKHR-pWaitSemaphores-03267`). Поэтому в шаге 12 есть оба вида: бинарные семафоры на двух концах
+кадра, где участвует presentation engine, и один timeline-семафор для всего, что CPU нужно знать о продвижении GPU.
+
+## 1. Включаем возможность
+
+<Step file="12_timeline" region="pick-device" />
+
+Timeline-семафоры в ядре с Vulkan 1.2, и любое устройство Vulkan 1.2+ обязано поддерживать возможность
+`timelineSemaphore`. Но поддерживается — ещё не значит включена: как любую возможность, её надо включить в
+`VkPhysicalDeviceVulkan12Features` при создании устройства. Цикл выбора всё равно её проверяет, так же как проверяет
+dynamic rendering и synchronization2.
+
+## 2. Создаём счётчик
+
+<Step file="12_timeline" region="timeline-semaphore" />
+
+Семафор бинарный, если в его create info нет `VkSemaphoreTypeCreateInfo` с `TIMELINE`. Начальное значение 0 значит
+«ещё ни один кадр не завершён», поэтому кадры нумеруются с 1.
+
+## 3. Оставшиеся бинарные семафоры
+
+<Step file="12_timeline" region="binary-semaphores" />
+
+Ровно те же бинарные семафоры, что в шаге 10: `image_available` на кадр в полёте, `render_finished` на изображение
+swapchain. Исчез fence, как показывают ресурсы кадра:
+
+<Step file="12_timeline" region="frame-resources" />
+
+## 4. Ждём кадр, который занимал слот
+
+<Step file="12_timeline" region="wait-timeline" />
+
+Кадр *n* пользуется слотом `(n - 1) % F`. Последний кадр, который занимал этот слот, — *n − F*, и когда счётчик дошёл
+до *n − F*, command buffer и `image_available` того кадра свободны. Поэтому CPU ждёт «счётчик ≥ n − F» через
+`vkWaitSemaphores`; `VkSemaphoreWaitInfo` принимает только timeline-семафоры
+(`VUID-VkSemaphoreWaitInfo-pSemaphores-03256`). Первым *F* кадрам ждать нечего.
+
+Заметьте, чего нет по сравнению с шагом 10: сброса. У ритуала с fence из первого треугольника, «сбрасывай только после
+успешного acquire, иначе следующее ожидание повиснет», здесь нет пары, потому что ожидание счётчик не меняет.
+
+## 5. Сигналим номер кадра
+
+<Step file="12_timeline" region="submit" />
+
+Один пакет, три операции с семафорами:
+
+- **ожидание** `image_available` (бинарный) на стадии `BLIT`. Рендеринг в offscreen-изображение не нуждается в
+  изображении swapchain, поэтому может идти раньше, чем presentation engine его отпустил; ждут только барьер 2 и blit.
+  Это верно лишь потому, что ни у одного барьера перед рендерингом нет `BLIT` в стадии-источнике: барьер, чья первая
+  область пересекается со стадией ожидания, сцепляется с ожиданием, а с ним и всё, что он придерживает. Как шаг 12
+  этого избегает, показывает [урок о барьерах](lesson:barriers-and-layouts#2-пять-барьеров). Это та самая точность
+  маски стадий из [первого урока](lesson:fences-and-semaphores#семафоры-одна-операция-очереди-сообщает-другой);
+  выигрывает ли она время на конкретной машине — вопрос замера, и на машине курса не выиграла (тот же урок о барьерах);
+- **сигнал** `render_finished` (бинарный) на `BLIT`, для present;
+- **сигнал** timeline со значением *n* на `ALL_COMMANDS`: счётчик станет *n*, когда завершится всё в пакете и всё,
+  что было отправлено в очередь до него. Значение у операции с бинарным семафором игнорируется.
+
+Аргумент fence у `vkQueueSubmit2` теперь пустой. Номера кадров растут на единицу с каждой отправкой, поэтому каждый
+сигнал больше предыдущего: правило «timeline только растёт» соблюдается само собой.
+
+## 6. Завершение
+
+<Step file="12_timeline" region="cleanup" />
+
+Timeline говорит, когда закончена *наша* работа: ожидание номера последнего кадра покрывает все отправки. Но чтобы
+уничтожить swapchain, должны закончиться и present (`VUID-vkDestroySwapchainKHR-swapchain-01282`), а о них счётчик
+ничего не знает. Поэтому `vkDeviceWaitIdle` остаётся: он ждёт работу очередей, включая операции очереди у present;
+presentation engine он не ждёт. Present fence, которые существуют, чтобы знать, когда ресурсы present можно
+освободить, — тема [следующего урока](lesson:swapchain-recreation).
+
+## Что печатает программа
+
+Два кадра в полёте (по умолчанию), Rust:
+
+```text
+Window: 800x600 pixels
+Found 1 GPU(s)
+GPU 0: NVIDIA GeForce RTX 3080 Ti
+
+Picked: NVIDIA GeForce RTX 3080 Ti
+Graphics + present family: 0
+VkDevice created with VK_KHR_swapchain and timelineSemaphore
+
+Surface format: B8G8R8A8_SRGB + SRGB_NONLINEAR
+Present mode: MAILBOX
+Swapchain: 3 images of 800x600, usage TRANSFER_DST (blit target) + COLOR_ATTACHMENT (overlay layers)
+Offscreen image: 400x300 B8G8R8A8_SRGB, usage COLOR_ATTACHMENT + TRANSFER_SRC, memory type 1 (DEVICE_LOCAL)
+Graphics pipeline created (triangle.spv, dynamic rendering)
+
+Sync objects: 1 timeline semaphore, 2 + 3 binary semaphores, no fences (2 frame(s) in flight)
+
+Rendering. Close the window to exit.
+Frame 1: slot 0, no earlier frame used this slot, the submit will signal 1
+Frame 2: slot 1, no earlier frame used this slot, the submit will signal 2
+Frame 3: slot 0, the CPU waits until the counter reaches 1, the submit will signal 3
+[timing] frame 3: the counter read after the wait: 2
+Frame 4: slot 1, the CPU waits until the counter reaches 2, the submit will signal 4
+[timing] frame 4: the counter read after the wait: 3
+Frame 5: slot 0, the CPU waits until the counter reaches 3, the submit will signal 5
+[timing] frame 5: the counter read after the wait: 4
+[timing] 1s, GPU timestamps of 1825 frames: render 3.8 us avg, 7.0 us max; render done -> blit done 6.7 us avg, 8.2 us max
+[timing] 2s, GPU timestamps of 2056 frames: render 3.8 us avg, 5.2 us max; render done -> blit done 6.7 us avg, 8.2 us max
+[timing] 3s, GPU timestamps of 2144 frames: render 5.3 us avg, 10.7 us max; render done -> blit done 10.4 us avg, 22.5 us max
+[timing] 4s, GPU timestamps of 2134 frames: render 10.5 us avg, 16.6 us max; render done -> blit done 22.8 us avg, 37.9 us max
+Window closed
+[timing] timeline counter at exit: 8161 (8161 frames submitted)
+```
+
+Первые пять кадров печатают, чего они ждут и что сигналят. Самое интересное — строки `[timing]`: кадр 3 ждёт 1, а
+читает 2. Условие «≥ 1» выполнилось, а к тому моменту, когда CPU заглянул в счётчик, GPU успел закончить и кадр 2.
+Fence на слот этого бы не сказал; счётчик говорит всё сразу. Эти строки зависят от момента, остальное версия на C++
+печатает так же. С включённой синхронизационной валидацией (`VK_KHRONOS_VALIDATION_VALIDATE_SYNC=true`), как в этом
+запуске, единственное сообщение — предупреждение слоя bandicam. Ежесекундные строки `[timing]` с метками времени GPU
+относятся к [уроку о барьерах](lesson:barriers-and-layouts#правда-ли-рендеринг-идёт-раньше-acquire).
+
+С одним кадром в полёте (`--frames 1`) каждый кадр ждёт предыдущий, как в шаге 09 (сокращено):
+
+```text
+Frame 1: slot 0, no earlier frame used this slot, the submit will signal 1
+Frame 2: slot 0, the CPU waits until the counter reaches 1, the submit will signal 2
+[timing] frame 2: the counter read after the wait: 1
+Frame 3: slot 0, the CPU waits until the counter reaches 2, the submit will signal 3
+[timing] frame 3: the counter read after the wait: 2
+```
+
+С тремя (`--frames 3`) CPU убегает вперёд на три кадра (сокращено):
+
+```text
+Frame 1: slot 0, no earlier frame used this slot, the submit will signal 1
+Frame 2: slot 1, no earlier frame used this slot, the submit will signal 2
+Frame 3: slot 2, no earlier frame used this slot, the submit will signal 3
+Frame 4: slot 0, the CPU waits until the counter reaches 1, the submit will signal 4
+[timing] frame 4: the counter read after the wait: 3
+```
+
+При выходе счётчик в каждом запуске равен числу отправленных кадров: каждый кадр добавил ровно единицу.
+
+## За пределами одной очереди
+
+Цикл кадра пользуется лишь малой частью возможностей timeline. С несколькими очередями по timeline на очередь
+«подожди ту загрузку» или «подожди тот шаг симуляции» превращается в «подожди значение *n*», и ожидание можно отправить
+раньше работы, которая его просигналит. В интерактиве [Очереди, семафоры и fence](lab:queue-sync) для этого есть
+сценарий «Async compute + timeline»: уберите ожидание у второго шага симуляции и посмотрите, как он перезаписывает
+частицы, которые draw ещё читает.
+
+## Карта урока
+
+<MindMap />
+
+## Что под капотом
+
+- Timeline-семафор естественно ложится на то, как GPU сообщают о продвижении: 64-битное значение в памяти, которое
+  командный процессор пишет по завершении работы и с которым сравнивает ждущая очередь или хост. В Windows у модели
+  драйверов есть свои счётчики продвижения (та же идея, что у fence D3D12), и Vulkan умеет импортировать хендл fence
+  D3D12 в `VkSemaphore` (`VK_KHR_external_semaphore_win32`).
+- У бинарного семафора есть дополнительное состояние (просигналён или нет, забран одним ожиданием). Спецификация
+  требует лишь, чтобы acquire и present у swapchain принимали бинарные семафоры (VUID выше); причины она не называет, и
+  мы её не придумываем.
+- Ожидание на хосте через `vkWaitSemaphores` — такое же ожидание на хосте, как `vkWaitForFences`: драйвер даёт нашему
+  потоку спать или крутиться, пока значение не будет достигнуто. От замены частота кадров не меняется; меняется
+  бухгалтерия.
+
+<Quiz
+	questions={[
+		{
+			q: 'Три кадра в полёте, кадр 10 вот-вот снова займёт свой слот. Какого значения счётчика ждёт CPU?',
+			options: [
+				{
+					text: '9 — кадра, отправленного прямо перед ним',
+					why: 'Это выстроило бы кадры в затылок, как в шаге 09; кадр 9 пользуется другим слотом.',
+				},
+				{
+					text: '10 — значения, которое этот кадр сам просигналит',
+					why: 'Кадр 10 ещё не отправлен; ожидание собственного значения никогда бы не вернулось.',
+				},
+				{
+					text: '7 — последнего кадра в том же слоте',
+					why: 'Верно: n − F = 10 − 3 = 7; когда счётчик хотя бы 7, command buffer и семафор acquire того кадра свободны.',
+				},
+				{
+					text: '0, потому что timeline-ожидания на хосте не блокируют',
+					why: 'Ожидание timeline блокирует, пока счётчик не дойдёт до значения; 0 выполнилось бы сразу и ничего бы не защитило.',
+				},
+			],
+			answer: 2,
+			ref: '#4-ждём-кадр-который-занимал-слот',
+		},
+		{
+			q: 'Зачем шагу 12 всё ещё бинарные семафоры?',
+			options: [
+				{
+					text: 'Timeline-семафор сигналит только хост, отправка в очередь этого не умеет',
+					why: 'Умеет: отправка сигналит timeline значением n на ALL_COMMANDS.',
+				},
+				{
+					text: 'vkAcquireNextImageKHR и vkQueuePresentKHR принимают только бинарные',
+					why: 'Верно: VUID-vkAcquireNextImageKHR-semaphore-03265 и VUID-vkQueuePresentKHR-pWaitSemaphores-03267 требуют VK_SEMAPHORE_TYPE_BINARY.',
+				},
+				{
+					text: 'У устройства может быть только один timeline-семафор',
+					why: 'Такого лимита нет; программа может создать столько timeline-семафоров, сколько нужно.',
+				},
+				{
+					text: 'Бинарные семафоры быстрее ждать',
+					why: 'Дело не в скорости: функции swapchain просто не принимают timeline-семафоры.',
+				},
+			],
+			answer: 1,
+			ref: '#почему-acquire-и-present-остаются-бинарными',
+		},
+		{
+			q: 'Кадр 3 ждал, пока счётчик дойдёт до 1, а прочитал 2. Что это значит?',
+			options: [
+				{
+					text: 'GPU к тому моменту успел закончить и кадр 2',
+					why: 'Верно: ожидание удовлетворяет «хотя бы 1», а счётчик уже ушёл дальше, к 2.',
+				},
+				{
+					text: 'Ожидание вернулось слишком рано — ошибка синхронизации',
+					why: 'Ожидание v возвращается, как только счётчик ≥ v; 2 подходит не хуже 1.',
+				},
+				{
+					text: 'Кадр 2 просигналил раньше кадра 1, не по порядку',
+					why: 'Ничего не нарушено: счётчик не идёт назад, а ожиданию 1 подходит любое значение от 1 и выше.',
+				},
+				{
+					text: 'Ожидание забрало одну ступень счётчика',
+					why: 'Ожидания timeline ничего не забирают; чтение счётчика его не меняет.',
+				},
+			],
+			answer: 0,
+			ref: '#что-печатает-программа',
+		},
+		{
+			q: 'Почему в кадре шага 12 нет шага «сброс», в отличие от fence шага 10?',
+			options: [
+				{
+					text: 'Драйвер сам сбрасывает счётчик после каждого ожидания',
+					why: 'Счётчик никто не сбрасывает, он только растёт. Именно поэтому сброс и не нужен.',
+				},
+				{
+					text: 'Ожидание счётчик не меняет, а каждый кадр сигналит большее значение',
+					why: 'Верно: состояния, из которого fence приходилось сбрасывать, просто нет; кадр n сигналит n, а это всегда больше, чем было.',
+				},
+				{
+					text: 'Бинарные семафоры сбрасывают timeline-семафор, когда очередь их ждёт',
+					why: 'Бинарный и timeline-семафор — разные объекты; ожидание одного ничего не делает с другим.',
+				},
+				{
+					text: 'Потому что vkDeviceWaitIdle вызывается каждый кадр',
+					why: 'Шаг 12 вызывает vkDeviceWaitIdle только в конце; цикл кадра ждёт timeline.',
+				},
+			],
+			answer: 1,
+			ref: '#4-ждём-кадр-который-занимал-слот',
+		},
+	]}
+/>

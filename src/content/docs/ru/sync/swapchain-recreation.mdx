@@ -3,4 +3,386 @@ title: 'Пересоздание swapchain'
 description: 'Окно меняет размер и сворачивается: OUT_OF_DATE и SUBOPTIMAL, oldSwapchain и как узнать, что старый swapchain освободился, — present fence или vkDeviceWaitIdle.'
 ---
 
-Русская версия урока готовится.
+import { Aside } from '@astrojs/starlight/components';
+import MindMap from 'course-kit/components/MindMap.astro';
+import Quiz from 'course-kit/components/Quiz.astro';
+import Step from '../../../../components/Step.astro';
+
+До сих пор каждая программа останавливалась, стоило окну измениться: шаги 09 и 10 печатают «recreation is step 11» и
+выходят. Настоящий рендерер должен пережить изменение размера, сворачивание и разворачивание без заминки. Как он
+замечает, что swapchain больше не подходит, как строит новый и — самое трудное — когда можно уничтожить старый,
+которым presentation engine, возможно, ещё пользуется?
+
+## Место в курсе
+
+Последний урок модуля «Синхронизация» и место, где синхронизация встречается с оконной системой. Он возвращает
+swapchain из [модуля 4](lesson:swapchain) и применяет к нему все инструменты этого модуля: fence, новый вид fence для
+present и `vkDeviceWaitIdle` как грубый запасной путь. Цепочка:
+
+`событие окна / OUT_OF_DATE / SUBOPTIMAL → vkCreateSwapchainKHR(oldSwapchain) → старый swapchain списан → ждём, пока закончатся его present (present fence или vkDeviceWaitIdle) → уничтожаем старую цепочку`
+
+[Пересоздание swapchain](term:swapchain-recreation) построено на [swapchain](term:vk-swapchain); оно превращает
+старый swapchain в [списанный](term:old-swapchain) и узнаёт, когда тот освободился, от
+[present fence](term:present-fence) — особого вида [fence](term:vk-fence).
+
+## Почему swapchain устаревает
+
+Swapchain делается под один размер: его изображения 800x600 и такими останутся. Окно — нет: пользователь тянет его
+за край, сворачивает, переносит на монитор с другим масштабом. Как композ, собранный под один размер плейта, его
+приходится переделывать, когда плейт меняется, а старая версия ещё может быть на экране.
+
+Vulkan сообщает об этом двумя путями. Оконная система присылает новый размер (событие resize). И сами функции
+swapchain говорят об этом; спецификация: «If the swapchain images no longer match native surface properties, either
+`VK_SUBOPTIMAL_KHR` or `VK_ERROR_OUT_OF_DATE_KHR` must be returned».
+
+- `VK_SUBOPTIMAL_KHR` — код *успеха*: изображение получено или показано, просто оно больше не подходит в точности
+  (платформа, например, может его масштабировать). Продолжаем, скоро пересоздаём.
+- `VK_ERROR_OUT_OF_DATE_KHR` — ошибка: «no image is acquired and attempts to present previously acquired images to the
+  swapchain will also fail». Пользоваться этим swapchain больше нельзя.
+
+В Windows правило строгое: платформенное примечание спецификации говорит, что новый swapchain можно создать только с
+`imageExtent`, равным текущему размеру окна, и что размер может стать (0, 0), например когда окно свёрнуто, «and so a
+swapchain cannot be created until the size changes».
+
+## Что придётся пересоздать
+
+Не всё. Пайплайн остаётся: viewport и scissor — динамическое состояние со времён
+[урока о графическом пайплайне](lesson:graphics-pipeline), а формат от размера не меняется. Всё, что зависит от
+swapchain, собрано в одну структуру, чтобы заменять, хранить и уничтожать это целиком:
+
+<Step file="11_resize" region="chain" />
+
+Сам swapchain, его изображения (ими владеет он), их view, по одному семафору `render_finished` на изображение (его ждёт
+present, так что живёт он столько же, сколько present в эту цепочку) и размер. Списанная цепочка `Retired` помнит
+номер кадра, на котором её заменили: это ключ к тому, чтобы потом её уничтожить.
+
+## 1. Создаём цепочку и передаём старую
+
+<Step file="11_resize" region="create-chain" />
+
+Три детали:
+
+- **спрашиваем surface заново.** `currentExtent` следует за окном. Особое значение `0xFFFFFFFF` значит «размер решает
+  swapchain» (на некоторых платформах); тогда берётся размер окна, зажатый в допустимые пределы;
+- **0x0 значит «свёрнуто».** Такого размера у swapchain быть не может: ширина и высота должны быть ненулевыми
+  (`VUID-VkSwapchainCreateInfoKHR-imageExtent-01689`). Функция возвращает «ничего не создано», и рендеринг встаёт на
+  паузу;
+- **`oldSwapchain`.** Если передать текущий swapchain, presentation engine может переиспользовать его ресурсы и
+  переключиться без пропуска кадра. С этого вызова старый **списан** (retired), «even if creation of the new swapchain
+  fails». Получить из него изображение больше нельзя, но «the application can pass to `vkQueuePresentKHR` any images
+  it had already acquired from `oldSwapchain`». Старый swapchain не должен быть списан раньше
+  (`VUID-VkSwapchainCreateInfoKHR-oldSwapchain-01933`), и уничтожать его по-прежнему нам.
+
+Первый swapchain программы создаётся той же функцией, с пустым `oldSwapchain`: swapchain появляется на свет только
+одним путём.
+
+## 2. Два способа списать старую цепочку
+
+<Step file="11_resize" region="recreate" />
+
+Вся политика — в этой функции, и у неё две ветки; это и есть главный вопрос урока. Когда старую цепочку можно
+уничтожить? Правило: «All uses of presentable images acquired from swapchain must have completed execution»
+(`VUID-vkDestroySwapchainKHR-swapchain-01282`). Наш рендеринг в её изображения покрыт нашими fence. Present — нет: по
+умолчанию presentation engine вообще никак не сообщает, что закончил с тем, на что ссылался present.
+
+- **Без present fence** лучшее, что даёт базовый API, — дождаться простоя устройства и сразу уничтожить старую
+  цепочку. `vkDeviceWaitIdle` ждёт работу очередей, включая операции очереди у present (их ожидания семафоров);
+  presentation engine он не ждёт. (Базовая спецификация добавляет, что «regarding interaction with
+  `vkQueueWaitIdle`» present «behaves as if it signals a fence payload that is managed by the implementation», и
+  описывает это теми же словами, что present fence ниже; в спецификации, собранной со всеми расширениями, эту фразу
+  заменяет текст о present fence.) Просто и доступно всегда; цена — полная остановка GPU при каждом пересоздании.
+- **С present fence**, которые существуют, чтобы знать, когда ресурсы present можно освободить, старая цепочка
+  паркуется в `retired`, кадры идут дальше, а уничтожается она несколькими кадрами позже, когда fence доказывают, что
+  её present закончены. Рендеринг не останавливается ни на миг.
+
+## 3. Present fence
+
+[Present fence](term:present-fence) — это fence, переданный в `vkQueuePresentKHR`. Он приходит с
+`VK_KHR_swapchain_maintenance1`, расширением устройства, которому нужны два расширения instance:
+
+<Step file="11_resize" region="instance-extensions" />
+
+<Step file="11_resize" region="device-extensions" />
+
+Нужны и расширение, и его возможность `swapchainMaintenance1`; только тогда программа пользуется present fence, и
+только если не задан `--no-present-fences`. На GPU курса поддерживается всё.
+
+Что говорит этот fence? Спецификация: он «will signal after all such queue operations have completed, and after the
+presentation engine has taken a reference to the payloads of all objects provided in `VkPresentInfoKHR` that the
+presentation engine accesses as part of the present operation». И важное: «The fence may not wait for the present
+operation to complete». Он значит не «изображение показано», а «present больше не нуждается в наших объектах». Отсюда
+спецификация делает два нужных нам вывода: семафоры ожидания present можно уничтожить, как только просигналил один из
+его fence, а swapchain — «when the fences associated with all past presentation requests referring to that swapchain
+have signaled».
+
+По одному fence на слот кадра, он отдаётся в каждый present этого слота:
+
+<Step file="11_resize" region="frame-resources" />
+
+<Step file="11_resize" region="present" />
+
+`VkSwapchainPresentFenceInfoKHR` идёт в цепочку `pNext` у `VkPresentInfoKHR`, по одному fence на каждый swapchain
+вызова. Fence должен быть непросигналенным (`VUID-VkSwapchainPresentFenceInfoKHR-pFences-07758`). Обратите внимание,
+что бывает, когда present возвращает `OUT_OF_DATE`: спецификация говорит, что «the set of queue operations is still
+considered to be enqueued and thus any semaphore wait operation specified in `VkPresentInfoKHR` will execute». Семафор
+всё равно забирается; не показывается только изображение.
+
+Прежде чем слот снова будет показывать, он ждёт свой последний present fence:
+
+<Step file="11_resize" region="wait-present-fence" />
+
+Таймаут здесь для подстраховки, и комментарий объясняет почему. О present, который вернул `OUT_OF_DATE`, спецификация
+говорит, что его операции очереди «still considered to be enqueued» и что его ожидания семафоров выполнятся; текст о
+present fence говорит, что fence сигналит «after all such queue operations have completed, and after the presentation
+engine has taken a reference» к объектам, к которым он обращается. Нигде прямо не сказано, сигналит ли fence
+отклонённого present (если читать буквально, отклонённый present ни к чему не обращается, так что fence должен
+просигналить, но это наше прочтение, а не фраза спецификации). Если ожидание когда-нибудь выйдет по таймауту,
+программа откатится на `vkDeviceWaitIdle` и больше не будет пользоваться этим fence. И не уничтожит его вслепую:
+`vkDeviceWaitIdle` ждёт работу очередей, а не presentation engine, так что fence ещё может оставаться в ожидании, а
+уничтожить fence, который ещё может просигналить present, — нарушение `VUID-vkDestroyFence-fence-01120`. Отменить
+такой fence спецификация не позволяет, поэтому при выходе программа уничтожает его, только если он к тому времени
+просигналил, а иначе оставляет живым и сообщает об этом. Ни в одном запуске на машине курса этот запасной путь не
+сработал.
+
+### Какой кадр освобождает старую цепочку
+
+<Step file="11_resize" region="destroy-retired" />
+
+Рассуждение для F = 2 кадров в полёте, когда старая цепочка заменена на кадре R:
+
+1. каждый present в старую цепочку принадлежит кадру раньше R (начиная с кадра R, кадры показывают в новую цепочку);
+2. present кадра F' дожидаются в начале кадра F' + F, когда его слот снова подходит по кругу;
+3. значит, в начале кадра R + F − 1 слот кадра R − 1, последнего, кто показывал в старую цепочку, уже дождался своего
+   present fence, а fence всех более ранних present дождались ещё раньше. Кроме того, спецификация требует, чтобы
+   fence present «to the same swapchain on the same `VkQueue` must be signaled in the same order as the present
+   operations».
+
+В этот момент старая цепочка уничтожается, а новая продолжает показывать.
+
+## 4. Три повода
+
+<Step file="11_resize" region="recreate-triggers" />
+
+Пересоздание может начаться в трёх местах, и у каждого свои последствия:
+
+- **пришло событие resize или последний present сказал `SUBOPTIMAL`**: пересоздаём до acquire;
+- **acquire вернул `OUT_OF_DATE`**: изображение не получено, и семафор не будет просигналён, поэтому пересоздаём и
+  делаем acquire заново из новой цепочки;
+- **acquire вернул `SUBOPTIMAL`**: изображение *получено*, и `image_available` *будет* просигналён. Если бросить его,
+  останутся полученное изображение и ожидающий сигнал, поэтому кадр рендерится и показывается, а swapchain
+  пересоздаётся перед следующим (полученное изображение нужно показать или отпустить через
+  `vkReleaseSwapchainImagesKHR` из того же расширения).
+
+## Свёрнутое окно
+
+Когда окно свёрнуто, `create_chain` находит surface размером 0x0 и ничего не создаёт. Программа ставит `paused`,
+пропускает отрисовку и время от времени просыпается проверить (`about_to_wait` в Rust, `glfwWaitEventsTimeout` в C++).
+Разворачивание приносит событие resize, пересоздание удаётся, и `paused` снимается. Особых случаев больше нигде нет:
+свёрнутое окно — это просто «пересоздание, которое пока невозможно».
+
+## Устаревшее событие
+
+<Step file="11_resize" region="event-loop" />
+
+Одна деталь пришла из настоящего запуска, а не из спецификации. Сразу после создания окна winit прислал событие
+`Resized` с размером, которого у окна не было (2564x984 на машине курса, размер из времени до того, как окно получило
+внутренний размер 800x600). Если пересоздавать на каждый `Resized`, сразу же построился бы второй swapchain, впустую.
+Поэтому цикл событий в Rust не верит размеру из события: он сравнивает *текущий* `inner_size()` окна с размером
+swapchain и пересоздаёт, только если они различаются (или если рендеринг на паузе). Колбэк размера framebuffer в GLFW
+в версии на C++ просто ставит флаг; на этой машине такого раннего события он не присылал, и обе версии печатают одни и
+те же строки.
+
+Общий вывод: события окна — подсказки, а правда — возможности surface. `create_chain` в любом случае спрашивает
+surface.
+
+## 5. Завершение
+
+<Step file="11_resize" region="cleanup" />
+
+`vkDeviceWaitIdle` ждёт работу очередей, включая операции очереди у present; presentation engine он не ждёт. Present
+текущей цепочки и всех ещё списанных покрыты их present fence, поэтому ждём и их, включая брошенные, с тем же
+таймаутом, и только потом уничтожаем цепочки. Present fence, который так и не просигналил, не уничтожается (см. выше).
+
+## Кто ещё пользуется изображениями swapchain
+
+Есть ещё одна сторона, которая может трогать изображения swapchain, и машина курса её показывает. В
+[уроке о валидации](lesson:validation) мы встречали неявные слои, которые ставят другие программы; один из них,
+`VK_LAYER_bandicam_helper` от программы записи экрана, загружается в каждую программу на Vulkan. Такие слои
+записывают экран или рисуют оверлеи, и для этого работают с самими изображениями swapchain.
+
+Шаг 12 копирует в изображения swapchain через blit, поэтому им нужен usage `TRANSFER_DST`, а *наш* код в них больше
+не рендерит. Поэтому ранняя версия шага 12 создавала их только с `TRANSFER_DST`. Слой валидации тогда сообщил о двух
+ошибках, которые пришли не из нашего кода: `VUID-VkImageViewCreateInfo-image-04441` (image view на изображении без
+usage, который view мог бы обслуживать) и `VUID-VkFramebufferCreateInfo-pAttachments-00877` (color attachment у
+framebuffer без usage `COLOR_ATTACHMENT`). Шаг 12 не создаёт ни image view на изображениях swapchain, ни framebuffer
+вообще: это делал слой Bandicam, на изображениях, в которые он считал возможным рендерить. Когда слой выключили его
+собственным переключателем (`VK_LAYER_bandicam_helper_DEBUG_1=1`, `disable_environment` из его манифеста), обе ошибки
+исчезли; `VK_LOADER_LAYERS_DISABLE` загрузчика на этой машине его не выключил.
+
+<Step file="12_timeline" region="swapchain-usage" />
+
+Поэтому шаг 12 оставляет `COLOR_ATTACHMENT` рядом с `TRANSFER_DST`. Это безопасно везде: спецификация гарантирует,
+что `COLOR_ATTACHMENT` «must be included» в `supportedUsageFlags` любой surface, а любой другой usage, включая
+`TRANSFER_DST`, надо проверять, что программа и делает. По правилам это были некорректные вызовы самого слоя; на
+практике у ваших пользователей такие слои стоят, и swapchain — ресурс, который вы с ними делите.
+
+## Что печатает программа
+
+С present fence (по умолчанию) и `--demo-resize`, который через 1 с меняет размер окна на 1000x700, через 2 с — на
+640x480, через 3 с сворачивает его и через 4 с разворачивает (Rust):
+
+```text
+Window: 800x600 pixels, resizable
+Picked: NVIDIA GeForce RTX 3080 Ti, graphics + present family 0
+Present fences (VK_KHR_swapchain_maintenance1): supported, used
+Surface format B8G8R8A8_SRGB + SRGB_NONLINEAR, present mode MAILBOX
+Swapchain created: 800x600, 3 images
+
+Rendering. Resize or minimize the window; close it to exit.
+Demo: resize to 1000x700
+Swapchain recreated: 1000x700, 3 images; the old one waits for its present fences
+Old 800x600 swapchain destroyed: the fences of all its presents have signaled
+Demo: resize to 640x480
+Swapchain recreated: 640x480, 3 images; the old one waits for its present fences
+Old 1000x700 swapchain destroyed: the fences of all its presents have signaled
+Demo: minimize
+Window minimized (surface 0x0): rendering paused
+Demo: restore
+Window restored
+Swapchain recreated: 640x480, 3 images; the old one waits for its present fences
+Old 640x480 swapchain destroyed: the fences of all its presents have signaled
+Window closed
+[timing] 7232 frames, 3 swapchain recreation(s)
+```
+
+С `--no-present-fences` строки пересоздания меняются:
+
+```text
+Present fences (VK_KHR_swapchain_maintenance1): supported, off (--no-present-fences)
+...
+Swapchain recreated: 1000x700, 3 images; the old one destroyed after vkDeviceWaitIdle
+Swapchain recreated: 640x480, 3 images; the old one destroyed after vkDeviceWaitIdle
+...
+Swapchain recreated: 640x480, 3 images; the old one destroyed after vkDeviceWaitIdle
+```
+
+(Сокращено.) Версия на C++ печатает те же строки; валидация сообщает только предупреждение bandicam. Стоит заметить
+две вещи. После разворачивания размер тот же, 640x480, что и раньше, но swapchain всё равно строится новый: старый
+пережил surface 0x0, и программа не пытается угадать, уцелел ли он. И во всех этих запусках каждое пересоздание
+начиналось с события resize: ни acquire, ни present на этой машине ни разу не вернули `OUT_OF_DATE` или `SUBOPTIMAL`
+(иначе появились бы строки `[timing]`). На других платформах и драйверах возвращают, поэтому код обрабатывает все три
+повода.
+
+## Карта урока
+
+<MindMap />
+
+## Что под капотом
+
+- В Windows presentation engine — это Desktop Window Manager вместе с драйвером дисплея: изображения нашего swapchain
+  общие с композитором, который читает их, собирая рабочий стол. Новый размер окна — это новые изображения нового
+  размера; `oldSwapchain` позволяет драйверу передать эстафету без чёрного кадра.
+- «The presentation engine has taken a reference»: композитор может пользоваться изображением (и памятью за ним) и
+  после того, как наш present закончился в очереди (спецификация: память изображения swapchain «will only be freed
+  after that image is no longer used by the presentation engine»). Поэтому для уничтожения swapchain наших собственных
+  fence мало: `vkDeviceWaitIdle` ждёт работу очередей, а не presentation engine, и present fence
+  (`VK_KHR_swapchain_maintenance1`) существуют, чтобы знать, когда ресурсы present можно освободить.
+- У свёрнутого окна нет площади, в которую можно что-то собирать, отсюда surface 0x0. С GPU или swapchain в этот момент
+  всё в порядке; просто не существует размера изображения, который был бы допустим.
+
+<Quiz
+	questions={[
+		{
+			q: 'vkAcquireNextImageKHR вернул VK_SUBOPTIMAL_KHR. Что должен сделать кадр?',
+			options: [
+				{
+					text: 'Пропустить этот кадр и сразу пересоздать swapchain, как при OUT_OF_DATE',
+					why: 'SUBOPTIMAL значит, что изображение ПОЛУЧЕНО и его семафор будет просигналён; если бросить их, оба останутся висеть.',
+				},
+				{
+					text: 'Отрендерить и показать его, а пересоздать перед следующим кадром',
+					why: 'Верно: полученное изображение нужно показать (или отпустить); swapchain ещё работает, просто уже не подходит в точности.',
+				},
+				{
+					text: 'Ничего: SUBOPTIMAL можно игнорировать вечно',
+					why: 'Показ продолжает работать, но изображения больше не совпадают с окном; шаг 11 вскоре пересоздаёт swapchain.',
+				},
+				{
+					text: 'Подождать семафор image_available на хосте',
+					why: 'Бинарный семафор хост ждать не может, а код результата ничего не говорит о семафоре.',
+				},
+			],
+			answer: 1,
+			ref: '#4-три-повода',
+		},
+		{
+			q: 'Почему старый swapchain нельзя уничтожить сразу после того, как vkCreateSwapchainKHR вернул новый?',
+			options: [
+				{
+					text: 'Полученные из него изображения ещё могут рендериться и показываться',
+					why: 'Верно: списанный swapchain ещё обслуживает present изображений, полученных раньше; уничтожать его можно, только когда все обращения к его изображениям завершены.',
+				},
+				{
+					text: 'Драйвер сам уничтожит его через несколько кадров',
+					why: 'Списанный swapchain по-прежнему объект приложения; уничтожать его надо через vkDestroySwapchainKHR.',
+				},
+				{
+					text: 'vkCreateSwapchainKHR ещё не закончил копировать старые изображения в новые',
+					why: 'Ничего не копируется: у нового swapchain новые изображения нового размера.',
+				},
+				{
+					text: 'У устройства может быть только один swapchain за раз',
+					why: 'Swapchain может быть несколько, даже на одну surface (списанные); не списанный на окно только один.',
+				},
+			],
+			answer: 0,
+			ref: '#2-два-способа-списать-старую-цепочку',
+		},
+		{
+			q: 'Что доказывает просигналивший present fence (VK_KHR_swapchain_maintenance1)?',
+			options: [
+				{
+					text: 'Что изображение появилось на дисплее',
+					why: 'Спецификация говорит, что fence может и не ждать завершения показа; он про наши объекты, а не про экран.',
+				},
+				{
+					text: 'Что present больше не нуждается в объектах, на которые ссылался',
+					why: 'Верно: операции очереди завершены, а presentation engine забрал свои ссылки, так что семафоры ожидания можно использовать снова, а после всех present — уничтожить swapchain.',
+				},
+				{
+					text: 'Что следующий вызов vkAcquireNextImageKHR вернёт именно это изображение',
+					why: 'Какое изображение вернёт следующий acquire, решает presentation engine.',
+				},
+				{
+					text: 'Что GPU простаивает',
+					why: 'Present fence покрывает один present; другая работа очередей может ещё идти.',
+				},
+			],
+			answer: 1,
+			ref: '#3-present-fence',
+		},
+		{
+			q: 'Окно свёрнуто, и его surface сообщает 0x0. Что делает шаг 11?',
+			options: [
+				{
+					text: 'Создаёт swapchain 1x1, пока окно не вернётся',
+					why: 'В Windows новый swapchain обязан совпадать с текущим размером окна, а 0x0 вообще недопустимый размер.',
+				},
+				{
+					text: 'Уничтожает устройство и при разворачивании создаёт всё заново',
+					why: 'От размера окна зависит только swapchain; устройство, пайплайн и кадры остаются.',
+				},
+				{
+					text: 'Ничего не создаёт, ставит рендеринг на паузу и ждёт следующего resize',
+					why: 'Верно: imageExtent должен быть ненулевым (VUID-VkSwapchainCreateInfoKHR-imageExtent-01689), поэтому пересоздание ждёт, пока разворачивание не сообщит размер.',
+				},
+				{
+					text: 'Продолжает показывать в старый swapchain',
+					why: 'Старый swapchain больше не подходит окну, а свёрнутое окно ничего не показывает; программа просто перестаёт рисовать.',
+				},
+			],
+			answer: 2,
+			ref: '#свёрнутое-окно',
+		},
+	]}
+/>
