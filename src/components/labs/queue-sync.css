@@ -3,14 +3,15 @@
  * stalls hatched, semaphore/fence arrows, problem markers, the problem list and the editable host program.
  * Built on the engine tokens (--lab-*, --sl-*), readable in both themes.
  */
+/* Stage and link colors: entries of the engine palette (light and dark values; site themes recolor them). */
 .qs {
-	--qs-copy: #4f8ff7;
-	--qs-compute: #3fb27f;
-	--qs-vs: #9c6ade;
-	--qs-fs: #e5a33b;
-	--qs-cao: #d46a9f;
-	--qs-sem: #2bb3c0;
-	--qs-fence: #e0703a;
+	--qs-copy: var(--ck-group-8);
+	--qs-compute: var(--ck-group-2);
+	--qs-vs: var(--ck-group-5);
+	--qs-fs: var(--ck-group-3);
+	--qs-cao: var(--ck-group-7);
+	--qs-sem: var(--ck-group-10);
+	--qs-fence: var(--ck-group-11);
 }
 .qs-question {
 	margin: 0 0 0.6rem;
@@ -148,7 +149,7 @@
 	fill: var(--lab-err);
 }
 .qs-mark text {
-	fill: #fff;
+	fill: var(--ck-on-fill);
 	font-size: 11px;
 	font-weight: 700;
 	text-anchor: middle;

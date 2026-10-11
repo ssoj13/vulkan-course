@@ -78,7 +78,8 @@
 	font-weight: 600;
 	line-height: 1.25rem;
 	text-align: center;
-	color: #fff;
+	/* Only recording and execution bars carry text, on a solid series fill. */
+	color: var(--ck-on-fill);
 }
 .cp-bar.is-update,
 .cp-swatch.is-update {

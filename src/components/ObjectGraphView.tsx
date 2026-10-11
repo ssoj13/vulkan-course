@@ -25,14 +25,17 @@ export interface ObjectGraphViewProps {
 	groups: TreeGroup[];
 	/** term id -> glossary URL (resolved at build time). */
 	termHref: Record<string, string>;
+	/** Version of the build exercise's rules (lib/object-trainer.ts `ruleVersion`, computed at build time). */
+	version: string;
 }
 
 const STATE_KEY = { done: 'stateAlive', ready: 'stateReady', locked: 'stateGhost', error: 'stateDangling' } as const;
+const TAG_KEY = { done: 'tagAlive', ready: 'tagReady', locked: 'tagGhost', error: 'tagDangling' } as const;
 
-export default function ObjectGraphView({ lang, mode, items, groups, termHref }: ObjectGraphViewProps) {
+export default function ObjectGraphView({ lang, mode, items, groups, termHref, version }: ObjectGraphViewProps) {
 	const t = courseText(lang);
 	const ids = items.map((i) => i.id);
-	const scenario = useMemo(() => objectScenario(ids, lang), [ids.join(), lang]); // eslint-disable-line react-hooks/exhaustive-deps
+	const scenario = useMemo(() => objectScenario(ids, lang, version), [ids.join(), lang, version]); // eslint-disable-line react-hooks/exhaustive-deps
 
 	/** What the object is: its note and how it is obtained, released and made. */
 	const body = (it: TreeItem) => {
@@ -68,6 +71,7 @@ export default function ObjectGraphView({ lang, mode, items, groups, termHref }:
 					body={body}
 					startHint={t.startHint}
 					statusText={(s) => t[STATE_KEY[s]]}
+					statusTag={(s) => t[TAG_KEY[s]]}
 					progressText={(c, state) => tfmt(lang, t.progress, { n: ids.filter((id) => state.alive.includes(id)).length, total: c.total, errors: c.errors })}
 				/>
 			) : (

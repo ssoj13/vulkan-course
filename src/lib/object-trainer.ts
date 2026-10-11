@@ -25,8 +25,22 @@ export function objectStatus(state: SimState, id: string): Status {
 	return blockers(state, id).length ? 'locked' : 'ready';
 }
 
-/** The exercise on the objects `ids` (one of each kind, as the simulator keeps them). */
-export function objectScenario(ids: readonly string[], lang: string): Scenario<SimState> {
+/**
+ * Version of the exercise's rules: FNV-1a (32-bit, hex) over the given sources. ObjectGraph.astro passes the raw text
+ * of objects.json, lib/objects.ts and this file at build time, so any change to the data or the rule code makes stored
+ * runs stale (the engine then starts them fresh and says so) instead of replaying acts under other rules.
+ */
+export function ruleVersion(sources: readonly string[]): string {
+	let h = 0x811c9dc5;
+	for (const s of sources) {
+		for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 0x01000193);
+		h = Math.imul(h ^ 0xff, 0x01000193); // separator: ["ab", "c"] != ["a", "bc"]
+	}
+	return (h >>> 0).toString(16).padStart(8, '0');
+}
+
+/** The exercise on the objects `ids` (one of each kind, as the simulator keeps them); `version` = `ruleVersion`. */
+export function objectScenario(ids: readonly string[], lang: string, version: string): Scenario<SimState> {
 	const t = courseText(lang);
 	const words = (ls: LogLine[]) => ls.map((l) => entryOf(l, lang));
 	const verbs = (state: SimState, id: string): Verb<SimState>[] => {
@@ -36,7 +50,7 @@ export function objectScenario(ids: readonly string[], lang: string): Scenario<S
 				id: o.how,
 				label: t[o.how],
 				primary: true,
-				options: id === 'instance' && !state.alive.includes('instance') ? [{ id: 'debugUtils', label: tfmt(lang, t.enableExt, { ext: DEBUG_UTILS }), initial: true }] : undefined,
+				options: id === 'instance' && !state.alive.includes('instance') ? [{ kind: 'flag', id: 'debugUtils', label: tfmt(lang, t.enableExt, { ext: DEBUG_UTILS }), initial: true }] : undefined,
 				check: (s) => words(blockers(s, id)),
 				apply: (s, opts) => {
 					const r = create(s, id, opts.debugUtils ? [DEBUG_UTILS] : []);
@@ -56,6 +70,7 @@ export function objectScenario(ids: readonly string[], lang: string): Scenario<S
 	};
 	return {
 		id: `objects:${ids.join(',')}`,
+		version,
 		init: EMPTY,
 		items: ids,
 		verbs,

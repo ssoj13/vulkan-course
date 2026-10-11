@@ -117,7 +117,7 @@
 .vk-qp-vuid {
 	display: block;
 	margin-top: 0.15rem;
-	font-family: var(--__sl-font-mono);
+	font-family: var(--ck-mono);
 	font-size: var(--sl-text-xs);
 	color: var(--sl-color-gray-2);
 	overflow-wrap: anywhere;

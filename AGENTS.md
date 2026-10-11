@@ -109,7 +109,7 @@ Module 12 in progress.
 - MemoryHeaps: heaps/types of real GPUs, allocation, staging, ReBAR.
 - DescriptorWiring: shader set/binding ↔ resources.
 
-## Trainers (engine v0.6.0): how to add one
+## Trainers (engine v0.7.0): how to add one
 
 "Build it yourself" exercises (user, 2026-10-11: "это же как тренажёр, ровно то как надо всё делать") are an ENGINE
 feature: course-kit `lib/trainer.ts` (pure core) + `components/trainer/Trainer.tsx` (UI on TreeView, all four views,
@@ -119,17 +119,21 @@ never a new widget. The ObjectGraph build mode is the reference:
 1. Model (pure, Vulkan rules): `src/lib/<name>.ts` with its state type and functions that return calls/refusals as
    structured lines (`src/lib/objects.ts`: `blockers`, `destroyBlockers`, `create`, `destroy`). Facts only from the spec
    registry or real runs. VUID texts ONLY through `vuid(id)` (`src/lib/vuids.ts`); write the id, run `bun run sync:vuids`.
-2. Scenario (pure): `src/lib/<name>-trainer.ts` exporting `(ids, lang) => Scenario<State>` (`src/lib/object-trainer.ts`):
-   verbs with STABLE ids (stored in readers' browsers), `check` = model refusals mapped to entries (`entryOf`: validation
+2. Scenario (pure, deterministic): `src/lib/<name>-trainer.ts` exporting `(ids, lang, version) => Scenario<State>`
+   (`src/lib/object-trainer.ts`): `version` = `ruleVersion([raw sources])` computed in the .astro wrapper from `?raw`
+   imports of the data and rule code (a change makes stored runs start fresh); verbs and options with STABLE ids (stored
+   in readers' browsers), options of kind flag/choice/number/item, global steps as `actions`, instances that come and
+   go as `items: (state) => ids`, a state word on the card as `badge` (e.g. the image layout), `check` = model refusals mapped to entries (`entryOf`: validation
    reports verbatim English with `ref` = VUID, simulator remarks worded with `tfmt` from `src/i18n.ts`), `apply` = model
    transition, `status` -> locked/ready/done/error, `goals` (`allDone(text)` or custom predicates).
 3. Texts: course strings in `src/i18n.ts` (EN + RU, `tests/i18n.test.ts` parity); generic buttons/labels are the engine's.
 4. View: a React island (`client:only="react"`) that builds `TreeItem`s and `TreeGroup`s (colors `groupColor(i)`, never
    literal colors: site themes recolor through `--ck-*` tokens) and renders `<Trainer ... />` with `body` (details),
-   `statusText`/`progressText`/`startHint` if the course words them; an .astro wrapper validates data at build time and
+   `statusText`/`statusTag`/`progressText`/`startHint` if the course words them; an .astro wrapper validates data at build time and
    gives the text fallback (`src/components/ObjectGraph.astro` + `ObjectGraphView.tsx`).
 5. Tests: model facts (tests/objects.test.ts style) + the scenario through the engine core (`act`, `replay`, `undo`,
-   `why`, `complete`, `encode`/`decode`; tests/object-trainer.test.ts style), then `bun run lint`, `bun run check`,
+   `why`, `complete`, `consistency` over reached states, `encode`/`decode` with a stale version, replay stopping at a
+   `StaleAct` after a rule change; tests/object-trainer.test.ts style), then `bun run lint`, `bun run check`,
    `bun run build` and a browser pass (refusal shows the VUID, undo, reload restores the run).
 
 ## Labs (12, 2026-10-10)
@@ -192,7 +196,9 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
 
 ## State (2026-10-10)
 
-- Engine: `github:ssoj13/course-kit#v0.6.0` (public, released 2026-10-11: color tokens `--ck-*` + trainers; v0.5.0 concept
+- Engine: `github:ssoj13/course-kit#v0.7.0` (public, released 2026-10-11: trainer API v2 = StaleAct, scenario version,
+  option kinds, global actions, card status words; one-`:root` theme contract, `--ck-on-fill`, `--ck-mono`. v0.6.0 color
+  tokens `--ck-*` + trainers; v0.5.0 concept
   trees, v0.4.1 declarations and v0.4.2 labs catalog are in it). Bump the tag in package.json for engine changes, then `bun install`. node_modules/course-kit files are
   hard links into bun's cache: for local co-development delete a file before copying a new one over it.
 - Concept maps (engine v0.5.0, user-approved "D+E" + roadmap.sh design): MindMap and ObjectGraph are trees on the
@@ -216,12 +222,17 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
   notes (`scopedParents`: isA substitution for parents outside the scope). Groups/colors = stage in OBJ_GROUPS order
   (instance, devices, presentation, memory, images, pipeline, descriptors, commands, sync), colors = engine palette
   entries (`STAGE_COLOR` in ObjectGraph.astro -> `groupColor(i)` = `--ck-group-N`; no course color variables any more);
-  names = `stage*` texts in src/i18n.ts. Build mode (engine v0.6.0) = the engine Trainer on `src/lib/object-trainer.ts`
-  (`objectScenario(ids, lang)`): statuses locked/ready/done/error (= old ghost/ready/alive/dangling) in every view; the
+  names = `stage*` texts in src/i18n.ts. Build mode (engine v0.7.0) = the engine Trainer on `src/lib/object-trainer.ts`
+  (`objectScenario(ids, lang, version)`, version = `ruleVersion` of objects.json + objects.ts + object-trainer.ts, from
+  `?raw` imports in ObjectGraph.astro), card words `tag*` texts: statuses locked/ready/done/error (= old ghost/ready/alive/dangling) in every view; the
   window holds note, call, parents, glossary link (`body`), state (`state*` texts), the blocking VUID messages, the
   primary verb (Create/Allocate/Enumerate/Get, + the VK_EXT_debug_utils checkbox on the instance) and Destroy, the last
   result; under the map: progress (`progress` text), goal (`goalAll`), Undo, Start over, console. The reader's run is
   stored per page and scope (localStorage) and replayed on load. Map mode opens the device's children.
+- Lab colors (2026-10-11): no literal colors in lab CSS; series = engine palette (`--lab-series-*` alias `--ck-group-*`),
+  queue-sync stage/link colors = `--ck-group-N`, text or marks on a solid fill = `--ck-on-fill`, code font `--ck-mono`.
+  graphics-pipeline vertex colors stay literal (they are data). `@dagrejs/dagre` and `@xyflow/react` were removed from
+  package.json (unused here; the engine depends on @xyflow/react itself).
 - GPU snapshot for the device/queue/memory labs: `src/data/gpu.json` (RTX 3080 Ti, driver 616.64) from `bun run sync:gpu`
   (`scripts/sync-gpu.ts`: vulkaninfo `--json=0` for device/features/limits/queues + `--text` for memory heaps/types,
   which the profile JSON lacks); `tests/gpu.test.ts` pins it to the facts the lessons quote. Rerun after a driver update.
@@ -624,8 +635,12 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
   SECONDARY command buffers only; primaries must balance per queue (vkCmdEndDebugUtilsLabelEXT-commandBuffer-01912;
   spec: "When viewed from the linear series of submissions to a single queue ... matched and balanced"; a region may
   span command buffers); queue labels: vkQueueEndDebugUtilsLabelEXT-None-01911. TRAP: naming the
-  VkDebugUtilsMessengerEXT crashes (access violation inside vkSetDebugUtilsObjectNameEXT, also with bandicam disabled;
-  component not identified) -> the messenger is not named (comment in both files).
+  VkDebugUtilsMessengerEXT crashes (access violation inside vkSetDebugUtilsObjectNameEXT, also with bandicam disabled).
+  Cause = Vulkan-Loader: terminator_CreateDebugUtilsMessengerEXT (loader/debug_utils.c) returns its own pNextIndex
+  allocation as the handle, and terminator_SetDebugUtilsObjectNameEXT (loader/generated/vk_loader_extensions.c)
+  translates only PHYSICAL_DEVICE, SURFACE_KHR and INSTANCE handles, so the driver gets a handle it never created
+  -> the messenger is not named (comment in both files). VUIDs for names: 07872 instance-level, 07873
+  physical-device-level, 07874 device-level objects.
   printf: with only VK_KHRONOS_VALIDATION_PRINTF_ENABLE=true NOTHING is printed (the layer warns "DebugPrintf logs to
   the Information message severity"; this messenger is WARNING|ERROR); with VK_KHRONOS_VALIDATION_PRINTF_TO_STDOUT=true
   as well the layer writes to stdout (and warns it skips the debug callback). Real output (scene at time 0):

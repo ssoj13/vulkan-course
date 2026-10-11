@@ -27,7 +27,7 @@
 }
 .wd-code pre {
 	margin: 0;
-	font-family: var(--__sl-font-mono);
+	font-family: var(--ck-mono);
 	font-size: var(--sl-text-xs);
 	background: var(--lab-surface-2);
 	border: 1px solid var(--lab-border);
@@ -90,8 +90,8 @@
 	background: color-mix(in srgb, var(--lab-series-2) 10%, transparent);
 }
 .wd-lane.is-on {
-	/* The series colors are the same in both themes, so the text on them is fixed too. */
-	color: #10131a;
+	/* Solid series fill: light hue in dark, dark hue in light; the on-fill ink flips with it. */
+	color: var(--ck-on-fill);
 }
 .wd-lane.is-if.is-on {
 	background: var(--lab-series-1);

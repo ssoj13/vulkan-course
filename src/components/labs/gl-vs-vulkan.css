@@ -111,7 +111,7 @@
 }
 .gv-calls {
 	margin: 0;
-	font-family: var(--__sl-font-mono);
+	font-family: var(--ck-mono);
 	font-size: var(--sl-text-xs);
 	white-space: pre-wrap;
 	overflow-wrap: anywhere;

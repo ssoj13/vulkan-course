@@ -13,6 +13,12 @@ import { NOTE_OVERLAYS, OBJECTS, OBJ_GROUPS, labelOf, noteOf, obj, objectErrors,
 import { HOW_KEY, STAGE_KEY, courseText } from '../i18n';
 import { graphIn } from 'course-kit/lib/terms.ts';
 import { tfmt } from '../lib/text';
+import { ruleVersion } from '../lib/object-trainer';
+// Raw sources of the build exercise's rules (build time only; never reach the browser): their hash is the version
+// stored runs are tagged with.
+import objectsData from '../data/objects.json?raw';
+import objectsCode from '../lib/objects.ts?raw';
+import trainerCode from '../lib/object-trainer.ts?raw';
 import { DEFAULT_LANG, LANGUAGES, courseIn, langOf } from 'course-kit/lib/course.ts';
 import { groupColor, type TreeGroup, type TreeItem } from 'course-kit/components/graph/TreeView.tsx';
 
@@ -54,11 +60,12 @@ const items: TreeItem[] = scope.map((id) => {
  */
 const STAGE_COLOR: Record<Stage, number> = { instance: 0, devices: 1, memory: 2, pipeline: 3, sync: 4, presentation: 6, images: 7, descriptors: 8, commands: 9 };
 const groups: TreeGroup[] = OBJ_GROUPS.map((s) => ({ id: s, label: t[STAGE_KEY[s]], color: groupColor(STAGE_COLOR[s]) }));
+const version = ruleVersion([objectsData, objectsCode, trainerCode]);
 const termHref = Object.fromEntries(scope.flatMap((id) => (obj(id).term ? [[obj(id).term!, v.resolveLink(`term:${obj(id).term}`)!]] : [])));
 ---
 
 <figure class="vk-objgraph not-content">
-	<ObjectGraphView client:only="react" lang={v.lang} mode={mode} items={items} groups={groups} termHref={termHref} />
+	<ObjectGraphView client:only="react" lang={v.lang} mode={mode} items={items} groups={groups} termHref={termHref} version={version} />
 	{caption && <figcaption>{caption}</figcaption>}
 	<details class="vk-objgraph-text">
 		<summary>{t.asText}</summary>

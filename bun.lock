@@ -8,10 +8,8 @@
         "@astrojs/markdown-satteri": "^0.4.3",
         "@astrojs/react": "^7.0.1",
         "@astrojs/starlight": "^0.42.6",
-        "@dagrejs/dagre": "^3.1.1",
-        "@xyflow/react": "^12.12.0",
         "astro": "^7.3.8",
-        "course-kit": "github:ssoj13/course-kit#v0.6.0",
+        "course-kit": "github:ssoj13/course-kit#v0.7.0",
         "react": "^19.3.0",
         "react-dom": "^19.3.0",
         "sharp": "^0.35.3",
@@ -108,10 +106,6 @@
     "@clack/prompts": ["@clack/prompts@1.8.1", "", { "dependencies": { "@clack/core": "1.5.1", "fast-string-width": "^3.0.2", "fast-wrap-ansi": "^0.2.0", "sisteransi": "^1.0.5" } }, "sha512-dlT1m5e/0yUL0kRNcQn7yGLVThkgbB0Ga/1AmfDDC/8ik6AIiSf2QLQO2zPYvefsHP0aFgxO93cVLCCfDp7kzQ=="],
 
     "@ctrl/tinycolor": ["@ctrl/tinycolor@4.2.1", "", {}, "sha512-Vh5uy9Y1JBMId6J1f68TMXnZrTCvNdo9Fu2k0d1YnJngR+sM5kWTKl441c/3TFs+cG0NWOjRWgQ/iaWhbYx+7A=="],
-
-    "@dagrejs/dagre": ["@dagrejs/dagre@3.1.1", "", { "dependencies": { "@dagrejs/graphlib": "4.0.5" } }, "sha512-zroZB1dFOFiGgv4Xcrn1DckB1o4aOikPqD2NDQPV0WM//CXGcS6xiD0rNkqHmw6FEg4tabt4nxPLwgCWT+Vb2A=="],
-
-    "@dagrejs/graphlib": ["@dagrejs/graphlib@4.0.5", "", {}, "sha512-7xrBTqIts3o+PMUZX97wSc+7TUbW+/rULzGNCTP6yooNVDXbzw4Wutg/H/xOutTB/c/k0YqOAavgPh4/Zk9PFA=="],
 
     "@emmetio/abbreviation": ["@emmetio/abbreviation@2.3.3", "", { "dependencies": { "@emmetio/scanner": "^1.0.4" } }, "sha512-mgv58UrU3rh4YgbE/TzgLQwJ3pFsHHhCLqY20aJq+9comytTXUDNGG/SMtSeMJdkpxgXSXunBGLD8Boka3JyVA=="],
 
@@ -399,7 +393,7 @@
 
     "cookie-es": ["cookie-es@1.2.3", "", {}, "sha512-lXVyvUvrNXblMqzIRrxHb57UUVmqsSWlxqt3XIjCkUP0wDAf6uicO6KMbEgYrMNtEvWgWHwe42CKxPu9MYAnWw=="],
 
-    "course-kit": ["course-kit@github:ssoj13/course-kit#8b041c1", { "dependencies": { "@xyflow/react": "^12.12.0" }, "peerDependencies": { "@astrojs/markdown-satteri": "^0.4.3", "@astrojs/react": "^7.0.1", "@astrojs/starlight": "^0.42.6", "astro": "^7.3.8", "react": "^19.3.0", "react-dom": "^19.3.0" } }, "ssoj13-course-kit-8b041c1", "sha512-ODsHGOlwpCtnxwfdFEAmiaw8Oyip00usJrHZggl0CyHeik1LqAQwt/6ZLjwAN2HPmxsLlTp0KUj4O7EGiH1SNA=="],
+    "course-kit": ["course-kit@github:ssoj13/course-kit#bc70429", { "dependencies": { "@xyflow/react": "^12.12.0" }, "peerDependencies": { "@astrojs/markdown-satteri": "^0.4.3", "@astrojs/react": "^7.0.1", "@astrojs/starlight": "^0.42.6", "astro": "^7.3.8", "react": "^19.3.0", "react-dom": "^19.3.0" } }, "ssoj13-course-kit-bc70429", "sha512-T/HCPnE7uni20Gt9Qf/5E/Vdi+wbAEFMGgpIZ6laVgrExf2pnGjOI6cY+m4ukhuS3g475fRX4XcmUYiKQZc4Zw=="],
 
     "crossws": ["crossws@0.3.5", "", { "dependencies": { "uncrypto": "^0.1.3" } }, "sha512-ojKiDvcmByhwa8YYqbQI/hg7MEU0NC03+pSdEq4ZUnZR9xXpwk7E43SMNGkn+JxJGPFtNvQ48+vV2p+P1ml5PA=="],
 

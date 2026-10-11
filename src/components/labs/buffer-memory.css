@@ -60,7 +60,7 @@
 	gap: 0.25rem;
 	padding: 0;
 	margin: 0;
-	font-family: var(--__sl-font-mono);
+	font-family: var(--ck-mono);
 	font-size: var(--sl-text-xs);
 }
 :where(.lab-card) .bm-steps > li + li {

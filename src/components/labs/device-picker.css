@@ -195,7 +195,7 @@
 .lab-card .vk-dp-trace li {
 	margin: 0.1rem 0;
 	font-size: var(--sl-text-sm);
-	font-family: var(--__sl-font-mono);
+	font-family: var(--ck-mono);
 	overflow-wrap: anywhere;
 }
 .vk-dp-trace .is-ok::before {
