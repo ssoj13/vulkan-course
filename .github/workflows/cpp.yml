@@ -59,6 +59,8 @@ jobs:
           install_lavapipe: true
           cache: true
           stripdown: true
+          # The lavapipe lookup calls the GitHub API; anonymous calls hit the shared runner IP's rate limit.
+          github_token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Linux packages (GCC 14, Ninja, GLFW's X11 headers, autotools for vcpkg's libx11, lavapipe)
         if: runner.os == 'Linux'
