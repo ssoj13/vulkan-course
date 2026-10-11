@@ -6,6 +6,7 @@ description: OpenGL's hidden state machine versus Vulkan's explicit objects, and
 import { Aside } from '@astrojs/starlight/components';
 import MindMap from 'course-kit/components/MindMap.astro';
 import Quiz from 'course-kit/components/Quiz.astro';
+import GlVsVulkan from '../../../components/labs/GlVsVulkan.astro';
 
 Vulkan code is long. A first triangle takes several hundred lines where OpenGL needed a few dozen. This lesson explains
 why that is not an accident, and what you get in exchange.
@@ -60,6 +61,12 @@ OpenGL is like a DCC that silently recooks things for you whenever you touch a p
 know when it will freeze for a second. Vulkan is a node network where every node and every connection is placed by
 you. More work to set up, but nothing happens that you did not ask for, and it cooks the same way every time.
 </Aside>
+
+Try both models on one frame: change the state of a few draws and see where a GL-style driver may stop to compile a
+shader variant, while Vulkan only binds pipelines it built at load time (full page:
+[OpenGL state vs Vulkan pipelines](lab:gl-vs-vulkan)).
+
+<GlVsVulkan />
 
 ## What you pay and what you get
 

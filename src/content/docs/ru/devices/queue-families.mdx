@@ -7,6 +7,7 @@ import { Aside } from '@astrojs/starlight/components';
 import MindMap from 'course-kit/components/MindMap.astro';
 import Quiz from 'course-kit/components/Quiz.astro';
 import Step from '../../../../components/Step.astro';
+import QueuePlanner from '../../../../components/labs/QueuePlanner.astro';
 
 В [уроке о разговоре с GPU](lesson:talking-to-gpu) мы сказали, что работа отправляется в **очередь**. Но GPU обычно
 предлагает очереди нескольких видов, потому что внутри чипа работают несколько независимых **движков**: большой
@@ -99,6 +100,11 @@ Vulkan не говорит, какой аппаратный блок стоит 
 дейлизы. У каждого отдела своя очередь задач, и работают они одновременно. Семейства очередей — это отделы GPU, а
 очереди внутри семейства — отдельные окна приёма задач в одном отделе.
 </Aside>
+
+Спланируйте очереди настоящей программы на этих шести семействах: выберите роли и способ выбора и посмотрите, какую
+очередь получит каждая роль и какой список create info понадобится логическому устройству ([на отдельной странице](lab:queue-planner)).
+
+<QueuePlanner />
 
 ## Карта урока
 

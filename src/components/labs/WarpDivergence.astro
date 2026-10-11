@@ -1,0 +1,23 @@
+---
+/**
+ * Warp-divergence lab: <WarpDivergence />. Renders the WarpDivergenceView island in the page's language; without
+ * JavaScript the reader gets the default run (lane ids, x < 16) in words, computed by the same model.
+ */
+import WarpDivergenceView from './WarpDivergenceView.tsx';
+import { courseIn, langOf } from 'course-kit/lib/course';
+import { fmt } from 'course-kit/i18n.mjs';
+import { pick } from '../../lib/text';
+import { inputs, run } from '../../lib/labs/warp-divergence';
+import { TEXT } from './warp-divergence.text';
+
+const { lang } = courseIn(langOf(Astro.url.pathname));
+const t = pick(TEXT, lang, 'warp-divergence');
+const r = run(inputs('lane', 1), 'lt', 16);
+const summary = fmt(t.sumDivergent, { cycles: r.cycles, eff: Math.round(r.efficiency * 100), allIf: r.allIf, allElse: r.allElse });
+---
+
+<div class="vk-lab">
+	<WarpDivergenceView client:only="react" lang={lang}>
+		<p slot="fallback" class="lab-card">{t.title}: <code>x &lt; 16</code>. {summary} {t.note}</p>
+	</WarpDivergenceView>
+</div>

@@ -1,0 +1,132 @@
+{
+  "source": "Real messages of examples/rust step 02 on the course machine (RTX 3080 Ti, driver 616.64, Vulkan SDK 1.4.341.1, 2026-10-10), captured with a scratch copy of step 02 whose messenger asks for every severity and type and prints pMessageIdName. Lines marked \"when\": \"leak\" come from the lesson's experiment (vkDestroyInstance with the messenger still alive); \"when\": \"dab\" from the run that also asked for DEVICE_ADDRESS_BINDING_EXT.",
+  "maskVuids": [
+    "VUID-VkDebugUtilsMessengerCreateInfoEXT-messageSeverity-requiredbitmask",
+    "VUID-VkDebugUtilsMessengerCreateInfoEXT-messageType-requiredbitmask",
+    "VUID-VkDebugUtilsMessengerCreateInfoEXT-messageType-parameter"
+  ],
+  "run": {
+    "total": 109,
+    "counts": [
+      {
+        "severity": "INFO",
+        "type": "GENERAL",
+        "n": 97
+      },
+      {
+        "severity": "VERBOSE",
+        "type": "GENERAL",
+        "n": 10
+      },
+      {
+        "severity": "WARNING",
+        "type": "GENERAL",
+        "n": 1
+      },
+      {
+        "severity": "INFO",
+        "type": "VALIDATION",
+        "n": 1
+      }
+    ],
+    "extra": {
+      "leak": 2,
+      "dab": 1
+    }
+  },
+  "messages": [
+    {
+      "severity": "INFO",
+      "type": "GENERAL",
+      "id": "Loader Message",
+      "message": "No valid vk_loader_settings.json file found, no loader settings will be active"
+    },
+    {
+      "severity": "INFO",
+      "type": "GENERAL",
+      "id": "Loader Message",
+      "message": "Checking for Layer Manifest files in Registry at HKEY_LOCAL_MACHINE\\SOFTWARE\\Khronos\\Vulkan\\ImplicitLayers"
+    },
+    {
+      "severity": "INFO",
+      "type": "GENERAL",
+      "id": "Loader Message",
+      "message": "Located json file \"C:\\Programs\\Bandicam\\bdcamvk64.json\" from registry \"HKEY_LOCAL_MACHINE\\SOFTWARE\\Khronos\\Vulkan\\ImplicitLayers\""
+    },
+    {
+      "severity": "INFO",
+      "type": "GENERAL",
+      "id": "Loader Message",
+      "message": "Found manifest file C:\\Programs\\VulkanSDK\\1.4.341.1\\Bin\\VkLayer_khronos_validation.json (file version 1.2.0)"
+    },
+    {
+      "severity": "INFO",
+      "type": "GENERAL",
+      "id": "Loader Message",
+      "message": "Found ICD manifest file C:\\WINDOWS\\System32\\DriverStore\\FileRepository\\nv_dispi.inf_amd64_436833bbb0f00476\\nv-vk64.json, version 1.0.1"
+    },
+    {
+      "severity": "VERBOSE",
+      "type": "GENERAL",
+      "id": "Loader Message",
+      "message": "Searching for ICD drivers named .\\nvoglv64.dll"
+    },
+    {
+      "severity": "WARNING",
+      "type": "GENERAL",
+      "id": "Loader Message",
+      "message": "Layer VK_LAYER_bandicam_helper uses API version 1.2 which is older than the application specified API version of 1.4. May cause issues."
+    },
+    {
+      "severity": "VERBOSE",
+      "type": "GENERAL",
+      "id": "Loader Message",
+      "message": "Loading layer library C:\\Programs\\VulkanSDK\\1.4.341.1\\Bin\\.\\VkLayer_khronos_validation.dll"
+    },
+    {
+      "severity": "INFO",
+      "type": "GENERAL",
+      "id": "Loader Message",
+      "message": "Insert instance layer \"VK_LAYER_KHRONOS_validation\" (C:\\Programs\\VulkanSDK\\1.4.341.1\\Bin\\VkLayer_khronos_validation.dll)"
+    },
+    {
+      "severity": "INFO",
+      "type": "GENERAL",
+      "id": "Loader Message",
+      "message": "vkCreateInstance layer callstack setup to:"
+    },
+    {
+      "severity": "ERROR",
+      "type": "VALIDATION",
+      "id": "VUID-VkDebugUtilsMessengerCreateInfoEXT-messageType-parameter",
+      "message": "vkCreateInstance(): pCreateInfo->pNext<VkDebugUtilsMessengerCreateInfoEXT>.messageType has VkDebugUtilsMessageTypeFlagBitsEXT values (VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT|VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT|VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT|VK_DEBUG_UTILS_MESSAGE_TYPE_DEVICE_ADDRESS_BINDING_BIT_EXT) that requires the extensions VK_EXT_device_address_binding_report.\nThe Vulkan spec states: messageType must be a valid combination of VkDebugUtilsMessageTypeFlagBitsEXT values (https://docs.vulkan.org/spec/latest/chapters/debugging.html#VUID-VkDebugUtilsMessengerCreateInfoEXT-messageType-parameter)",
+      "when": "dab"
+    },
+    {
+      "severity": "INFO",
+      "type": "VALIDATION",
+      "id": "WARNING-CreateInstance-status-message",
+      "message": "vkCreateInstance(): Khronos Validation Layer Active:\n    Current Enables: None.\n    Current Disables: None."
+    },
+    {
+      "severity": "ERROR",
+      "type": "VALIDATION",
+      "id": "VUID-vkDestroyInstance-instance-00629",
+      "message": "vkDestroyInstance(): Object Tracking - For VkInstance 0x15d991071a0, VkDebugUtilsMessengerEXT 0x10000000001 has not been destroyed.\nThe Vulkan spec states: All child objects that were created with instance or with a VkPhysicalDevice retrieved from it, and that can be destroyed or freed, must have been destroyed or freed prior to destroying instance (https://docs.vulkan.org/spec/latest/chapters/initialization.html#VUID-vkDestroyInstance-instance-00629)",
+      "when": "leak"
+    },
+    {
+      "severity": "ERROR",
+      "type": "VALIDATION",
+      "id": "VUID-vkDestroyInstance-instance-00629",
+      "message": "vkDestroyInstance(): Object Tracking - For VkInstance 0x15d991071a0, VkDebugUtilsMessengerEXT 0x10000000001 has not been destroyed.\nThe Vulkan spec states: All child objects that were created with instance or with a VkPhysicalDevice retrieved from it, and that can be destroyed or freed, must have been destroyed or freed prior to destroying instance (https://docs.vulkan.org/spec/latest/chapters/initialization.html#VUID-vkDestroyInstance-instance-00629)",
+      "when": "leak"
+    },
+    {
+      "severity": "VERBOSE",
+      "type": "GENERAL",
+      "id": "Loader Message",
+      "message": "Unloading layer library C:\\Programs\\Bandicam\\bdcamvk64.dll"
+    }
+  ]
+}

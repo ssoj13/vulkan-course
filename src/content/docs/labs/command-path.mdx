@@ -1,0 +1,36 @@
+---
+title: The path of a command
+description: CPU records, submits, moves on; the GPU runs the work later. A CPU/GPU timeline you can scrub.
+---
+import CommandPath from '../../../components/labs/CommandPath.astro';
+
+The CPU and the GPU are two processors running at the same time. This lab answers one question: **when does the
+GPU actually do the work the CPU asked for, and what does the CPU do meanwhile?** The road a command takes is
+explained in [How a program talks to the GPU](lesson:talking-to-gpu#the-path-of-one-draw).
+
+Three frames of a render loop run on three lanes. On the **CPU** lane each frame does some application work, then
+records a command buffer (`vkBeginCommandBuffer`, the `vkCmd*` calls, `vkEndCommandBuffer`) and calls
+`vkQueueSubmit2`. That call returns almost at once: the batch now sits in the **queue**. Some time later the GPU's
+command processor picks it up, and the **GPU** lane executes it. When the GPU is done it signals the frame's
+**fence**; the fence is how the CPU can find out, with `vkWaitForFences`.
+
+The choice above the timeline is the one real renderers make. Waiting on the fence right after the submit (one frame
+in flight) is simple, but the CPU then sits idle while the GPU works, and the GPU sits idle while the CPU prepares the
+next frame. Waiting only before a command buffer is reused (two frames in flight, two command buffers, two fences)
+lets the CPU record frame N+1 while the GPU runs frame N. The wait cannot be dropped altogether: recording into a
+command buffer the GPU has not finished breaks the rule "`commandBuffer` must not be in the recording or pending
+state" (`VUID-vkBeginCommandBuffer-commandBuffer-00049`).
+
+Durations are illustrative ticks, not measurements; the shape is what matters. For the same reason the GPU lane runs
+one batch at a time in submission order. The spec promises no such thing: submission order is the logical order that
+barriers and semaphores refer to, and by itself it orders neither the start nor the finish of the work (the
+[queues and semaphores lab](lab:queue-sync) goes further).
+
+Things to try:
+
+- step through one frame with 1 frame in flight and watch the CPU lane: after the submit it only waits;
+- switch to 2 frames in flight at the same moment and compare the total time and the GPU utilization;
+- find the first wait with 2 frames in flight that actually blocks, and the frame it waits for;
+- watch the queue lane: between the submit and the GPU start, the work is only *in the queue*.
+
+<CommandPath />

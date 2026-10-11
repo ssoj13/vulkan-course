@@ -1,0 +1,56 @@
+---
+/**
+ * Messenger-filter lab: severity/type masks applied to a real validation log (MessengerFilterView island).
+ * The no-JS fallback lists what the course's masks (WARNING | ERROR) let through, from the same model.
+ */
+import MessengerFilterView from './MessengerFilterView.tsx';
+import { COURSE, LOG, blockedBy, produced, snippet, vuidText } from '../../lib/labs/messenger-filter';
+import { pick } from '../../lib/text';
+import { TEXT } from './messenger-filter.text';
+import { courseIn, langOf } from 'course-kit/lib/course';
+import { fmt } from 'course-kit/i18n.mjs';
+
+// Every VUID the lab can quote must have its registry text (fails the build otherwise).
+LOG.maskVuids.forEach(vuidText);
+
+const v = courseIn(langOf(Astro.url.pathname));
+const t = pick(TEXT, v.lang, 'messenger-filter');
+const lines = produced(COURSE, false).filter((m) => !blockedBy(m, COURSE));
+---
+
+<figure class="vk-lab not-content">
+	<div class="vk-lab-slot">
+		<MessengerFilterView client:only="react" lang={v.lang} />
+	</div>
+	<details class="vk-lab-text">
+		<summary>{t.asText}</summary>
+		<pre>{snippet(COURSE, 'c')}</pre>
+		<ul>
+			{
+				lines.map((m) => (
+					<li>
+						<code>{fmt(t.fbLine, { severity: m.severity, type: m.type, message: m.message })}</code>
+					</li>
+				))
+			}
+		</ul>
+		<p>{t.choice}</p>
+	</details>
+</figure>
+
+<style>
+	.vk-lab {
+		margin: 1.5rem 0;
+	}
+	/* Reserves the island's height so the page does not jump when it mounts. */
+	.vk-lab-slot {
+		min-height: 48rem;
+	}
+	.vk-lab-text {
+		font-size: var(--sl-text-sm);
+	}
+	.vk-lab-text summary {
+		cursor: pointer;
+		color: var(--sl-color-gray-3);
+	}
+</style>

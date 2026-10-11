@@ -1,0 +1,124 @@
+/* Queue-planner lab (QueuePlannerView): family table, role inputs, chosen queues, create-info list and errors. */
+.vk-qp-scroll {
+	overflow-x: auto;
+}
+.vk-qp-table {
+	width: 100%;
+	border-collapse: collapse;
+	font-size: var(--sl-text-sm);
+	font-variant-numeric: tabular-nums;
+}
+.vk-qp-table th,
+.vk-qp-table td {
+	text-align: start;
+	padding: 0.3rem 0.5rem;
+	border-bottom: 1px solid var(--lab-border);
+	vertical-align: top;
+}
+.vk-qp-table th {
+	font-weight: 600;
+	color: var(--lab-text-muted);
+	white-space: nowrap;
+}
+.vk-qp-table tr.is-used td {
+	background: color-mix(in srgb, var(--lab-accent) 12%, transparent);
+}
+.vk-qp-inputs {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
+	gap: var(--lab-gap);
+	align-items: start;
+}
+.vk-qp-box {
+	margin: 0;
+	padding: 0.6rem 0.8rem 0.8rem;
+	border: 1px solid var(--lab-border);
+	border-radius: 0.45rem;
+	background: var(--lab-surface-2);
+	display: grid;
+	gap: 0.5rem;
+	min-width: 0;
+}
+.vk-qp-box legend {
+	font-weight: 600;
+	font-size: var(--sl-text-sm);
+	color: var(--sl-color-white);
+	padding: 0 0.3rem;
+}
+.lab-card .vk-qp-box p {
+	margin: 0;
+}
+.vk-qp-check {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 0.4rem;
+	font-size: var(--sl-text-sm);
+}
+.vk-qp-check input {
+	accent-color: var(--lab-accent);
+}
+.vk-qp-check :focus-visible,
+.vk-qp-nums input:focus-visible {
+	outline: 2px solid var(--lab-accent);
+	outline-offset: 2px;
+}
+.vk-qp-role {
+	padding-bottom: 0.45rem;
+	border-bottom: 1px solid var(--lab-border);
+}
+.vk-qp-role:last-of-type {
+	border-bottom: none;
+	padding-bottom: 0;
+}
+.vk-qp-role.is-off {
+	opacity: 0.6;
+}
+.vk-qp-nums {
+	display: flex;
+	gap: 0.6rem;
+	margin-top: 0.3rem;
+}
+.vk-qp-nums label {
+	display: flex;
+	align-items: center;
+	gap: 0.35rem;
+	font-size: var(--sl-text-xs);
+	color: var(--lab-text-muted);
+}
+.lab-card .vk-qp-nums input[type='number'] {
+	width: 5rem;
+}
+.vk-qp-warn {
+	color: var(--lab-warn);
+	font-size: var(--sl-text-xs);
+}
+.lab-card .vk-qp-label {
+	margin-bottom: 0;
+}
+.lab-card .vk-qp-infos {
+	margin-top: 0.3rem;
+	min-height: 4.5rem;
+}
+.lab-card ul.vk-qp-errors {
+	list-style: none;
+	padding: 0;
+}
+.lab-card .vk-qp-errors li {
+	margin: 0.4rem 0 0;
+	padding: 0.4rem 0.6rem;
+	border-left: 3px solid var(--lab-err);
+	background: color-mix(in srgb, var(--lab-err) 8%, transparent);
+	font-size: var(--sl-text-sm);
+}
+.vk-qp-errors b {
+	color: var(--lab-err);
+}
+.vk-qp-vuid {
+	display: block;
+	margin-top: 0.15rem;
+	font-family: var(--__sl-font-mono);
+	font-size: var(--sl-text-xs);
+	color: var(--sl-color-gray-2);
+	overflow-wrap: anywhere;
+}

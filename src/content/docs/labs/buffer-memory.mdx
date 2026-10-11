@@ -1,0 +1,30 @@
+---
+title: Buffers and memory
+description: From buffer usage to memory requirements to a memory type of the real course GPU, and a staging upload through the BAR window.
+---
+import BufferMemory from '../../../components/labs/BufferMemory.astro';
+
+In Vulkan a buffer and its memory are two objects. `vkCreateBuffer` only describes the buffer; the driver then says
+what memory it needs, you pick a memory type, allocate a block and bind the two. This lab answers **how a buffer finds
+its memory, and how data gets into memory the CPU cannot see.** It previews the memory module; why the choice matters
+at all (VRAM vs system RAM over PCIe) is in [what a GPU is](lesson:gpu#its-own-memory) and
+[where the data lives](lab:memory-path).
+
+Pick usage flags, a size and where the buffer should live, then scrub through the steps. Every number is real: the
+heaps and types come from vulkaninfo on the course GPU, and the memory requirements (size, alignment,
+`memoryTypeBits`) were measured on the same GPU and driver for every combination of the six flags at the five sizes
+offered. Nothing is simulated except that the lab shows the calls instead of making them.
+
+What to notice: `memoryTypeBits` is 0b111011 for every buffer here, so type 2 is never allowed; the alignment changes
+with usage (4, 16, 64); device-local memory cannot be mapped, so its data travels through a staging buffer and a copy on
+a transfer-capable queue ([queue families](lesson:queue-families#a-real-gpu)); and the BAR window is only 214 MiB on
+this machine because Resizable BAR is off.
+
+<BufferMemory />
+
+Things to try:
+
+- keep "GPU only" and turn off TRANSFER_DST: the copy step fails with the real validation rule;
+- add UNIFORM: the alignment jumps to 64, the same number as `minUniformBufferOffsetAlignment`;
+- switch to the BAR window: no staging, the CPU writes into VRAM directly;
+- switch to "GPU writes, CPU reads back": the pick moves to the HOST_CACHED type.

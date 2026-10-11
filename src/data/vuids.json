@@ -1,13 +1,19 @@
 {
   "VUID-VkCommandBufferAllocateInfo-commandPool-parameter": "commandPool must be a valid VkCommandPool handle",
+  "VUID-VkDebugUtilsMessengerCreateInfoEXT-messageSeverity-requiredbitmask": "messageSeverity must not be 0",
+  "VUID-VkDebugUtilsMessengerCreateInfoEXT-messageType-parameter": "messageType must be a valid combination of VkDebugUtilsMessageTypeFlagBitsEXT values",
+  "VUID-VkDebugUtilsMessengerCreateInfoEXT-messageType-requiredbitmask": "messageType must not be 0",
   "VUID-VkDescriptorSetAllocateInfo-descriptorPool-parameter": "descriptorPool must be a valid VkDescriptorPool handle",
   "VUID-VkDescriptorSetAllocateInfo-pSetLayouts-parameter": "pSetLayouts must be a valid pointer to an array of descriptorSetCount valid VkDescriptorSetLayout handles",
   "VUID-VkGraphicsPipelineCreateInfo-layout-06602": "If the pipeline requires fragment shader state or pre-rasterization shader state, and VkPipelineCreateFlags2CreateInfoKHR::flags does not include VK_PIPELINE_CREATE_2_DESCRIPTOR_HEAP_BIT_EXT, layout must be a valid VkPipelineLayout handle",
   "VUID-VkImageViewCreateInfo-image-parameter": "image must be a valid VkImage handle",
   "VUID-VkPipelineLayoutCreateInfo-pSetLayouts-parameter": "If setLayoutCount is not 0, pSetLayouts must be a valid pointer to an array of setLayoutCount valid or VK_NULL_HANDLE VkDescriptorSetLayout handles",
   "VUID-VkPipelineShaderStageCreateInfo-module-parameter": "If module is not VK_NULL_HANDLE, module must be a valid VkShaderModule handle",
+  "VUID-VkSubmitInfo2-semaphore-03881": "If the same semaphore is used as the semaphore member of both an element of pSignalSemaphoreInfos and pWaitSemaphoreInfos, and that semaphore is a timeline semaphore, the value member of the pSignalSemaphoreInfos element must be greater than the value member of the pWaitSemaphoreInfos element",
+  "VUID-VkSubmitInfo2-semaphore-03882": "If the semaphore member of any element of pSignalSemaphoreInfos is a timeline semaphore, the value member of that element must have a value greater than the current value of the semaphore when the semaphore signal operation is executed",
   "VUID-VkSwapchainCreateInfoKHR-surface-parameter": "surface must be a valid VkSurfaceKHR handle",
   "VUID-vkAllocateMemory-device-parameter": "device must be a valid VkDevice handle",
+  "VUID-vkBeginCommandBuffer-commandBuffer-00049": "commandBuffer must not be in the recording or pending state",
   "VUID-vkCreateBuffer-device-parameter": "device must be a valid VkDevice handle",
   "VUID-vkCreateCommandPool-device-parameter": "device must be a valid VkDevice handle",
   "VUID-vkCreateDebugUtilsMessengerEXT-instance-parameter": "instance must be a valid VkInstance handle",
@@ -29,5 +35,10 @@
   "VUID-vkDestroySurfaceKHR-surface-01266": "All VkSwapchainKHR objects created for surface must have been destroyed prior to destroying surface",
   "VUID-vkEnumeratePhysicalDevices-instance-parameter": "instance must be a valid VkInstance handle",
   "VUID-vkGetDeviceQueue-device-parameter": "device must be a valid VkDevice handle",
-  "VUID-vkGetSwapchainImagesKHR-swapchain-parameter": "swapchain must be a valid VkSwapchainKHR handle"
+  "VUID-vkGetSwapchainImagesKHR-swapchain-parameter": "swapchain must be a valid VkSwapchainKHR handle",
+  "VUID-vkQueueSubmit2-fence-04894": "If fence is not VK_NULL_HANDLE, fence must be unsignaled",
+  "VUID-vkQueueSubmit2-fence-04895": "If fence is not VK_NULL_HANDLE, fence must not be associated with any other queue command that has not yet completed execution on that queue",
+  "VUID-vkQueueSubmit2-semaphore-03868": "The semaphore member of any binary semaphore element of the pSignalSemaphoreInfos member of any element of pSubmits must be unsignaled when the semaphore signal operation it defines is executed on the device",
+  "VUID-vkQueueSubmit2-semaphore-03873": "The semaphore member of any element of the pWaitSemaphoreInfos member of any element of pSubmits that was created with a VkSemaphoreType of VK_SEMAPHORE_TYPE_BINARY must reference a semaphore signal operation that has been submitted for execution and any semaphore signal operations on which it depends must have also been submitted for execution",
+  "VUID-vkQueueSubmit2-stageMask-03870": "The stageMask member of any element of the pWaitSemaphoreInfos member of any element of pSubmits must only include pipeline stages that are supported by the queue family which queue belongs to"
 }

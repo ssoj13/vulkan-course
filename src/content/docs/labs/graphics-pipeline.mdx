@@ -1,0 +1,29 @@
+---
+title: The graphics pipeline
+description: Walk the stages from vertex input to color output, and see which state is baked into a pipeline and which is dynamic in Vulkan 1.4.
+---
+import GraphicsPipeline from '../../../components/labs/GraphicsPipeline.astro';
+
+A Vulkan graphics pipeline is one object that holds the whole recipe of a draw: the shaders and the settings of every
+fixed-function stage between them. This lab answers the question **what exactly goes into that object, and what can
+stay outside of it?** It previews the pipeline module; the reason pipelines exist at all is in
+[why Vulkan](lesson:why-vulkan#vulkan-say-everything-up-front).
+
+The strip lists the stages in the order of the spec's block diagram. Click one to see what it does, which member of
+`VkGraphicsPipelineCreateInfo` configures it, and which of its state may be **dynamic**: left out of the pipeline and
+set with a `vkCmdSet*` command while recording. The list of dynamic states is generated from the Vulkan registry (`vk.xml`) and holds
+only core states: 9 from Vulkan 1.0, 15 promoted in 1.3, one in 1.4. Shaders never appear there: in core Vulkan a
+different shader always means a different pipeline.
+
+Below, one triangle goes through the stages on a 16×10 framebuffer: scrub through it frame by frame. The coverage,
+facing and depth rules are the spec's; the scale is tiny and there is no perspective, which the lab says on the spot.
+The last part counts the pipelines of an illustrative scene with state baked in and with state made dynamic.
+
+<GraphicsPipeline />
+
+Things to try:
+
+- switch the cull mode of the triangle to FRONT and watch every stage after rasterization go empty;
+- in the count, press "Fully static", then make only the viewport dynamic: the count stays, the rebuild on resize goes;
+- open Rasterization and Depth / stencil tests: almost all dynamic states live there;
+- compare with [OpenGL state vs Vulkan pipelines](lab:gl-vs-vulkan), where a GL-style driver rebuilds behind your back.

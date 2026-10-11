@@ -6,6 +6,7 @@ description: Application, driver, command buffers and queues - the path every dr
 import { Aside, Steps } from '@astrojs/starlight/components';
 import MindMap from 'course-kit/components/MindMap.astro';
 import Quiz from 'course-kit/components/Quiz.astro';
+import CommandPath from '../../../components/labs/CommandPath.astro';
 
 Your program runs on the CPU. A discrete GPU is a separate machine on the other side of a PCIe link (an integrated
 GPU shares the chip and memory with the CPU, but is still a separate processor). It cannot call your
@@ -63,6 +64,12 @@ want the result, you must *check* that the job finished - you cannot just assume
 
 In older APIs the driver built command buffers for you, behind the scenes, and decided when to submit them. In Vulkan
 **you** record command buffers and **you** submit them. That is the single biggest idea of the whole API.
+
+Here is that "later" on a timeline: the CPU records and submits a few frames, the GPU executes them, and a fence
+tells the CPU when a frame is done. Switch when the CPU waits and watch both processors' utilization change (full
+page: [the path of a command](lab:command-path)).
+
+<CommandPath />
 
 ## The map of this lesson
 

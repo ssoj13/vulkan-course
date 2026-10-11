@@ -1,0 +1,37 @@
+---
+title: Warp divergence
+description: 32 lanes, one instruction stream. Write a condition and watch the warp run both branches with lanes switched off.
+---
+import WarpDivergence from '../../../components/labs/WarpDivergence.astro';
+
+A warp is 32 threads that share one instruction stream: in every issue slot the warp sends **one** instruction, and
+every lane runs it on its own data. This lab answers one question: **what does an `if` cost when the lanes of a warp
+disagree?** The background is in the lesson [What a GPU is](lesson:gpu#lockstep-groups).
+
+Each square is a lane; the number in it is that lane's input `x`. Blue lanes take the `if`, orange ones the `else`.
+Step through the timeline: in each slot the lit lanes execute the highlighted line of the shader, the dim ones are
+masked off and wait. When the lanes disagree, the warp issues the `if`-path with the `else`-lanes masked, then the
+`else`-path with the `if`-lanes masked, and only then do all 32 lanes run together again. When they all agree, the
+other branch is skipped and costs nothing.
+
+This is how NVIDIA's CUDA Programming Guide describes it: "If threads of a warp diverge via a data-dependent
+conditional branch, the warp executes each branch path taken, disabling threads that are not on that path." Since
+Volta, NVIDIA GPUs keep a program counter per thread (*independent thread scheduling*), so divergent threads can
+interleave and reconverge at a finer grain; but the threads that run together still form SIMT groups that issue one
+instruction with the inactive lanes masked, so a warp that diverges still pays for both paths. AMD GPUs do the same
+with wavefronts of 32 or 64 lanes and an execution mask.
+
+The costs here are illustrative: every instruction takes one issue slot. Real instructions have different latencies,
+but the conclusion holds: a divergent warp pays for both branches.
+
+Things to try:
+
+- `x < T` with the lane ids, T = 16: half the lanes on each side, both paths run;
+- move T to 0 or to 32: no divergence, one branch is skipped entirely;
+- `x % 2 == 0`: every other lane, the worst case for a warp, yet the same cost as T = 16;
+- random inputs with `x < T`: almost every T gives a divergent warp, which is why sorting work by the branch it takes
+  (for example, binning materials before shading) pays off.
+
+<WarpDivergence />
+
+Next: the other big fact about the GPU, its own memory, in the lab [Where the data lives](lab:memory-path).

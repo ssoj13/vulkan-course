@@ -1,0 +1,123 @@
+/* Warp-divergence lab: controls, program listing, the 32-lane grid. Colors: if = series 1, else = series 2. */
+.wd-controls {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+	gap: var(--lab-gap);
+	align-items: end;
+}
+.wd-thr input[type='range']:disabled {
+	opacity: 0.4;
+}
+.wd-main {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+	gap: var(--lab-gap);
+}
+@media (max-width: 40rem) {
+	.wd-main {
+		grid-template-columns: minmax(0, 1fr);
+	}
+}
+.wd-code {
+	margin: 0;
+	min-width: 0;
+}
+.wd-code figcaption {
+	margin-bottom: 0.3rem;
+}
+.wd-code pre {
+	margin: 0;
+	font-family: var(--__sl-font-mono);
+	font-size: var(--sl-text-xs);
+	background: var(--lab-surface-2);
+	border: 1px solid var(--lab-border);
+	border-radius: 0.4rem;
+	padding: 0.5rem 0;
+	overflow-x: auto;
+}
+.wd-line {
+	display: block;
+	padding: 0.05rem 0.6rem;
+	border-inline-start: 3px solid transparent;
+	white-space: pre;
+}
+.wd-line.is-brace {
+	color: var(--lab-text-muted);
+}
+.wd-line.is-if {
+	border-inline-start-color: color-mix(in srgb, var(--lab-series-1) 45%, transparent);
+}
+.wd-line.is-else {
+	border-inline-start-color: color-mix(in srgb, var(--lab-series-2) 45%, transparent);
+}
+.wd-line.is-cur {
+	background: color-mix(in srgb, var(--lab-accent) 22%, transparent);
+	border-inline-start-color: var(--lab-accent);
+	color: var(--sl-color-white);
+}
+.wd-warp > p {
+	margin: 0 0 0.3rem;
+}
+.wd-lanes {
+	list-style: none;
+	display: grid;
+	grid-template-columns: repeat(8, minmax(0, 1fr));
+	gap: 0.25rem;
+	padding: 0;
+	margin: 0;
+}
+:where(.lab-card) .wd-lanes > li + li {
+	margin-top: 0;
+}
+.wd-lane {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	aspect-ratio: 1.4;
+	border-radius: 0.3rem;
+	border: 1px solid var(--lab-border);
+	font-size: var(--sl-text-xs);
+	font-variant-numeric: tabular-nums;
+	color: var(--lab-text-muted);
+	transition: background-color 0.15s, color 0.15s;
+}
+.wd-lane.is-if {
+	border-color: color-mix(in srgb, var(--lab-series-1) 60%, var(--lab-border));
+	background: color-mix(in srgb, var(--lab-series-1) 10%, transparent);
+}
+.wd-lane.is-else {
+	border-color: color-mix(in srgb, var(--lab-series-2) 60%, var(--lab-border));
+	background: color-mix(in srgb, var(--lab-series-2) 10%, transparent);
+}
+.wd-lane.is-on {
+	/* The series colors are the same in both themes, so the text on them is fixed too. */
+	color: #10131a;
+}
+.wd-lane.is-if.is-on {
+	background: var(--lab-series-1);
+}
+.wd-lane.is-else.is-on {
+	background: var(--lab-series-2);
+}
+@media (prefers-reduced-motion: reduce) {
+	.wd-lane {
+		transition: none;
+	}
+}
+.wd-legend {
+	margin: 0.4rem 0 0;
+}
+.wd-key {
+	display: inline-block;
+	width: 0.8em;
+	height: 0.8em;
+	border-radius: 0.2em;
+	vertical-align: -0.05em;
+}
+.wd-key.is-if {
+	background: var(--lab-series-1);
+}
+.wd-key.is-else {
+	background: var(--lab-series-2);
+	margin-inline-start: 0.6rem;
+}

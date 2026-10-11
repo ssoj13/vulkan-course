@@ -1,0 +1,47 @@
+---
+title: Queues, semaphores and fences
+description: Submit batches to several queues with wait and signal semaphores and a fence, and see what overlaps, what waits and where a race appears.
+---
+import QueueSync from '../../../components/labs/QueueSync.astro';
+
+The GPU runs your work later, on several queues at once, and nothing orders that work except what you say. Vulkan
+gives you three tools for saying it, one per kind of edge. A **fence** is GPU → CPU: the host waits on it
+(`vkWaitForFences`) to learn that a submission finished. A **semaphore** is GPU → GPU between submissions, usually
+across queues: one batch signals it, another waits on it. A *binary* semaphore is a one-shot token, one signal for one
+wait. A *timeline* semaphore is a counter that only goes up, and a wait asks for "value ≥ N". A **pipeline barrier**
+orders commands inside one queue. Barriers are not modeled here; they come in the synchronization module.
+
+Submission order on one queue is the *logical* order that barriers and semaphores refer to
+([how a program talks to the GPU](lesson:talking-to-gpu#command-buffers-and-queues)). By itself it does not make later
+work wait for earlier work: batches may overlap and finish in any order. Between different queues there is no order at
+all ([queue families](lesson:queue-families#underneath)). The rules this lab follows are the spec's own. A semaphore
+signal covers its batch and everything submitted earlier on that queue. A wait holds its batch and everything submitted
+later on that queue, but only from the stages in its `stageMask` onward. A fence covers its submission and everything
+earlier on the queue.
+
+How to use it: pick a scenario and scrub through time. Lanes are the CPU and the real graphics, async compute and
+transfer queues of the course GPU (families 0, 2 and 1). Hatched bars are stalls, arrows go from a signal to the wait
+it satisfies, and red marks point at problems. Below the chart, edit the host program: add or remove waits and
+signals, change a stage mask or a timeline value, switch a semaphore between binary and timeline, or move a call up or
+down. Every problem is found from the rules, not from the drawn run. A race is a race even when the bars happen not
+to overlap. Valid-usage messages quote the real VUID text.
+
+What is simplified: the drawing is one schedule the spec allows, not the only one. Durations are illustrative units.
+Each `vkQueueSubmit2` carries one batch, and signals use stage mask `ALL_COMMANDS`. Shared resources are assumed to be
+created with `VK_SHARING_MODE_CONCURRENT`, so no queue family ownership transfer is needed, and mapped memory is
+assumed host-coherent. In *Frames in flight* two frames overlap on the graphics queue because nothing here orders
+them; a real renderer orders writes to its shared color and depth images with barriers and the swapchain's semaphores.
+
+Things to try:
+
+- in *Upload, then render*, change the wait's stage to `COLOR_ATTACHMENT_OUTPUT`: the fragment shader reads the texture
+  before the copy ends; change it to `VERTEX_SHADER` and the whole draw waits;
+- move the render call above the upload: a binary wait without a submitted signal; then make `uploaded` a timeline
+  semaphore and see that waiting before the signal is allowed;
+- in *Async compute + timeline*, remove the wait of the second simulation: it now overwrites particles that the draw
+  is still reading;
+- in *Frames in flight*, remove the second `vkWaitForFences` on `F0`, or uncheck "created signaled".
+
+Related labs: [the path of a command](lab:command-path) and the [queue planner](lab:queue-planner).
+
+<QueueSync />

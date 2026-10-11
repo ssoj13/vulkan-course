@@ -1,0 +1,147 @@
+/*
+ * Command-path lab: mode picker, three lanes (CPU, queue, GPU) of absolutely placed bars over a shared tick scale,
+ * legend. Bar colors: app work = muted, recording = series 1, submit = accent, fence wait = hatched warning,
+ * queued = dashed series 2, GPU execution = series 4.
+ */
+.cp-mode {
+	border: 1px solid var(--lab-border);
+	border-radius: 0.45rem;
+	padding: 0.5rem 0.75rem 0.6rem;
+	margin: 0;
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.3rem 1.25rem;
+	font-size: var(--sl-text-sm);
+}
+.cp-mode legend {
+	padding: 0 0.3rem;
+	color: var(--lab-text-muted);
+}
+.cp-mode label {
+	display: flex;
+	align-items: center;
+	gap: 0.4rem;
+	cursor: pointer;
+}
+.cp-mode input {
+	accent-color: var(--lab-accent);
+}
+.cp-chart {
+	display: grid;
+	gap: 0.35rem;
+}
+.cp-row {
+	display: grid;
+	grid-template-columns: 4.5rem minmax(0, 1fr);
+	align-items: center;
+	gap: 0.5rem;
+}
+.cp-lane {
+	font-size: var(--sl-text-xs);
+	color: var(--lab-text-muted);
+	text-align: end;
+}
+.cp-track {
+	position: relative;
+	height: 1.75rem;
+	background: var(--lab-surface-2);
+	border: 1px solid var(--lab-border);
+	border-radius: 0.3rem;
+	overflow: hidden;
+}
+.cp-axis .cp-track {
+	height: 1rem;
+	background: none;
+	border: 0;
+	overflow: visible;
+}
+.cp-tick {
+	position: absolute;
+	top: 0;
+	transform: translateX(-50%);
+	font-size: 0.65rem;
+	font-variant-numeric: tabular-nums;
+	color: var(--lab-text-muted);
+}
+.cp-tick:first-child {
+	transform: none;
+}
+.cp-bar {
+	position: absolute;
+	top: 0.2rem;
+	bottom: 0.2rem;
+	box-sizing: border-box;
+	border-radius: 0.2rem;
+	overflow: hidden;
+	white-space: nowrap;
+	font-size: 0.65rem;
+	font-weight: 600;
+	line-height: 1.25rem;
+	text-align: center;
+	color: #fff;
+}
+.cp-bar.is-update,
+.cp-swatch.is-update {
+	background: var(--sl-color-gray-4);
+}
+.cp-bar.is-record,
+.cp-swatch.is-record {
+	background: var(--lab-series-1);
+}
+.cp-bar.is-submit,
+.cp-swatch.is-submit {
+	background: var(--lab-series-3);
+}
+.cp-bar.is-wait,
+.cp-swatch.is-wait {
+	background: repeating-linear-gradient(135deg, var(--lab-warn) 0 3px, transparent 3px 7px);
+	border: 1px solid var(--lab-warn);
+}
+.cp-bar.is-queued,
+.cp-swatch.is-queued {
+	background: color-mix(in srgb, var(--lab-series-2) 25%, transparent);
+	border: 1px dashed var(--lab-series-2);
+}
+.cp-bar.is-exec,
+.cp-swatch.is-exec {
+	background: var(--lab-series-4);
+}
+/* Frames alternate in brightness so neighbouring bars of one lane stay apart. */
+.cp-bar.is-f1 {
+	filter: brightness(0.85);
+}
+.cp-now {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	width: 2px;
+	margin-left: -1px;
+	background: var(--sl-color-white);
+}
+.cp-legend {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.3rem 1rem;
+	list-style: none;
+	padding: 0;
+	font-size: var(--sl-text-xs);
+	color: var(--lab-text-muted);
+}
+.cp-legend li {
+	display: flex;
+	align-items: center;
+	gap: 0.35rem;
+	margin: 0;
+}
+.cp-swatch {
+	display: inline-block;
+	box-sizing: border-box;
+	width: 1.1rem;
+	height: 0.7rem;
+	border-radius: 0.15rem;
+}
+@media (max-width: 30rem) {
+	.cp-row {
+		grid-template-columns: 3.2rem minmax(0, 1fr);
+	}
+}

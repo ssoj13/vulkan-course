@@ -1,0 +1,63 @@
+---
+/**
+ * Graphics-pipeline lab: the stages, their configuring structs and their core dynamic states, one triangle walked
+ * through them, and the pipeline count of a sample scene (GraphicsPipelineView island). The stage -> dynamic state
+ * table is checked against dynamic-states.json here, so an SDK update with a new core state fails the build until the
+ * state is placed. The no-JS fallback lists the stages from the same model.
+ */
+import GraphicsPipelineView from './GraphicsPipelineView.tsx';
+import { STAGES, dynErrors, dynamicOf, shortState, versionOf } from '../../lib/labs/graphics-pipeline';
+import { pick } from '../../lib/text';
+import { TEXT } from './graphics-pipeline.text';
+import { courseIn, langOf } from 'course-kit/lib/course';
+
+const errs = dynErrors();
+if (errs.length) throw new Error(`graphics-pipeline: dynamic states out of sync with dynamic-states.json:\n  - ${errs.join('\n  - ')}`);
+
+const v = courseIn(langOf(Astro.url.pathname));
+const t = pick(TEXT, v.lang, 'graphics-pipeline');
+---
+
+<figure class="vk-lab not-content">
+	<div class="vk-lab-slot">
+		<GraphicsPipelineView client:only="react" lang={v.lang} />
+	</div>
+	<details class="vk-lab-text">
+		<summary>{t.asText}</summary>
+		<ol>
+			{
+				STAGES.map((s) => (
+					<li>
+						<b>{t[`name.${s.id}`]}</b>
+						{s.optional && ` (${t.optional})`}: {t[`what.${s.id}`]} {t.configuredBy}: {s.config.map((c) => `${c.member} → ${c.struct}`).join(', ')}.{' '}
+						{t.dynamicTitle}:{' '}
+						{dynamicOf(s.id).length
+							? dynamicOf(s.id)
+									.map((d) => `${shortState(d.state)} (${versionOf(d.state)})`)
+									.join(', ')
+							: s.kind === 'shader'
+								? t.noDynamicShader
+								: t.noDynamic}
+					</li>
+				))
+			}
+		</ol>
+	</details>
+</figure>
+
+<style>
+	.vk-lab {
+		margin: 1.5rem 0;
+	}
+	/* Reserves the island's height so the page does not jump when it mounts. */
+	.vk-lab-slot {
+		min-height: 70rem;
+	}
+	.vk-lab-text {
+		font-size: var(--sl-text-sm);
+	}
+	.vk-lab-text summary {
+		cursor: pointer;
+		color: var(--sl-color-gray-3);
+	}
+</style>

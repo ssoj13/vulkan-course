@@ -1,0 +1,164 @@
+/*
+ * Messenger-filter lab: two checkbox groups (severity, type), the log as console lines colored by severity (dropped
+ * lines faded and struck through), the create-info code block.
+ */
+.mf-controls {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+	gap: 0.75rem;
+}
+.mf-set {
+	border: 1px solid var(--lab-border);
+	border-radius: 0.45rem;
+	padding: 0.4rem 0.7rem 0.55rem;
+	margin: 0;
+	display: grid;
+	gap: 0.3rem;
+	font-size: var(--sl-text-sm);
+}
+.mf-set legend {
+	padding: 0 0.3rem;
+	color: var(--lab-text-muted);
+}
+.mf-set label,
+.mf-leak {
+	display: flex;
+	align-items: baseline;
+	gap: 0.45rem;
+	cursor: pointer;
+}
+.mf-set input,
+.mf-leak input {
+	accent-color: var(--lab-accent);
+	flex: none;
+}
+.mf-bit {
+	font-size: var(--sl-text-xs);
+	color: var(--lab-text-muted);
+}
+.mf-row {
+	font-size: var(--sl-text-sm);
+}
+.mf-head {
+	margin: 0 0 0.4rem;
+	font-size: var(--sl-text-sm);
+	font-weight: 600;
+}
+
+:where(.lab-card) .mf-log {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	display: grid;
+	gap: 0.3rem;
+	max-height: 26rem;
+	overflow-y: auto;
+}
+:where(.lab-card) .mf-log > li {
+	margin: 0;
+}
+.mf-line {
+	--mf-c: var(--lab-text-muted);
+	border-inline-start: 3px solid var(--mf-c);
+	background: var(--lab-surface-2);
+	border-radius: 0.3rem;
+	padding: 0.3rem 0.5rem;
+	transition: opacity 0.2s;
+}
+.mf-line.is-info {
+	--mf-c: var(--lab-series-1);
+}
+.mf-line.is-warning {
+	--mf-c: var(--lab-warn);
+}
+.mf-line.is-error {
+	--mf-c: var(--lab-err);
+}
+.mf-line.is-dropped {
+	opacity: 0.45;
+}
+.mf-line.is-dropped .mf-text {
+	text-decoration: line-through;
+	text-decoration-color: color-mix(in srgb, currentColor 50%, transparent);
+}
+.mf-meta {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: 0.2rem 0.6rem;
+	font-size: var(--sl-text-xs);
+}
+.mf-sev {
+	color: var(--mf-c);
+	font-weight: 700;
+}
+.mf-type {
+	color: var(--lab-text-muted);
+}
+:where(.lab-card) .mf-id {
+	font-size: 0.95em;
+}
+.mf-verdict {
+	margin-inline-start: auto;
+	color: var(--lab-text-muted);
+}
+.mf-line:not(.is-dropped) .mf-verdict {
+	color: var(--lab-ok);
+	font-weight: 600;
+}
+:where(.lab-card) .mf-text {
+	margin: 0.2rem 0 0;
+	padding: 0;
+	background: none;
+	border: 0;
+	font-family: var(--__sl-font-mono);
+	font-size: var(--sl-text-xs);
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+.mf-code-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: space-between;
+	gap: 0.4rem;
+}
+.mf-code-head .mf-head {
+	margin: 0;
+}
+.mf-code-head .lab-button {
+	font-size: var(--sl-text-xs);
+	padding: 0.2rem 0.6rem;
+}
+:where(.lab-card) .mf-code {
+	margin: 0.4rem 0 0;
+	padding: 0.6rem 0.8rem;
+	background: var(--lab-surface-2);
+	border: 1px solid var(--lab-border);
+	border-radius: 0.45rem;
+	overflow-x: auto;
+	font-size: var(--sl-text-xs);
+}
+:where(.lab-card) .mf-code code {
+	background: none;
+	border: 0;
+	padding: 0;
+	overflow-wrap: normal;
+}
+.mf-choice summary {
+	font-size: var(--sl-text-sm);
+	font-weight: 600;
+}
+.mf-choice p {
+	font-size: var(--sl-text-sm);
+	margin: 0.4rem 0 0;
+}
+.mf-source {
+	margin-bottom: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+	.mf-line {
+		transition: none;
+	}
+}

@@ -1,0 +1,224 @@
+/* Device-picker lab (DevicePickerView): tabs, property list, feature/limit lists, rule + candidates with traces. */
+.vk-dp-tabs {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.4rem;
+}
+.vk-dp-tabs .lab-button:focus-visible,
+.vk-dp-panel :focus-visible {
+	outline: 2px solid var(--lab-accent);
+	outline-offset: 2px;
+}
+/* Fixed minimum height so switching tabs or filtering does not make the page jump much. */
+.vk-dp-panel {
+	min-height: 22rem;
+}
+.vk-dp-check {
+	display: flex;
+	align-items: center;
+	gap: 0.4rem;
+	font-size: var(--sl-text-sm);
+}
+.vk-dp-check input {
+	accent-color: var(--lab-accent);
+}
+.lab-card input[type='text'].vk-dp-search {
+	flex: 1 1 14rem;
+	width: auto;
+}
+.vk-dp-badge {
+	font-size: var(--sl-text-xs);
+	padding: 0.05rem 0.5rem;
+	border: 1px solid var(--lab-border);
+	border-radius: 1rem;
+	color: var(--lab-text-muted);
+	white-space: nowrap;
+}
+.vk-dp-badge.is-accent {
+	border-color: var(--lab-accent);
+	color: var(--sl-color-text-accent);
+}
+.vk-dp-badge.is-hypo {
+	border-style: dashed;
+	border-color: var(--lab-warn);
+	color: var(--lab-warn);
+}
+
+/* Properties */
+.vk-dp-props {
+	margin: 0;
+	display: grid;
+	gap: 0.5rem;
+}
+.vk-dp-props > div {
+	display: grid;
+	grid-template-columns: minmax(8rem, 11rem) 1fr;
+	gap: 0.6rem;
+	padding: 0.45rem 0.6rem;
+	background: var(--lab-surface-2);
+	border: 1px solid var(--lab-border);
+	border-radius: 0.4rem;
+}
+.vk-dp-props dt,
+.vk-dp-props dd {
+	margin: 0;
+	min-width: 0;
+	font-size: var(--sl-text-sm);
+}
+.vk-dp-props dd b {
+	color: var(--sl-color-white);
+	overflow-wrap: anywhere;
+}
+@media (max-width: 36rem) {
+	.vk-dp-props > div {
+		grid-template-columns: 1fr;
+		gap: 0.2rem;
+	}
+}
+
+/* Features */
+.vk-dp-group h4 {
+	margin: 0.9rem 0 0.3rem;
+}
+.lab-card ul.vk-dp-feats,
+.lab-card ul.vk-dp-limits,
+.lab-card ul.vk-dp-trace {
+	list-style: none;
+	padding: 0;
+}
+.vk-dp-feats {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr));
+	gap: 0.25rem 0.75rem;
+}
+.lab-card .vk-dp-feats li {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 0.35rem;
+	margin: 0;
+	font-size: var(--sl-text-sm);
+	min-width: 0;
+}
+.vk-dp-val {
+	font-size: var(--sl-text-xs);
+	font-weight: 600;
+}
+.vk-dp-feats .is-yes .vk-dp-val {
+	color: var(--lab-ok);
+}
+.vk-dp-feats .is-no .vk-dp-val {
+	color: var(--lab-err);
+}
+.vk-dp-feats .is-marked code {
+	border-color: var(--lab-accent);
+}
+
+/* Limits */
+.lab-card .vk-dp-limits li {
+	margin: 0;
+	padding: 0.35rem 0;
+	border-bottom: 1px solid var(--lab-border);
+}
+.vk-dp-limit-head {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: space-between;
+	gap: 0.2rem 0.75rem;
+	font-size: var(--sl-text-sm);
+}
+.vk-dp-limit-head b {
+	color: var(--sl-color-white);
+	font-variant-numeric: tabular-nums;
+}
+.vk-dp-limits li:not(.is-explained) .vk-dp-limit-head b {
+	color: var(--sl-color-gray-2);
+	font-weight: 400;
+}
+.lab-card .vk-dp-limit-text {
+	margin: 0.15rem 0 0;
+	font-size: var(--sl-text-sm);
+	color: var(--sl-color-gray-2);
+}
+
+/* Picker */
+.vk-dp-picker {
+	display: grid;
+	grid-template-columns: minmax(14rem, 18rem) 1fr;
+	gap: var(--lab-gap);
+	align-items: start;
+}
+.vk-dp-rule {
+	display: grid;
+	gap: 0.6rem;
+	margin: 0;
+	padding: 0.6rem 0.8rem 0.8rem;
+	border: 1px solid var(--lab-border);
+	border-radius: 0.45rem;
+	background: var(--lab-surface-2);
+}
+.vk-dp-rule legend {
+	font-weight: 600;
+	font-size: var(--sl-text-sm);
+	color: var(--sl-color-white);
+	padding: 0 0.3rem;
+}
+.vk-dp-cands h4 {
+	margin: 0 0 0.3rem;
+}
+.lab-card .vk-dp-cands ol {
+	list-style: none;
+	padding: 0;
+	margin: 0;
+	display: grid;
+	gap: 0.5rem;
+}
+.lab-card .vk-dp-cand {
+	margin: 0;
+	padding: 0.5rem 0.7rem;
+	border: 1px solid var(--lab-border);
+	border-radius: 0.45rem;
+	background: var(--lab-surface-2);
+}
+.vk-dp-cand.is-hypo {
+	border-style: dashed;
+}
+.vk-dp-cand.is-picked {
+	border: 2px solid var(--lab-ok);
+}
+.vk-dp-cand.is-off {
+	opacity: 0.55;
+}
+.lab-card .vk-dp-cand p {
+	margin: 0.15rem 0 0.25rem;
+}
+.lab-card .vk-dp-trace li {
+	margin: 0.1rem 0;
+	font-size: var(--sl-text-sm);
+	font-family: var(--__sl-font-mono);
+	overflow-wrap: anywhere;
+}
+.vk-dp-trace .is-ok::before {
+	content: '✓ ';
+	color: var(--lab-ok);
+}
+.vk-dp-trace .is-bad::before {
+	content: '✗ ';
+	color: var(--lab-err);
+}
+.vk-dp-trace .is-bad {
+	color: var(--lab-err);
+}
+.vk-dp-trace .is-skip {
+	color: var(--lab-text-muted);
+}
+.vk-dp-result {
+	margin: 0;
+	grid-column: 1 / -1;
+	font-weight: 600;
+}
+@media (max-width: 44rem) {
+	.vk-dp-picker {
+		grid-template-columns: 1fr;
+	}
+}

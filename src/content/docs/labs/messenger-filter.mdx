@@ -1,0 +1,29 @@
+---
+title: Debug messenger filters
+description: Severity and type masks applied to a real validation log - which messages reach your callback.
+---
+import MessengerFilter from '../../../components/labs/MessengerFilter.astro';
+
+A debug messenger does not hear everything: its create info carries two masks, `messageSeverity` and `messageType`,
+and a message reaches your callback only when its severity bit is in the first mask **and** its type bit is in the
+second. This lab applies those masks to real output of step 02 on the course machine, captured with every bit
+enabled. The step itself is explained in [the validation lesson](lesson:validation#3-what-we-want-to-hear-about).
+
+Tick severities and types; each line of the log says whether it is delivered or which mask dropped it, and the code
+below shows the create info in C and in Rust (ash) for exactly those masks. The checkbox "break a rule" adds the
+errors of the lesson's experiment, a messenger left alive at `vkDestroyInstance`.
+
+What to notice: almost all of the run is the loader's own VERBOSE and INFO chatter; WARNING | ERROR keeps one line in
+a clean run and the errors when something is wrong.
+
+Things to try:
+
+- press "Everything" and count what the course's choice saves you from;
+- keep ERROR but drop VALIDATION from the types, then break the rule;
+- tick `DEVICE_ADDRESS_BINDING_EXT`: the bit belongs to a device extension, and the real validation layer answered with
+  an error about the messenger itself;
+- clear every severity.
+
+Where these messages come from is the subject of [Through the loader](lab:loader-chain).
+
+<MessengerFilter />

@@ -1,0 +1,175 @@
+/*
+ * Loader-chain lab: controls next to a vertical chain of boxes (program, trampoline, layers, terminator, drivers),
+ * the implicit-layer table below. Box states: is-now = the current hop (accent), is-seen = already passed,
+ * is-off = not on this call's path (faded, dashed). Implicit layers use series 2, the explicit one series 3.
+ */
+.lc-grid {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr);
+	gap: 1rem;
+}
+@media (min-width: 50rem) {
+	.lc-grid {
+		grid-template-columns: minmax(0, 20rem) minmax(0, 1fr);
+		align-items: start;
+	}
+}
+.lc-controls {
+	display: grid;
+	gap: 0.6rem;
+	font-size: var(--sl-text-sm);
+}
+.lc-controls > * {
+	margin: 0;
+}
+.lc-set {
+	border: 1px solid var(--lab-border);
+	border-radius: 0.45rem;
+	padding: 0.4rem 0.7rem 0.5rem;
+	margin: 0;
+	display: grid;
+	gap: 0.3rem;
+}
+.lc-set legend {
+	padding: 0 0.3rem;
+	color: var(--lab-text-muted);
+}
+.lc-set:disabled {
+	opacity: 0.5;
+}
+.lc-set label,
+.lc-var {
+	display: flex;
+	align-items: baseline;
+	gap: 0.4rem;
+	cursor: pointer;
+}
+.lc-set input,
+.lc-var input {
+	accent-color: var(--lab-accent);
+	flex: none;
+}
+
+/* The chain: one column of boxes joined by a line, the drivers side by side at the bottom. */
+:where(.lab-card) .lc-chain {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	display: grid;
+	gap: 0.55rem;
+	font-size: var(--sl-text-sm);
+}
+:where(.lab-card) .lc-chain > li {
+	margin: 0;
+	position: relative;
+}
+.lc-chain > li + li::before {
+	content: '';
+	position: absolute;
+	inset-inline-start: 1.1rem;
+	top: -0.55rem;
+	height: 0.55rem;
+	border-inline-start: 2px solid var(--lab-border);
+}
+.lc-box {
+	--lc-c: var(--lab-series-1);
+	border: 1px solid var(--lab-border);
+	border-inline-start: 4px solid var(--lc-c);
+	border-radius: 0.45rem;
+	background: var(--lab-surface-2);
+	padding: 0.35rem 0.6rem;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: 0.2rem 0.5rem;
+	transition:
+		background-color 0.2s,
+		box-shadow 0.2s,
+		opacity 0.2s;
+}
+.lc-box.is-implicit {
+	--lc-c: var(--lab-series-2);
+}
+.lc-box.is-explicit {
+	--lc-c: var(--lab-series-3);
+}
+.lc-box.is-icd {
+	--lc-c: var(--lab-series-4);
+	flex-direction: column;
+	gap: 0.1rem;
+}
+.lc-box.is-seen {
+	background: color-mix(in srgb, var(--lc-c) 12%, var(--lab-surface-2));
+}
+.lc-box.is-now {
+	background: color-mix(in srgb, var(--lc-c) 30%, var(--lab-surface-2));
+	border-color: var(--lc-c);
+	box-shadow: 0 0 0 2px color-mix(in srgb, var(--lc-c) 45%, transparent);
+}
+.lc-box.is-off {
+	opacity: 0.45;
+	border-style: dashed;
+}
+.lc-sub,
+.lc-off,
+.lc-tag {
+	font-size: var(--sl-text-xs);
+	color: var(--lab-text-muted);
+}
+.lc-off {
+	font-style: italic;
+}
+.lc-tag {
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+}
+.lc-note {
+	color: var(--lab-text-muted);
+	font-style: italic;
+	padding-inline-start: 0.6rem;
+}
+.lc-icds {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+	gap: 0.55rem;
+}
+@media (prefers-reduced-motion: reduce) {
+	.lc-box {
+		transition: none;
+	}
+}
+
+/* Implicit layers and their variables. */
+.lc-env summary {
+	font-size: var(--sl-text-sm);
+	color: var(--lab-text-muted);
+}
+.lc-table-wrap {
+	overflow-x: auto;
+}
+.lc-env table {
+	width: 100%;
+	border-collapse: collapse;
+	font-size: var(--sl-text-xs);
+}
+.lc-env th,
+.lc-env td {
+	text-align: start;
+	padding: 0.3rem 0.45rem;
+	border-bottom: 1px solid var(--lab-border);
+	vertical-align: top;
+}
+.lc-env th {
+	color: var(--lab-text-muted);
+	font-weight: 600;
+}
+.lc-env tr.is-out td {
+	color: var(--lab-text-muted);
+}
+.lc-env tr.is-on td:last-child {
+	color: var(--lab-ok);
+	font-weight: 600;
+}
+.lc-simplified {
+	margin-bottom: 0;
+}

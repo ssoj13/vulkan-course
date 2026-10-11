@@ -1,0 +1,39 @@
+---
+/**
+ * Memory-path lab: <MemoryPath />. Renders the MemoryPathView island in the page's language; without JavaScript the
+ * reader gets the three paths for 64 MiB in words, computed by the same model from gpu.json.
+ */
+import MemoryPathView from './MemoryPathView.tsx';
+import { courseIn, langOf } from 'course-kit/lib/course';
+import { fmt } from 'course-kit/i18n.mjs';
+import { pick } from '../../lib/text';
+import { PATH, PATHS, bytes, transfer } from '../../lib/labs/memory-path';
+import { PATH_KEY, TEXT } from './memory-path.text';
+
+const { lang } = courseIn(langOf(Astro.url.pathname));
+const t = pick(TEXT, lang, 'memory-path');
+const size = 64 * 1024 ** 2;
+const num = (n: number) => new Intl.NumberFormat(lang, { maximumSignificantDigits: 3 }).format(n);
+---
+
+<div class="vk-lab">
+	<MemoryPathView client:only="react" lang={lang}>
+		<div slot="fallback" class="lab-card">
+			<p>{fmt(t.size, { size: bytes(size, lang) })}</p>
+			<ul>
+				{
+					PATHS.map((p) => {
+						const tr = transfer(p, size);
+						return (
+							<li>
+								{t[PATH_KEY[p]]}: {fmt(t.time, { ms: num(tr.ms), bw: fmt(t.gbps, { gb: num(PATH[p].bw / 1e9) }), peak: t.peak })};{' '}
+								{fmt(t.typeRow, { index: tr.type.index, heap: tr.heap.index })} ({bytes(tr.heap.size, lang)})
+							</li>
+						);
+					})
+				}
+			</ul>
+			<p>{t.note}</p>
+		</div>
+	</MemoryPathView>
+</div>

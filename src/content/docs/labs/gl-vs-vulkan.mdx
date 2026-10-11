@@ -1,0 +1,43 @@
+---
+title: OpenGL state vs Vulkan pipelines
+description: Change state in a GL-style driver and see when it has to rebuild a shader behind your back; do the same with prebuilt Vulkan pipelines.
+---
+import GlVsVulkan from '../../../components/labs/GlVsVulkan.astro';
+
+The same frame, drawn twice: once through a GL-style driver, once through Vulkan. This lab answers one question:
+**why can an OpenGL draw suddenly cost a shader compile, and why does a Vulkan draw never do that?** The idea is
+explained in [Why Vulkan exists](lesson:why-vulkan#opengl-one-big-hidden-state-machine).
+
+On a GPU, a "state" in the API is not always a switch in hardware. Some of it is part of the shader's machine code.
+Vertex fetch is a known example: "Vertex fetch has not been a fixed function hardware unit for quite some time,
+despite what APIs pretend", and the driver patches the vertex shader for the current vertex layout or, on AMD GCN,
+gives it a fetch routine to call (Emil Persson, *Low-level Shader Optimization for Next-Gen and DX11*, GDC 2014).
+Blending is another one on GPUs that lack fixed-function blending: Mesa's blend lowering pass implements it "as a
+fragment shader variant on typical GPUs". A GL driver learns the full combination only at the draw, so the first
+draw with a new combination may have to wait while the driver builds a variant. Vulkan asks for all of that state
+up front: `vkCreateGraphicsPipelines` compiles a pipeline per combination at load time, and a draw only binds one.
+
+The table at the top is the frame: edit the shader, blending, depth test and vertex format of each draw, add or remove
+draws. Step through it: the GL column marks the draws that meet a new combination (⚠), the Vulkan column shows which
+pipeline each draw binds. The counters compare the compiles each side does at load time and during the frame. The
+second frame has no GL compiles anymore: the driver keeps its variants. Real GL drivers also guess common variants
+early and compile in background threads, which hides some hitches; they cannot know a combination before it is drawn.
+
+Not every state needs its own pipeline. Viewport and scissor have been **dynamic state** since Vulkan 1.0: they are set
+with commands in the command buffer. Vulkan 1.3 made many more core, depth test among them
+(`VK_DYNAMIC_STATE_DEPTH_TEST_ENABLE`); the full list, taken from the registry, is at the bottom of the lab. Blend
+enable and the vertex format are not core dynamic state; extensions add them. A `VkPipelineCache` passed to
+`vkCreateGraphicsPipelines` can save the compiled pipelines to disk, so the next run loads faster. The
+[graphics pipeline lab](lab:graphics-pipeline) shows which state lives where.
+
+This is a model of a typical driver, not of any one in particular: here blending and vertex format go into a GL
+variant and depth test does not.
+
+Things to try:
+
+- step through the starting frame and count the ⚠ draws; then look at the frame-2 step;
+- turn off the dynamic depth test and watch the number of Vulkan pipelines grow (the gizmo needs its own);
+- give the HUD the `lit` shader: one more GL variant, one more pipeline, but still created at load;
+- make every draw identical: one GL variant, one pipeline, and nothing left to compile mid-frame.
+
+<GlVsVulkan />

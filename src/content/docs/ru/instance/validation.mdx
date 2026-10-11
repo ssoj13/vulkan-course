@@ -7,6 +7,7 @@ import { Aside } from '@astrojs/starlight/components';
 import MindMap from 'course-kit/components/MindMap.astro';
 import Quiz from 'course-kit/components/Quiz.astro';
 import Step from '../../../../components/Step.astro';
+import MessengerFilter from '../../../../components/labs/MessengerFilter.astro';
 
 В [уроке о том, зачем нужен Vulkan](lesson:why-vulkan) мы договорились: драйвер Vulkan не проверяет, правильно ли вы
 пользуетесь API. Передали неверное значение — и получите падение, чёрный экран или, хуже всего, программу, которая
@@ -81,6 +82,11 @@ validation — нарушение правил, performance — совет по 
 
 Просим только предупреждения и ошибки. Сообщения info и verbose — это в основном загрузчик, рассказывающий о себе:
 больше сотни строк за запуск, и в них утонет та единственная строка, ради которой всё затевалось.
+
+Вот этот выбор на настоящем логе шага 02 с машины курса. Отмечайте другие уровни и типы и смотрите, какие строки
+доходят до callback и как при этом выглядит create info; в [полностраничной версии](lab:messenger-filter) просторнее.
+
+<MessengerFilter />
 
 ### 4. Instance со слоем, потом messenger
 

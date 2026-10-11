@@ -7,6 +7,7 @@ import { Aside } from '@astrojs/starlight/components';
 import MindMap from 'course-kit/components/MindMap.astro';
 import Quiz from 'course-kit/components/Quiz.astro';
 import Step from '../../../components/Step.astro';
+import QueuePlanner from '../../../components/labs/QueuePlanner.astro';
 
 In [talking to the GPU](lesson:talking-to-gpu) we said work is submitted to a **queue**. A GPU usually offers several
 kinds of queues, because inside the chip there are several independent **engines**: the big graphics/compute engine,
@@ -85,6 +86,11 @@ compute families are printed to show they exist; we use them in the advanced par
 Think of a studio pipeline with separate departments: lighting renders, a data team moves files, editorial encodes
 dailies. Each has its own queue of jobs and they work at the same time. Queue families are the departments of the GPU.
 </Aside>
+
+Plan the queues of a real program on these six families: choose roles and a strategy, and see the queue each role
+gets and the create-info list that the logical device will need ([full page](lab:queue-planner)).
+
+<QueuePlanner />
 
 ## The map of this lesson
 

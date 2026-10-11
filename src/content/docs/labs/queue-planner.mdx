@@ -1,0 +1,32 @@
+---
+title: Queue planner
+description: The real queue families of the course GPU - choose graphics, async compute and transfer queues and see what you get.
+---
+import QueuePlanner from '../../../components/labs/QueuePlanner.astro';
+
+A program does not get queues by asking for "a graphics queue": it picks a queue family for every job, then lists how
+many queues it wants from each family when it creates the logical device. This lab does that planning on the six real
+queue families of the course GPU and shows the result as the program would write it.
+
+At the top is the family table from `vulkaninfo`. Below it, choose the roles your program needs (graphics, present,
+async compute, dedicated transfer, video decode), how many queues each one wants and their priorities, and how to pick
+a family: the first family with the capability, or the most dedicated one, as
+[step 04 does](lesson:queue-families#finding-the-families-we-need). The lab answers with the family and queue index of
+every role (what you will pass to `vkGetDeviceQueue`), the `VkDeviceQueueCreateInfo` list for `vkCreateDevice`, and the
+exact valid-usage rule (VUID) if the list is invalid.
+
+One simplification: whether a family can present depends on the window surface, which the lab does not have. It
+assumes family 0 can present, which holds on desktop GPUs; the real check comes with the presentation lessons.
+
+Things to try:
+
+- switch to "first family with the capability": async compute and transfer land in family 0 together with graphics;
+- turn off "one VkDeviceQueueCreateInfo per family": graphics and present now produce two entries for family 0;
+- ask for 3 dedicated transfer queues: family 1 has only 2;
+- turn off sharing and ask for 16 graphics queues: present needs a 17th queue in family 0;
+- set a priority to 1.5.
+
+Next: [the logical device](lesson:logical-device) creates these queues; the choice of the GPU itself is in
+[Pick a GPU](lab:device-picker).
+
+<QueuePlanner />

@@ -1,0 +1,164 @@
+/* Memory-path lab: controls, the RAM–CPU–PCIe–GPU–VRAM chain (a row, a column on narrow screens), the budget meter. */
+.mp-controls {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+	gap: var(--lab-gap);
+	align-items: start;
+}
+@media (max-width: 40rem) {
+	.mp-controls {
+		grid-template-columns: minmax(0, 1fr);
+	}
+}
+.mp-paths {
+	border: 0;
+	padding: 0;
+	margin: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 0.3rem;
+	font-size: var(--sl-text-sm);
+}
+.mp-paths legend {
+	padding: 0;
+	margin-bottom: 0.25rem;
+}
+.mp-path {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+	padding: 0.3rem 0.55rem;
+	border: 1px solid var(--lab-border);
+	border-radius: 0.4rem;
+	background: var(--lab-surface-2);
+	cursor: pointer;
+}
+.mp-path.is-on {
+	border-color: var(--lab-accent);
+}
+.mp-path input {
+	accent-color: var(--lab-accent);
+	margin: 0;
+}
+
+.mp-chain {
+	list-style: none;
+	display: flex;
+	padding: 0;
+	margin: 0;
+}
+:where(.lab-card) .mp-chain > li + li {
+	margin-top: 0;
+}
+.mp-step {
+	display: flex;
+	align-items: center;
+	flex: 1 1 0;
+	min-width: 0;
+}
+.mp-step:last-child {
+	flex: 1.3 1 0;
+}
+.mp-node {
+	flex: 1 1 auto;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 0.15rem;
+	padding: 0.45rem 0.5rem;
+	border: 1px solid var(--lab-border);
+	border-radius: 0.45rem;
+	background: var(--lab-surface-2);
+	font-size: var(--sl-text-xs);
+	color: var(--lab-text-muted);
+	text-align: center;
+	overflow-wrap: anywhere;
+}
+.mp-node b {
+	font-size: var(--sl-text-sm);
+	color: var(--sl-color-white);
+}
+.mp-node.is-on {
+	border-color: var(--lab-accent);
+	box-shadow: 0 0 0 2px color-mix(in srgb, var(--lab-accent) 30%, transparent);
+}
+.mp-bar {
+	margin-top: 0.2rem;
+	padding: 0.1rem 0.3rem;
+	border: 1px dashed var(--lab-border);
+	border-radius: 0.3rem;
+}
+.mp-bar.is-on {
+	border: 1px solid var(--lab-accent);
+	color: var(--sl-color-white);
+}
+.mp-link {
+	flex: 0 0 1rem;
+	height: 3px;
+	background: var(--lab-border);
+}
+.mp-link.is-on {
+	background: var(--lab-accent);
+}
+@media (max-width: 40rem) {
+	.mp-chain,
+	.mp-step {
+		flex-direction: column;
+		align-items: stretch;
+	}
+	.mp-step,
+	.mp-step:last-child {
+		flex: none;
+	}
+	.mp-link {
+		flex-basis: 0.8rem;
+		width: 3px;
+		height: auto;
+		align-self: center;
+	}
+}
+
+.mp-time > p {
+	margin: 0;
+}
+.mp-meter {
+	height: 0.8rem;
+	margin-top: 0.4rem;
+	border: 1px solid var(--lab-border);
+	border-radius: 0.4rem;
+	background: var(--lab-surface-2);
+	overflow: hidden;
+}
+.mp-meter span {
+	display: block;
+	height: 100%;
+	min-width: 2px;
+}
+.mp-meter .is-ok {
+	background: var(--lab-ok);
+}
+.mp-meter .is-warn {
+	background: var(--lab-warn);
+}
+.mp-meter .is-err {
+	background: var(--lab-err);
+}
+.mp-vuid {
+	font-size: var(--sl-text-xs);
+	color: var(--lab-text-muted);
+}
+.mp-types ul {
+	list-style: none;
+	padding: 0;
+	font-size: var(--sl-text-sm);
+}
+.mp-types li {
+	padding: 0.1rem 0.4rem;
+	border-inline-start: 3px solid transparent;
+	color: var(--lab-text-muted);
+}
+.mp-types li.is-on {
+	border-inline-start-color: var(--lab-accent);
+	background: color-mix(in srgb, var(--lab-accent) 15%, transparent);
+	color: var(--sl-color-white);
+}

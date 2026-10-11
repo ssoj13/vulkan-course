@@ -1,0 +1,36 @@
+---
+title: Where the data lives
+description: VRAM, system RAM and the PCIe bus between them, with the real bandwidths of the course GPU. What a frame costs if a buffer crosses the bus.
+---
+import MemoryPath from '../../../components/labs/MemoryPath.astro';
+
+A discrete GPU has its own memory, and everything else sits on the other side of a bus. This lab answers one question:
+**how much does it cost per frame when data lives in the wrong place?** The background is in the lesson
+[What a GPU is](lesson:gpu#its-own-memory).
+
+Pick how much data a frame reads or writes, and a path:
+
+- **GPU reads VRAM**: the memory on the card, about 912 GB/s on the RTX 3080 Ti of this course;
+- **GPU reads system RAM over PCIe**: the buffer stays in the computer's RAM and the GPU fetches it across the
+  PCIe 4.0 x16 link, about 32 GB/s;
+- **CPU writes into the BAR window**: the CPU writes straight into the part of VRAM it can map, also across PCIe.
+
+The bar compares one pass over the data with the 16.7 ms of a 60 fps frame. Below it are the real memory heaps and
+types of the course GPU, as `vulkaninfo` reports them, with the type each path would get highlighted. The lab picks it
+the way the Vulkan specification suggests: the first memory type, in index order, that has all the required property
+flags.
+
+Both bandwidths are theoretical peaks, and the time is simply bytes divided by bandwidth for one pass. Real transfers
+reach less than the peak, and caches and latency are left out, but the ratio of almost 30 between the two links is
+the point.
+
+Things to try:
+
+- 64 MiB from VRAM, then the same 64 MiB from system RAM: the same bytes, almost 30 times the cost;
+- 1 GiB over PCIe: one pass no longer fits in a frame;
+- the BAR window with 256 MiB: it does not fit at all. Without Resizable BAR this GPU exposes only a 214 MiB window of
+  VRAM to the CPU, which is why uploads usually go through a staging buffer and a copy instead.
+
+<MemoryPath />
+
+Previous: how the GPU spends its time inside a warp, in the lab [Warp divergence](lab:warp-divergence).

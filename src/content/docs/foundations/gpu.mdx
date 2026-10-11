@@ -6,6 +6,8 @@ description: Thousands of small cores, their own memory, and why a GPU is fast a
 import { Aside } from '@astrojs/starlight/components';
 import MindMap from 'course-kit/components/MindMap.astro';
 import Quiz from 'course-kit/components/Quiz.astro';
+import WarpDivergence from '../../../components/labs/WarpDivergence.astro';
+import MemoryPath from '../../../components/labs/MemoryPath.astro';
 
 Vulkan is a way to give work to a GPU. Before we talk to it, let us see what kind of machine it is, because almost
 every strange rule in Vulkan comes from the shape of this machine.
@@ -44,12 +46,22 @@ blocks: NVIDIA calls them **SMs** (streaming multiprocessors), AMD calls them **
 Lockstep explains why GPUs dislike branches. If half of a warp takes the `if` and half the `else`, the warp runs
 *both* paths one after another, with half its lanes switched off each time. Same work, twice the time.
 
+Watch it happen below: pick a condition and step through the warp one instruction at a time (also on its own page,
+[Warp divergence](lab:warp-divergence)).
+
+<WarpDivergence />
+
 ## Its own memory
 
 A discrete GPU sits on a card with its own memory, **VRAM**. For example, an RTX 3080 Ti has 12 GB of GDDR6X at
 about 912 GB/s; the PCIe 4.0 x16 link to the CPU moves about 32 GB/s. So data that lives in VRAM is cheap for the GPU,
 and data that has to cross from the CPU is expensive. Vulkan makes you decide **where every buffer lives** for exactly
 this reason.
+
+Put numbers on it: choose how much data a frame touches and where it lives, and compare the time with a 60 fps
+frame (also on its own page, [Where the data lives](lab:memory-path)).
+
+<MemoryPath />
 
 GPUs hide memory latency differently from CPUs: rather than relying mainly on big caches, an SM keeps many warps in flight and switches
 to another one whenever the current one waits for memory. That is why GPUs want *lots* of parallel work.

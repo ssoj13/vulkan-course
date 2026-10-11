@@ -1,0 +1,45 @@
+---
+/**
+ * Buffer-memory lab: usage -> memory requirements (captured on the course GPU) -> memory type (gpu.json) -> allocate,
+ * bind, map or staging upload (BufferMemoryView island). The no-JS fallback lists the default flow (a 64 KiB vertex
+ * buffer in device-local memory) step by step, with the same captions as the island.
+ */
+import BufferMemoryView, { stepText } from './BufferMemoryView.tsx';
+import { flow } from '../../lib/labs/buffer-memory';
+import { pick } from '../../lib/text';
+import { TEXT } from './buffer-memory.text';
+import { courseIn, langOf } from 'course-kit/lib/course';
+
+const v = courseIn(langOf(Astro.url.pathname));
+const t = pick(TEXT, v.lang, 'buffer-memory');
+const steps = flow(['VK_BUFFER_USAGE_VERTEX_BUFFER_BIT', 'VK_BUFFER_USAGE_TRANSFER_DST_BIT'], 65536, 'device');
+---
+
+<figure class="vk-lab not-content">
+	<div class="vk-lab-slot">
+		<BufferMemoryView client:only="react" lang={v.lang} />
+	</div>
+	<details class="vk-lab-text">
+		<summary>{t.asText}</summary>
+		<ol>
+			{steps.map((s) => <li>{stepText(t, s)}</li>)}
+		</ol>
+	</details>
+</figure>
+
+<style>
+	.vk-lab {
+		margin: 1.5rem 0;
+	}
+	/* Reserves the island's height so the page does not jump when it mounts. */
+	.vk-lab-slot {
+		min-height: 44rem;
+	}
+	.vk-lab-text {
+		font-size: var(--sl-text-sm);
+	}
+	.vk-lab-text summary {
+		cursor: pointer;
+		color: var(--sl-color-gray-3);
+	}
+</style>

@@ -1,0 +1,63 @@
+---
+/**
+ * Loader-chain lab: one Vulkan call followed through the loader, its layers and the drivers (LoaderChainView island).
+ * The no-JS fallback prints the default chain and every call's path, from the same model.
+ */
+import LoaderChainView from './LoaderChainView.tsx';
+import { CALLS, activeLayers, trace } from '../../lib/labs/loader-chain';
+import { pick } from '../../lib/text';
+import { TEXT } from './loader-chain.text';
+import { courseIn, langOf } from 'course-kit/lib/course';
+import { fmt } from 'course-kit/i18n.mjs';
+
+const v = courseIn(langOf(Astro.url.pathname));
+const t = pick(TEXT, v.lang, 'loader-chain');
+const env = new Set<string>();
+const chain = activeLayers({ env, validation: true }).map((l) => l.name).join(', ');
+const paths = CALLS.map((call) => {
+	const tr = trace({ call, env, validation: true, second: false, gpu: 'nvidia', via: 'gdpa' });
+	return tr.hops.map((h) => fmt(t[h.key], h.vars));
+});
+---
+
+<figure class="vk-lab not-content">
+	<div class="vk-lab-slot">
+		<LoaderChainView client:only="react" lang={v.lang} />
+	</div>
+	<details class="vk-lab-text">
+		<summary>{t.asText}</summary>
+		<p>{fmt(t.fbRule, { chain })}</p>
+		{
+			CALLS.map((call, i) => (
+				<>
+					<p>
+						<code>{call}</code>
+					</p>
+					<ol>
+						{paths[i]!.map((x) => (
+							<li>{x}</li>
+						))}
+					</ol>
+				</>
+			))
+		}
+		<p>{t.simplified}</p>
+	</details>
+</figure>
+
+<style>
+	.vk-lab {
+		margin: 1.5rem 0;
+	}
+	/* Reserves the island's height so the page does not jump when it mounts. */
+	.vk-lab-slot {
+		min-height: 44rem;
+	}
+	.vk-lab-text {
+		font-size: var(--sl-text-sm);
+	}
+	.vk-lab-text summary {
+		cursor: pointer;
+		color: var(--sl-color-gray-3);
+	}
+</style>

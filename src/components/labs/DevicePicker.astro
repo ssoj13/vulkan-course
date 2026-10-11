@@ -1,0 +1,56 @@
+---
+/**
+ * Device-picker lab: the course GPU's properties, features and limits, and step 03's picking rule made editable
+ * (DevicePickerView island). gpu.json is checked here, so missing data fails the build; the text fallback lists the
+ * properties and step 03's result.
+ */
+import DevicePickerView from './DevicePickerView.tsx';
+import gpu from '../../data/gpu.json';
+import { CANDIDATES, STEP03_RULE, hex, pick, pickerErrors, shortType } from '../../lib/labs/device-picker';
+import { pick as pickText } from '../../lib/text';
+import { TEXT } from './device-picker.text';
+import { courseIn, langOf } from 'course-kit/lib/course';
+import { fmt } from 'course-kit/i18n.mjs';
+
+const v = courseIn(langOf(Astro.url.pathname));
+const t = pickText(TEXT, v.lang, 'device-picker');
+const errs = pickerErrors();
+if (errs.length) throw new Error(`device-picker data is invalid:\n  - ${errs.join('\n  - ')}`);
+// The fallback states step 03's verdict, so it must still be the real GPU.
+if (pick(CANDIDATES, STEP03_RULE).picked !== 'real') throw new Error('device-picker: step 03 no longer picks the course GPU');
+const d = gpu.device;
+---
+
+<figure class="vk-lab not-content">
+	<div class="vk-lab-island">
+		<DevicePickerView client:only="react" lang={v.lang} />
+	</div>
+	<details class="vk-lab-text">
+		<summary>{t.asText}</summary>
+		<ul>
+			<li><code>{t.pName}</code>: {d.name}</li>
+			<li><code>{t.pType}</code>: {shortType(d.type)}</li>
+			<li><code>{t.pApi}</code>: {d.apiVersion}</li>
+			<li><code>{t.pDriver}</code>: {hex(d.driverVersionRaw, 8)} ({d.driverVersion})</li>
+			<li><code>{t.pVendor}</code>: {hex(d.vendorID)}, <code>{t.pDevice}</code>: {hex(d.deviceID)}</li>
+		</ul>
+		<p>{fmt(t.fbPicked, { api: d.apiVersion })}</p>
+	</details>
+</figure>
+
+<style>
+	.vk-lab {
+		margin: 1.5rem 0;
+	}
+	/* Reserves the island's height before it hydrates, so the page does not jump. */
+	.vk-lab-island {
+		min-height: 34rem;
+	}
+	.vk-lab-text {
+		font-size: var(--sl-text-sm);
+	}
+	.vk-lab-text summary {
+		cursor: pointer;
+		color: var(--sl-color-gray-3);
+	}
+</style>

@@ -1,0 +1,33 @@
+---
+title: Pick a GPU
+description: The real properties, features and limits of the course GPU, and the picking rule of step 03 that you can change.
+---
+import DevicePicker from '../../../components/labs/DevicePicker.astro';
+
+Before a program can use a GPU it has to choose one, and to choose it asks every GPU three questions: what are you
+(properties), what could you switch on (features), how far can I go (limits). This lab shows the answers of the real
+course GPU, an RTX 3080 Ti, as `vulkaninfo` read them, and then lets you run the
+[picking rule of step 03](lesson:physical-devices#picking-one) yourself.
+
+The first three tabs are the data. Search the features and limits by name: the five features step 03 prints are
+marked, and about twenty limits that matter early on are explained with their units. The fourth tab, **Picker**, is
+step 03's rule with its inputs made editable: the required Vulkan version, the required features, and whether to
+prefer a discrete GPU. The rule runs over three GPUs in enumeration order, and each one gets a trace of the checks
+it passed or failed.
+
+Only the RTX 3080 Ti is real. The integrated GPU and the software rasterizer are hypothetical, with illustrative
+values chosen to obey the spec (a Vulkan 1.4 device must support all five features), and the picker looks at those
+five features only.
+
+Things to try:
+
+- unplug the RTX 3080 Ti: the integrated GPU wins, because it is the next eligible device;
+- turn off "prefer discrete": now the first eligible device in enumeration order wins, even though it is likely slower;
+- lower the required version to 1.3 and require `pushDescriptor`: the software rasterizer fails on a feature that
+  cannot even be asked, since its 1.4 struct may not be chained on a 1.3 device;
+- search the limits for `alignment` and compare the uniform and storage buffer offset rules.
+
+The rules are explained in [the physical devices lesson](lesson:physical-devices); what comes next is
+[choosing queues](lab:queue-planner).
+
+<DevicePicker />

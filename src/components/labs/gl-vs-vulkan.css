@@ -1,0 +1,151 @@
+/*
+ * GL-vs-Vulkan lab: the editable draw table, two side-by-side columns (GL, Vulkan) that stack on narrow screens,
+ * draw chips (played / current / may compile), call listings and the pipeline list. Compile hitches use the warning
+ * color; the current draw and the bound pipeline use the accent.
+ */
+.gv-table-wrap {
+	overflow-x: auto;
+}
+.gv-table {
+	width: 100%;
+	border-collapse: collapse;
+	font-size: var(--sl-text-sm);
+}
+.gv-table th,
+.gv-table td {
+	padding: 0.25rem 0.4rem;
+	border-bottom: 1px solid var(--lab-border);
+	text-align: start;
+	white-space: nowrap;
+}
+.gv-table th {
+	font-weight: 500;
+	color: var(--lab-text-muted);
+}
+.gv-table tr.is-now td {
+	background: color-mix(in srgb, var(--lab-accent) 18%, transparent);
+}
+.lab-card .gv-table select {
+	width: auto;
+	padding: 0.2rem 0.35rem;
+}
+.gv-table input[type='checkbox'],
+.gv-dyn input {
+	accent-color: var(--lab-accent);
+}
+.lab-card .gv-remove {
+	padding: 0.1rem 0.55rem;
+}
+.gv-dyn {
+	display: flex;
+	align-items: center;
+	gap: 0.4rem;
+	font-size: var(--sl-text-sm);
+	overflow-wrap: anywhere;
+}
+.gv-sides {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+	gap: var(--lab-gap);
+}
+@media (max-width: 44rem) {
+	.gv-sides {
+		grid-template-columns: minmax(0, 1fr);
+	}
+}
+.gv-side {
+	min-width: 0;
+	border: 1px solid var(--lab-border);
+	border-radius: 0.45rem;
+	padding: 0.6rem 0.75rem;
+	background: var(--lab-surface-2);
+}
+.gv-side > * + * {
+	margin-top: 0.45rem;
+}
+.lab-card .gv-side h4 {
+	margin: 0;
+	font-size: var(--sl-text-base);
+}
+.gv-side .lab-muted {
+	margin-bottom: 0;
+}
+.gv-chips {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.3rem;
+	list-style: none;
+	padding: 0;
+}
+.lab-card .gv-chips li {
+	display: flex;
+	align-items: center;
+	gap: 0.25rem;
+	min-width: 2.2rem;
+	min-height: 1.8rem;
+	margin: 0;
+	padding: 0 0.4rem;
+	border: 1px dashed var(--lab-border);
+	border-radius: 0.3rem;
+	font-size: var(--sl-text-xs);
+	font-variant-numeric: tabular-nums;
+	color: var(--lab-text-muted);
+}
+.lab-card .gv-chips li.is-done {
+	border-style: solid;
+	color: var(--sl-color-white);
+}
+.lab-card .gv-chips li.is-hitch {
+	border-color: var(--lab-warn);
+	background: color-mix(in srgb, var(--lab-warn) 18%, transparent);
+}
+.gv-chips b {
+	color: var(--lab-warn);
+}
+.lab-card .gv-chips li.is-now {
+	outline: 2px solid var(--lab-accent);
+	outline-offset: 1px;
+}
+.gv-chips small {
+	color: var(--lab-text-muted);
+}
+.gv-calls {
+	margin: 0;
+	font-family: var(--__sl-font-mono);
+	font-size: var(--sl-text-xs);
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+	background: var(--lab-surface);
+	border: 1px solid var(--lab-border);
+	border-radius: 0.3rem;
+	padding: 0.45rem 0.55rem;
+	/* Room for the longest step, so stepping does not make the page jump. */
+	min-height: 8.5rem;
+}
+.gv-pipes {
+	font-size: var(--sl-text-xs);
+	padding-inline-start: 0;
+	list-style: none;
+}
+.lab-card .gv-pipes li {
+	margin: 0.15rem 0 0;
+	padding: 0.1rem 0.3rem;
+	border-radius: 0.25rem;
+}
+.lab-card .gv-pipes li.is-now,
+.lab-card .gv-dynlist li.is-now {
+	background: color-mix(in srgb, var(--lab-accent) 18%, transparent);
+}
+.lab-stat.gv-warn b {
+	color: var(--lab-warn);
+}
+.gv-dynlist {
+	font-size: var(--sl-text-sm);
+}
+.gv-dynlist ul {
+	columns: 2 16rem;
+	margin-top: 0.2rem;
+}
+.gv-dynlist .lab-muted {
+	margin: 0.5rem 0 0;
+}

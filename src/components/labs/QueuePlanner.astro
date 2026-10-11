@@ -1,0 +1,48 @@
+---
+/**
+ * Queue-planner lab: the course GPU's real queue families and the queue plan an app derives from them
+ * (QueuePlannerView island). The text fallback lists the families and the default plan.
+ */
+import QueuePlannerView from './QueuePlannerView.tsx';
+import { DEFAULT_OPTIONS, DEFAULT_REQS, FAMILIES, plan } from '../../lib/labs/queue-planner';
+import { pick } from '../../lib/text';
+import { TEXT } from './queue-planner.text';
+import { courseIn, langOf } from 'course-kit/lib/course';
+import { fmt } from 'course-kit/i18n.mjs';
+
+const v = courseIn(langOf(Astro.url.pathname));
+const t = pick(TEXT, v.lang, 'queue-planner');
+const p = plan(FAMILIES, DEFAULT_REQS, DEFAULT_OPTIONS);
+// The default plan is the lesson's example: it must be valid on the course GPU.
+if (p.errors.length) throw new Error(`queue-planner: the default plan is invalid: ${JSON.stringify(p.errors)}`);
+---
+
+<figure class="vk-lab not-content">
+	<div class="vk-lab-island">
+		<QueuePlannerView client:only="react" lang={v.lang} />
+	</div>
+	<details class="vk-lab-text">
+		<summary>{t.asText}</summary>
+		<ul>
+			{FAMILIES.map((f) => <li>{fmt(t.fbFamily, { family: f.index, count: f.queueCount, flags: f.flags.join(' | ') })}</li>)}
+			{p.infos.map((i) => <li>{fmt(t.fbInfo, { family: i.family, count: i.count, roles: i.roles.map((r) => t[`role_${r}`]).join(', ') })}</li>)}
+		</ul>
+	</details>
+</figure>
+
+<style>
+	.vk-lab {
+		margin: 1.5rem 0;
+	}
+	/* Reserves the island's height before it hydrates, so the page does not jump. */
+	.vk-lab-island {
+		min-height: 52rem;
+	}
+	.vk-lab-text {
+		font-size: var(--sl-text-sm);
+	}
+	.vk-lab-text summary {
+		cursor: pointer;
+		color: var(--sl-color-gray-3);
+	}
+</style>

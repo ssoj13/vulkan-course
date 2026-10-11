@@ -7,6 +7,7 @@ import { Aside } from '@astrojs/starlight/components';
 import MindMap from 'course-kit/components/MindMap.astro';
 import Quiz from 'course-kit/components/Quiz.astro';
 import Step from '../../../components/Step.astro';
+import DevicePicker from '../../../components/labs/DevicePicker.astro';
 
 The instance knows about every GPU in the machine. A laptop may have two (integrated + discrete); a workstation may
 have several; a CI server may have none but a software renderer. Before we can use one, we pick it - and to pick, we
@@ -112,6 +113,11 @@ which version's feature struct each flag comes from.
 
 First filter out GPUs that cannot run our program at all (too old, missing features), then prefer the likely fastest:
 a discrete card over an integrated one. Real applications often also let the user choose.
+
+Run the rule yourself: the lab below has every feature and limit of the course GPU, and the picker tab is step 03's
+rule with editable requirements over the real GPU and two hypothetical ones ([full page](lab:device-picker)).
+
+<DevicePicker />
 
 ## The map of this lesson
 

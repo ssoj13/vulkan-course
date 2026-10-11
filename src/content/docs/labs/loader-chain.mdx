@@ -1,0 +1,31 @@
+---
+title: Through the loader
+description: Pick a Vulkan call and the enabled layers, then follow it from the trampoline through the layers to the terminator and the drivers.
+---
+import LoaderChain from '../../../components/labs/LoaderChain.astro';
+
+Your program never calls the driver directly: every Vulkan call goes through the loader and the layers it inserted.
+This lab follows one call hop by hop on the machine the course was built on - its eight registered implicit layers,
+the validation layer step 02 enables, and its NVIDIA driver. The background is in
+[the loader lesson](lesson:loader-and-instance#layers-implicit-and-explicit) and its
+[Underneath section](lesson:loader-and-instance#underneath).
+
+Pick a call, then step or play the animation; each hop has a caption. Below the chain is the table of implicit layers
+with their real enable and disable variables. The layer order is the one the loader itself printed for step 02:
+implicit layers closest to the program, the layers the program names after them.
+
+What to notice: the call's level decides its path. Instance calls end in the loader's terminator, which calls every
+driver; a physical-device call ends there too, but only its own driver is called; a device call such as
+`vkQueueSubmit` has no terminator at all, and through a pointer from `vkGetDeviceProcAddr` it does not even enter the
+loader.
+
+Things to try:
+
+- add the second driver and compare `vkEnumeratePhysicalDevices` with `vkGetPhysicalDeviceProperties`;
+- switch `vkQueueSubmit` between the loader export and `vkGetDeviceProcAddr`;
+- set `ENABLE_VULKAN_RENDERDOC_CAPTURE` and see RenderDoc join the chain; then set its disable variable too;
+- set `DISABLE_LAYER_NV_OPTIMUS_1`, and turn the validation layer off, until no layer is left.
+
+The messages these layers print are the subject of the next lab, [Debug messenger filters](lab:messenger-filter).
+
+<LoaderChain />

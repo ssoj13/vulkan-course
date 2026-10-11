@@ -7,6 +7,7 @@ import { Aside } from '@astrojs/starlight/components';
 import MindMap from 'course-kit/components/MindMap.astro';
 import Quiz from 'course-kit/components/Quiz.astro';
 import Step from '../../../components/Step.astro';
+import LoaderChain from '../../../components/labs/LoaderChain.astro';
 
 Our first program creates one object, a `VkInstance`. To understand what that object is, we first need the piece of
 software it connects us to: the **loader**.
@@ -55,11 +56,19 @@ On Windows the loader finds layers through the registry: `SOFTWARE\Khronos\Vulka
 `...\ExplicitLayers` under both `HKEY_LOCAL_MACHINE` and `HKEY_CURRENT_USER`, plus keys the GPU driver writes under its
 display-adapter entry. On the development machine there were **eight** implicit layers: six registered by installed
 software (RenderDoc, Bandicam, the Epic Games overlay, the Steam overlay, Steam's Fossilize, Nsight Systems) and two by
-the NVIDIA driver itself (`VK_LAYER_NV_optimus`, `VK_LAYER_NV_present`). All of them load into every Vulkan program on
+the NVIDIA driver itself (`VK_LAYER_NV_optimus`, `VK_LAYER_NV_present`). Five of them (RenderDoc, Epic, both Steam
+layers and Nsight) also name an *enable* variable in their manifest and load only when it is set - the way Steam sets
+it for the games it starts. The other three, Bandicam's and the two NVIDIA layers, load into every Vulkan program on
 that PC, including ours - and Bandicam's layer even prints a warning that its API version is older than ours. That
 warning is not about our code. Each implicit layer's JSON manifest names an environment variable that disables it
 (for example `DISABLE_LAYER_NV_OPTIMUS_1`), should a layer ever get in your way.
 </Aside>
+
+The lab below follows one call through exactly this machine: the program, the loader's trampoline, the layers in the
+order the loader printed for step 02, the terminator and the driver. Switch the environment variables and watch layers
+join and leave the chain; the [full-page version](lab:loader-chain) has more room.
+
+<LoaderChain />
 
 ## The instance
 
