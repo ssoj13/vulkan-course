@@ -9,6 +9,7 @@
     "preview": "astro preview",
     "check": "astro check",
     "lint": "bun scripts/lint-content.ts",
+    "sync:gpu": "bun scripts/sync-gpu.ts",
     "astro": "astro"
   },
   "dependencies": {

@@ -114,6 +114,9 @@ shader objects, mesh shaders, ray tracing, tile-based mobile GPUs. Capstone: min
   2 from the NVIDIA driver); VK_LAYER_bandicam_helper prints one expected warning, used as the live example.
 - ObjectGraph: data `src/data/objects.json`, VUID texts `src/data/vuids.json` (generated: `bun scripts/sync-vuids.ts`),
   simulator `src/lib/objects.ts` (tests in tests/), view `src/components/ObjectGraph{.astro,View.tsx}`.
+- GPU snapshot for the device/queue/memory labs: `src/data/gpu.json` (RTX 3080 Ti, driver 616.64) from `bun run sync:gpu`
+  (`scripts/sync-gpu.ts`: vulkaninfo `--json=0` for device/features/limits/queues + `--text` for memory heaps/types,
+  which the profile JSON lacks); `tests/gpu.test.ts` pins it to the facts the lessons quote. Rerun after a driver update.
 - Quizzes: graded on click; each option carries a `why`, each question a `ref` to the section that explains it.
   `bun run lint` (scripts/lint-content.ts) applies the engine's `quizErrors` (model; the longest and the shortest
   option may each be the answer in at most a third of a quiz) and checks `#anchor` refs, for every language, before a

@@ -1,0 +1,510 @@
+{
+  "meta": {
+    "generator": "scripts/sync-gpu.ts",
+    "source": "vulkaninfo --json on the course dev machine",
+    "vulkaninfo": "vulkaninfoSDK.exe --json=0 (device, features, limits, queue families) + --text (memory, driverVersion)",
+    "sdk": "1.4.341.1",
+    "instanceVersion": "1.4.341",
+    "date": "2026-10-10"
+  },
+  "device": {
+    "name": "NVIDIA GeForce RTX 3080 Ti",
+    "type": "VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU",
+    "apiVersion": "1.4.351",
+    "driverVersion": "616.64.0.0",
+    "driverVersionRaw": 2584739840,
+    "vendorID": 4318,
+    "deviceID": 8712
+  },
+  "features": {
+    "VkPhysicalDeviceFeatures": {
+      "alphaToOne": true,
+      "depthBiasClamp": true,
+      "depthBounds": true,
+      "depthClamp": true,
+      "drawIndirectFirstInstance": true,
+      "dualSrcBlend": true,
+      "fillModeNonSolid": true,
+      "fragmentStoresAndAtomics": true,
+      "fullDrawIndexUint32": true,
+      "geometryShader": true,
+      "imageCubeArray": true,
+      "independentBlend": true,
+      "inheritedQueries": true,
+      "largePoints": true,
+      "logicOp": true,
+      "multiDrawIndirect": true,
+      "multiViewport": true,
+      "occlusionQueryPrecise": true,
+      "pipelineStatisticsQuery": true,
+      "robustBufferAccess": true,
+      "samplerAnisotropy": true,
+      "sampleRateShading": true,
+      "shaderClipDistance": true,
+      "shaderCullDistance": true,
+      "shaderFloat64": true,
+      "shaderImageGatherExtended": true,
+      "shaderInt16": true,
+      "shaderInt64": true,
+      "shaderResourceMinLod": true,
+      "shaderResourceResidency": true,
+      "shaderSampledImageArrayDynamicIndexing": true,
+      "shaderStorageBufferArrayDynamicIndexing": true,
+      "shaderStorageImageArrayDynamicIndexing": true,
+      "shaderStorageImageExtendedFormats": true,
+      "shaderStorageImageMultisample": true,
+      "shaderStorageImageReadWithoutFormat": true,
+      "shaderStorageImageWriteWithoutFormat": true,
+      "shaderTessellationAndGeometryPointSize": true,
+      "shaderUniformBufferArrayDynamicIndexing": true,
+      "sparseBinding": true,
+      "sparseResidency16Samples": true,
+      "sparseResidency2Samples": true,
+      "sparseResidency4Samples": true,
+      "sparseResidency8Samples": true,
+      "sparseResidencyAliased": true,
+      "sparseResidencyBuffer": true,
+      "sparseResidencyImage2D": true,
+      "sparseResidencyImage3D": true,
+      "tessellationShader": true,
+      "textureCompressionASTC_LDR": false,
+      "textureCompressionBC": true,
+      "textureCompressionETC2": false,
+      "variableMultisampleRate": true,
+      "vertexPipelineStoresAndAtomics": true,
+      "wideLines": true
+    },
+    "VkPhysicalDeviceVulkan11Features": {
+      "multiview": true,
+      "multiviewGeometryShader": true,
+      "multiviewTessellationShader": true,
+      "protectedMemory": false,
+      "samplerYcbcrConversion": true,
+      "shaderDrawParameters": true,
+      "storageBuffer16BitAccess": true,
+      "storageInputOutput16": false,
+      "storagePushConstant16": true,
+      "uniformAndStorageBuffer16BitAccess": true,
+      "variablePointers": true,
+      "variablePointersStorageBuffer": true
+    },
+    "VkPhysicalDeviceVulkan12Features": {
+      "bufferDeviceAddress": true,
+      "bufferDeviceAddressCaptureReplay": true,
+      "bufferDeviceAddressMultiDevice": true,
+      "descriptorBindingPartiallyBound": true,
+      "descriptorBindingSampledImageUpdateAfterBind": true,
+      "descriptorBindingStorageBufferUpdateAfterBind": true,
+      "descriptorBindingStorageImageUpdateAfterBind": true,
+      "descriptorBindingStorageTexelBufferUpdateAfterBind": true,
+      "descriptorBindingUniformBufferUpdateAfterBind": true,
+      "descriptorBindingUniformTexelBufferUpdateAfterBind": true,
+      "descriptorBindingUpdateUnusedWhilePending": true,
+      "descriptorBindingVariableDescriptorCount": true,
+      "descriptorIndexing": true,
+      "drawIndirectCount": true,
+      "hostQueryReset": true,
+      "imagelessFramebuffer": true,
+      "runtimeDescriptorArray": true,
+      "samplerFilterMinmax": true,
+      "samplerMirrorClampToEdge": true,
+      "scalarBlockLayout": true,
+      "separateDepthStencilLayouts": true,
+      "shaderBufferInt64Atomics": true,
+      "shaderFloat16": true,
+      "shaderInputAttachmentArrayDynamicIndexing": true,
+      "shaderInputAttachmentArrayNonUniformIndexing": true,
+      "shaderInt8": true,
+      "shaderOutputLayer": true,
+      "shaderOutputViewportIndex": true,
+      "shaderSampledImageArrayNonUniformIndexing": true,
+      "shaderSharedInt64Atomics": true,
+      "shaderStorageBufferArrayNonUniformIndexing": true,
+      "shaderStorageImageArrayNonUniformIndexing": true,
+      "shaderStorageTexelBufferArrayDynamicIndexing": true,
+      "shaderStorageTexelBufferArrayNonUniformIndexing": true,
+      "shaderSubgroupExtendedTypes": true,
+      "shaderUniformBufferArrayNonUniformIndexing": true,
+      "shaderUniformTexelBufferArrayDynamicIndexing": true,
+      "shaderUniformTexelBufferArrayNonUniformIndexing": true,
+      "storageBuffer8BitAccess": true,
+      "storagePushConstant8": true,
+      "subgroupBroadcastDynamicId": true,
+      "timelineSemaphore": true,
+      "uniformAndStorageBuffer8BitAccess": true,
+      "uniformBufferStandardLayout": true,
+      "vulkanMemoryModel": true,
+      "vulkanMemoryModelAvailabilityVisibilityChains": true,
+      "vulkanMemoryModelDeviceScope": true
+    },
+    "VkPhysicalDeviceVulkan13Features": {
+      "computeFullSubgroups": true,
+      "descriptorBindingInlineUniformBlockUpdateAfterBind": true,
+      "dynamicRendering": true,
+      "inlineUniformBlock": true,
+      "maintenance4": true,
+      "pipelineCreationCacheControl": true,
+      "privateData": true,
+      "robustImageAccess": true,
+      "shaderDemoteToHelperInvocation": true,
+      "shaderIntegerDotProduct": true,
+      "shaderTerminateInvocation": true,
+      "shaderZeroInitializeWorkgroupMemory": true,
+      "subgroupSizeControl": true,
+      "synchronization2": true,
+      "textureCompressionASTC_HDR": false
+    },
+    "VkPhysicalDeviceVulkan14Features": {
+      "bresenhamLines": true,
+      "dynamicRenderingLocalRead": true,
+      "globalPriorityQuery": true,
+      "hostImageCopy": true,
+      "indexTypeUint8": true,
+      "maintenance5": true,
+      "maintenance6": true,
+      "pipelineProtectedAccess": true,
+      "pipelineRobustness": true,
+      "pushDescriptor": true,
+      "rectangularLines": true,
+      "shaderExpectAssume": true,
+      "shaderFloatControls2": true,
+      "shaderSubgroupRotate": true,
+      "shaderSubgroupRotateClustered": true,
+      "smoothLines": true,
+      "stippledBresenhamLines": true,
+      "stippledRectangularLines": true,
+      "stippledSmoothLines": true,
+      "vertexAttributeInstanceRateDivisor": true,
+      "vertexAttributeInstanceRateZeroDivisor": true
+    }
+  },
+  "limits": {
+    "bufferImageGranularity": 1024,
+    "discreteQueuePriorities": 2,
+    "framebufferColorSampleCounts": [
+      "VK_SAMPLE_COUNT_1_BIT",
+      "VK_SAMPLE_COUNT_2_BIT",
+      "VK_SAMPLE_COUNT_4_BIT",
+      "VK_SAMPLE_COUNT_8_BIT"
+    ],
+    "framebufferDepthSampleCounts": [
+      "VK_SAMPLE_COUNT_1_BIT",
+      "VK_SAMPLE_COUNT_2_BIT",
+      "VK_SAMPLE_COUNT_4_BIT",
+      "VK_SAMPLE_COUNT_8_BIT"
+    ],
+    "framebufferNoAttachmentsSampleCounts": [
+      "VK_SAMPLE_COUNT_1_BIT",
+      "VK_SAMPLE_COUNT_2_BIT",
+      "VK_SAMPLE_COUNT_4_BIT",
+      "VK_SAMPLE_COUNT_8_BIT",
+      "VK_SAMPLE_COUNT_16_BIT"
+    ],
+    "framebufferStencilSampleCounts": [
+      "VK_SAMPLE_COUNT_1_BIT",
+      "VK_SAMPLE_COUNT_2_BIT",
+      "VK_SAMPLE_COUNT_4_BIT",
+      "VK_SAMPLE_COUNT_8_BIT",
+      "VK_SAMPLE_COUNT_16_BIT"
+    ],
+    "lineWidthGranularity": 0.0625,
+    "lineWidthRange": [
+      1,
+      64
+    ],
+    "maxBoundDescriptorSets": 32,
+    "maxClipDistances": 8,
+    "maxColorAttachments": 8,
+    "maxCombinedClipAndCullDistances": 8,
+    "maxComputeSharedMemorySize": 49152,
+    "maxComputeWorkGroupCount": [
+      2147483647,
+      65535,
+      65535
+    ],
+    "maxComputeWorkGroupInvocations": 1024,
+    "maxComputeWorkGroupSize": [
+      1024,
+      1024,
+      64
+    ],
+    "maxCullDistances": 8,
+    "maxDescriptorSetInputAttachments": 1048576,
+    "maxDescriptorSetSampledImages": 1048576,
+    "maxDescriptorSetSamplers": 1048576,
+    "maxDescriptorSetStorageBuffers": 1048576,
+    "maxDescriptorSetStorageBuffersDynamic": 16,
+    "maxDescriptorSetStorageImages": 1048576,
+    "maxDescriptorSetUniformBuffers": 1048576,
+    "maxDescriptorSetUniformBuffersDynamic": 15,
+    "maxDrawIndexedIndexValue": 4294967295,
+    "maxDrawIndirectCount": 4294967295,
+    "maxFragmentCombinedOutputResources": 4294967295,
+    "maxFragmentDualSrcAttachments": 1,
+    "maxFragmentInputComponents": 128,
+    "maxFragmentOutputAttachments": 8,
+    "maxFramebufferHeight": 32768,
+    "maxFramebufferLayers": 2048,
+    "maxFramebufferWidth": 32768,
+    "maxGeometryInputComponents": 128,
+    "maxGeometryOutputComponents": 128,
+    "maxGeometryOutputVertices": 1024,
+    "maxGeometryShaderInvocations": 32,
+    "maxGeometryTotalOutputComponents": 1024,
+    "maxImageArrayLayers": 2048,
+    "maxImageDimension1D": 32768,
+    "maxImageDimension2D": 32768,
+    "maxImageDimension3D": 16384,
+    "maxImageDimensionCube": 32768,
+    "maxInterpolationOffset": 0.4375,
+    "maxMemoryAllocationCount": 4294967295,
+    "maxPerStageDescriptorInputAttachments": 1048576,
+    "maxPerStageDescriptorSampledImages": 1048576,
+    "maxPerStageDescriptorSamplers": 1048576,
+    "maxPerStageDescriptorStorageBuffers": 1048576,
+    "maxPerStageDescriptorStorageImages": 1048576,
+    "maxPerStageDescriptorUniformBuffers": 1048576,
+    "maxPerStageResources": 4294967295,
+    "maxPushConstantsSize": 256,
+    "maxSampleMaskWords": 1,
+    "maxSamplerAllocationCount": 4000,
+    "maxSamplerAnisotropy": 16,
+    "maxSamplerLodBias": 15,
+    "maxStorageBufferRange": 4294967295,
+    "maxTessellationControlPerPatchOutputComponents": 120,
+    "maxTessellationControlPerVertexInputComponents": 128,
+    "maxTessellationControlPerVertexOutputComponents": 128,
+    "maxTessellationControlTotalOutputComponents": 4216,
+    "maxTessellationEvaluationInputComponents": 128,
+    "maxTessellationEvaluationOutputComponents": 128,
+    "maxTessellationGenerationLevel": 64,
+    "maxTessellationPatchSize": 32,
+    "maxTexelBufferElements": 268435456,
+    "maxTexelGatherOffset": 31,
+    "maxTexelOffset": 7,
+    "maxUniformBufferRange": 65536,
+    "maxVertexInputAttributeOffset": 2047,
+    "maxVertexInputAttributes": 32,
+    "maxVertexInputBindings": 32,
+    "maxVertexInputBindingStride": 2048,
+    "maxVertexOutputComponents": 128,
+    "maxViewportDimensions": [
+      32768,
+      32768
+    ],
+    "maxViewports": 16,
+    "minInterpolationOffset": -0.5,
+    "minMemoryMapAlignment": 64,
+    "minStorageBufferOffsetAlignment": 16,
+    "minTexelBufferOffsetAlignment": 16,
+    "minTexelGatherOffset": -32,
+    "minTexelOffset": -8,
+    "minUniformBufferOffsetAlignment": 64,
+    "mipmapPrecisionBits": 8,
+    "nonCoherentAtomSize": 64,
+    "optimalBufferCopyOffsetAlignment": 1,
+    "optimalBufferCopyRowPitchAlignment": 1,
+    "pointSizeGranularity": 0.0625,
+    "pointSizeRange": [
+      1,
+      2047.94
+    ],
+    "sampledImageColorSampleCounts": [
+      "VK_SAMPLE_COUNT_1_BIT",
+      "VK_SAMPLE_COUNT_2_BIT",
+      "VK_SAMPLE_COUNT_4_BIT",
+      "VK_SAMPLE_COUNT_8_BIT"
+    ],
+    "sampledImageDepthSampleCounts": [
+      "VK_SAMPLE_COUNT_1_BIT",
+      "VK_SAMPLE_COUNT_2_BIT",
+      "VK_SAMPLE_COUNT_4_BIT",
+      "VK_SAMPLE_COUNT_8_BIT"
+    ],
+    "sampledImageIntegerSampleCounts": [
+      "VK_SAMPLE_COUNT_1_BIT",
+      "VK_SAMPLE_COUNT_2_BIT",
+      "VK_SAMPLE_COUNT_4_BIT",
+      "VK_SAMPLE_COUNT_8_BIT"
+    ],
+    "sampledImageStencilSampleCounts": [
+      "VK_SAMPLE_COUNT_1_BIT",
+      "VK_SAMPLE_COUNT_2_BIT",
+      "VK_SAMPLE_COUNT_4_BIT",
+      "VK_SAMPLE_COUNT_8_BIT",
+      "VK_SAMPLE_COUNT_16_BIT"
+    ],
+    "sparseAddressSpaceSize": 1099511627776,
+    "standardSampleLocations": true,
+    "storageImageSampleCounts": [
+      "VK_SAMPLE_COUNT_1_BIT",
+      "VK_SAMPLE_COUNT_2_BIT",
+      "VK_SAMPLE_COUNT_4_BIT",
+      "VK_SAMPLE_COUNT_8_BIT"
+    ],
+    "strictLines": true,
+    "subPixelInterpolationOffsetBits": 4,
+    "subPixelPrecisionBits": 8,
+    "subTexelPrecisionBits": 8,
+    "timestampComputeAndGraphics": true,
+    "timestampPeriod": 1,
+    "viewportBoundsRange": [
+      -65536,
+      65536
+    ],
+    "viewportSubPixelBits": 8
+  },
+  "queueFamilies": [
+    {
+      "index": 0,
+      "queueFlags": [
+        "VK_QUEUE_GRAPHICS_BIT",
+        "VK_QUEUE_COMPUTE_BIT",
+        "VK_QUEUE_TRANSFER_BIT",
+        "VK_QUEUE_SPARSE_BINDING_BIT"
+      ],
+      "queueCount": 16,
+      "timestampValidBits": 64,
+      "minImageTransferGranularity": {
+        "width": 1,
+        "height": 1,
+        "depth": 1
+      }
+    },
+    {
+      "index": 1,
+      "queueFlags": [
+        "VK_QUEUE_TRANSFER_BIT",
+        "VK_QUEUE_SPARSE_BINDING_BIT"
+      ],
+      "queueCount": 2,
+      "timestampValidBits": 64,
+      "minImageTransferGranularity": {
+        "width": 1,
+        "height": 1,
+        "depth": 1
+      }
+    },
+    {
+      "index": 2,
+      "queueFlags": [
+        "VK_QUEUE_COMPUTE_BIT",
+        "VK_QUEUE_TRANSFER_BIT",
+        "VK_QUEUE_SPARSE_BINDING_BIT"
+      ],
+      "queueCount": 8,
+      "timestampValidBits": 64,
+      "minImageTransferGranularity": {
+        "width": 1,
+        "height": 1,
+        "depth": 1
+      }
+    },
+    {
+      "index": 3,
+      "queueFlags": [
+        "VK_QUEUE_TRANSFER_BIT",
+        "VK_QUEUE_SPARSE_BINDING_BIT",
+        "VK_QUEUE_VIDEO_DECODE_BIT_KHR"
+      ],
+      "queueCount": 1,
+      "timestampValidBits": 32,
+      "minImageTransferGranularity": {
+        "width": 1,
+        "height": 1,
+        "depth": 1
+      }
+    },
+    {
+      "index": 4,
+      "queueFlags": [
+        "VK_QUEUE_TRANSFER_BIT",
+        "VK_QUEUE_SPARSE_BINDING_BIT",
+        "VK_QUEUE_VIDEO_ENCODE_BIT_KHR"
+      ],
+      "queueCount": 1,
+      "timestampValidBits": 32,
+      "minImageTransferGranularity": {
+        "width": 1,
+        "height": 1,
+        "depth": 1
+      }
+    },
+    {
+      "index": 5,
+      "queueFlags": [
+        "VK_QUEUE_TRANSFER_BIT",
+        "VK_QUEUE_SPARSE_BINDING_BIT",
+        "VK_QUEUE_OPTICAL_FLOW_BIT_NV"
+      ],
+      "queueCount": 1,
+      "timestampValidBits": 64,
+      "minImageTransferGranularity": {
+        "width": 1,
+        "height": 1,
+        "depth": 1
+      }
+    }
+  ],
+  "memory": {
+    "heaps": [
+      {
+        "size": 12673089536,
+        "flags": [
+          "VK_MEMORY_HEAP_DEVICE_LOCAL_BIT"
+        ]
+      },
+      {
+        "size": 34315264000,
+        "flags": []
+      },
+      {
+        "size": 224395264,
+        "flags": [
+          "VK_MEMORY_HEAP_DEVICE_LOCAL_BIT"
+        ]
+      }
+    ],
+    "types": [
+      {
+        "heapIndex": 1,
+        "propertyFlags": []
+      },
+      {
+        "heapIndex": 0,
+        "propertyFlags": [
+          "VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT"
+        ]
+      },
+      {
+        "heapIndex": 0,
+        "propertyFlags": [
+          "VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT"
+        ]
+      },
+      {
+        "heapIndex": 1,
+        "propertyFlags": [
+          "VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT",
+          "VK_MEMORY_PROPERTY_HOST_COHERENT_BIT"
+        ]
+      },
+      {
+        "heapIndex": 1,
+        "propertyFlags": [
+          "VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT",
+          "VK_MEMORY_PROPERTY_HOST_COHERENT_BIT",
+          "VK_MEMORY_PROPERTY_HOST_CACHED_BIT"
+        ]
+      },
+      {
+        "heapIndex": 2,
+        "propertyFlags": [
+          "VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT",
+          "VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT",
+          "VK_MEMORY_PROPERTY_HOST_COHERENT_BIT"
+        ]
+      }
+    ]
+  }
+}
