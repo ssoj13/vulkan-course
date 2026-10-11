@@ -269,8 +269,8 @@ struct GpuTimes {
         uint64_t frames = 0;
         double graphics = 0.0, compute = 0.0, overlap = 0.0; // microseconds
     };
-    Sums current; // the current second
-    Sums total;   // the whole run
+    Sums current{}; // the current second
+    Sums total{};   // the whole run
 
     // Adds graphics frame n [g0, g1] and compute step n+1 [c0, c1]. All device
     // timestamps are in one time domain (VK_TIME_DOMAIN_DEVICE_KHR), so values

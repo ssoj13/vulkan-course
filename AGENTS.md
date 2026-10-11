@@ -548,6 +548,24 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
   (TODO: expose line numbers from course-kit lib/regions.ts and drop the copy). Texts: `srcLines/srcFile/srcRun` in
   src/i18n.ts. README.md "Build the examples" has the step -> lesson table (generated from course.json + `<Step file>`
   usages; regenerate when steps are added).
+- C++ on Linux + CI (2026-10-11): presets `msvc-*` (cl, Windows only) and `linux-*` (compiler from `CXX`, Linux
+  only) share a hidden `base` (Ninja, vcpkg toolchain from `$env{VCPKG_ROOT}`). CMakeLists fails at configure time
+  without C++23 `<print>` (HAVE_STD_PRINT; Ubuntu 24.04's default g++ 13 lacks it -> `CXX=g++-14`). GCC 14 / Clang 18
+  -Wextra (-Wmissing-field-initializers) flag every member a designated initializer omits unless it has a default
+  member initializer (MSVC /W4 does not): fixed at the source - own structs get NSDMIs (18 `Frame::uniform =
+  std::nullopt`, 27 `GpuTimes::current{}/total{}`), 16 names every VmaAllocatorCreateInfo/VmaAllocationCreateInfo
+  member and builds VmaVulkanFunctions by value-init + assignment (its member set depends on VMA's config macros).
+  Rule for new code: a struct used with designated initializers gives every member a default, or the initializer
+  names them all. No Win32-only code was found; SHADER_DIR is an absolute CMake path. `.github/workflows/cpp.yml`
+  (push/PR touching examples/cpp, shaders or itself; workflow_dispatch): windows-latest (MSVC 14.51, VS 18) and
+  ubuntu-24.04 (g++-14); Vulkan SDK 1.4.341.1 via jakoch/install-vulkan-sdk-action v1.7.0 (needs `github_token`:
+  its lavapipe lookup hit the anonymous API rate limit); vcpkg cloned at master e456309 (2026-10-10: glfw3 3.5.1,
+  VMA 3.4.0; release 2026.07.29 still has glfw3 3.4), its binary cache in actions/cache saved right after configure.
+  Linux needs X11 dev headers + autotools (vcpkg builds libx11). Smoke test: 01, 03, 13, 16, 25 run on lavapipe
+  (Windows: Mesa 25.2.5 prebuilt; Linux: apt Mesa, LLVM 20) with the validation layer, clean. TRAPS: the Windows
+  runner is elevated, so the loader ignores VK_LAYER_PATH/VK_ADD_LAYER_PATH and a cached SDK has no registry
+  entries - the workflow registers VkLayer_khronos_validation.json under HKLM ExplicitLayers; the Windows runs use
+  the runner's System32 loader 1.3.301 (enough: 1.4 instances and devices work through it).
 
 - Module 12 shader check (2026-10-11, slangc 2026.1 from SDK 1.4.341.1, flags of sync-shaders.ts, spirv-val vulkan1.4,
   scratch shaders in scratchpad m12plan/): all four compile and validate, default and -O2.
@@ -857,7 +875,8 @@ Current plan (2026-10-11), in order:
 - [x] Embed queue-sync and buffer-memory in their lessons (EN: fences-and-semaphores, memory-types; RU pending for buffer-memory)
 - [x] RU lessons of modules 4-6 incl. GraphicsPipeline in ru/pipeline/graphics-pipeline
 - [ ] labs/graphics-pipeline.mdx (EN+RU) still says it previews the pipeline module: reword now that the lesson exists
-- [ ] C++ examples in CI (needs Vulkan SDK headers 1.4.341 with vulkan_raii.hpp on the runner)
+- [x] C++ examples in CI (2026-10-11): `.github/workflows/cpp.yml`, Windows MSVC + Ubuntu GCC 14, build of all 27
+  steps + lavapipe smoke test of the windowless ones; Linux presets. See State "C++ on Linux + CI".
 - [ ] Decide with the user: term maps put foundations at the bottom, ObjectGraph puts the root on top
 - [ ] After enabling ReBAR on the dev machine (steps in REBAR.md): capture a second snapshot (`sync:gpu` ->
   `gpu-rebar.json` or a profile field) and let the memory labs switch between OFF (measured) and ON (measured).

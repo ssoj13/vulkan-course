@@ -37,6 +37,28 @@ Steps 08+ read `../../shaders/spv/triangle.spv` (steps 14-15: `mesh.spv`) at run
 as `SHADER_DIR` by CMake), the same file the Rust examples embed. It is compiled from
 `../../shaders/triangle.slang` by `bun run sync:shaders` (repository root, needs the Vulkan SDK).
 
+## Linux
+
+The `linux-debug` / `linux-release` presets (Ninja, `build/linux-*`) take the compiler from `CXX`.
+`std::print` needs GCC 14+, or Clang 18+ with libstdc++ 14+ or libc++; on Ubuntu 24.04 the default
+`g++` is 13, so pick `g++-14` (CMake stops at configure time with this hint otherwise).
+Ubuntu 24.04, as in CI (`.github/workflows/cpp.yml`):
+
+```bash
+sudo apt install g++-14 ninja-build pkg-config \
+  libxinerama-dev libxcursor-dev libxrandr-dev libxi-dev xorg-dev libglu1-mesa-dev \
+  autoconf autoconf-archive automake libtool bison   # GLFW's X11 headers; vcpkg builds libx11 with autotools
+# Vulkan SDK 1.4.x tarball from LunarG: source its setup-env.sh (sets VULKAN_SDK, PATH, VK_LAYER_PATH).
+export VCPKG_ROOT=~/vcpkg CXX=g++-14
+cmake --preset linux-release        # build dir: build/linux-release
+cmake --build --preset linux-release
+./build/linux-release/01_instance
+```
+
+GLFW is built for X11 (under Wayland it runs through XWayland). Without a GPU, Mesa's lavapipe
+(`mesa-vulkan-drivers`, Vulkan on the CPU) can run them; CI runs the windowless steps 01, 03, 13, 16
+and 25 on it, on Linux and on Windows.
+
 ## Steps
 
 | Step | File | New in this step |
