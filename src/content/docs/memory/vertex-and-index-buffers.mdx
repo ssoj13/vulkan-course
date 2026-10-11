@@ -170,8 +170,9 @@ Two binds and one draw, recorded inside the dynamic rendering of step 09:
   must have `VERTEX_BUFFER` usage (`VUID-vkCmdBindVertexBuffers-pBuffers-00627`);
 - `vkCmdBindIndexBuffer(cmd, buffer, offset 0, UINT16)`: the index buffer and the size of one index. It needs
   `INDEX_BUFFER` usage (`VUID-vkCmdBindIndexBuffer-buffer-08784`), and the offset plus the buffer's address in memory
-  must be a multiple of the index size (`VUID-vkCmdBindIndexBuffer-offset-08783`): with 32-bit indices that is 4, the
-  alignment the index buffer reported;
+  must be a multiple of the index size (`VUID-vkCmdBindIndexBuffer-offset-08783`): with `UINT16` the offset must be a
+  multiple of 2, with `UINT32` of 4. The alignment 4 the index buffer reported in step 13 comes from its
+  `INDEX_BUFFER` usage, not from the index type, so a buffer bound at that alignment satisfies both;
 - `vkCmdDrawIndexed(cmd, indexCount 18, instanceCount 1, firstIndex 0, vertexOffset 0, firstInstance 0)`. For each of
   the 18 indices the vertex index is `index + vertexOffset`; a non-zero `vertexOffset` lets several meshes share one
   vertex buffer while their indices still start at 0.

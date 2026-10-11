@@ -342,8 +342,8 @@ double mbPerS(size_t bytes, Seconds time) { return static_cast<double>(bytes) / 
 
 // --bar: no staging, no copy. The buffers live in a DEVICE_LOCAL memory type
 // the CPU can also map, and the CPU writes VRAM directly through the PCIe BAR
-// window. With Resizable BAR off that window (and the heap behind this type) is
-// only 256 MiB of address space; the writes are uncached (typically
+// window. With Resizable BAR off that is a 256 MiB BAR, of which the driver
+// exposes 214 MiB as heap 2; the writes are uncached (typically
 // write-combined), so they are fast to write and very slow to read back.
 std::pair<GpuBuffer, GpuBuffer> uploadBar(const vk::raii::Device& device, const vk::PhysicalDeviceMemoryProperties& mem,
                                           std::span<const std::byte> vertexData, std::span<const std::byte> indexData) {

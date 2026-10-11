@@ -279,8 +279,8 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
   1/8, 1/4, 1/2 first-block rule); all other stdout identical. Measured (release, validation on, sync off, shared
   machine): 15 --mib 64: staging CPU memcpy ~6-8 ms (~9-11 GB/s), GPU copy ~5.3-6.7 ms (~10-13 GB/s) on either queue;
   --bar CPU writes ~15-17 ms (~4 GB/s; one C++ run 67 ms); 176-byte upload: copy round trip ~0.9-1.7 ms, BAR write
-  ~0.02 ms. With VK_KHRONOS_VALIDATION_VALIDATE_SYNC=true the 64 MiB host writes take ~70 ms (sync validation cost,
-  not the hardware). 16 (3000 buffers): raw ~130-170 us per create+allocate+bind, ~330 us per destroy+free; allocator
+  ~0.02 ms. The old "~70 ms host writes with VK_KHRONOS_VALIDATION_VALIDATE_SYNC=true" had no log and did NOT reproduce
+  (re-measured 2026-10-11, see "Module 8 review fixes, round 2"). 16 (3000 buffers): raw ~130-170 us per create+allocate+bind, ~330 us per destroy+free; allocator
   ~3 us and ~2-3 us. Validation does NOT catch a missing post-copy barrier (presumably because a host fence wait sits between upload
   and draws, which sync validation treats as synchronizing; not confirmed) nor a missing acquire barrier: tried 2026-10-11, both silent - the
   barriers follow the spec and the Khronos synchronization examples, not a validation message.
@@ -296,6 +296,55 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
   (device_wait_idle + destroy on drop = C++ IdleGuard + RAII). 16: `--count` checked against the heap before
   allocating (`--count 1000000` needs 23295976960 bytes > heap 0 12673089536 -> clean error); Rust raw and allocator
   paths destroy what was created on an error midway (C++: RAII / release()). Rust `Vertex` has a size assert (20).
+- examples 17-20 (module 9, 2026-10-11): all start from 14's frame loop (2 frames in flight, HOST_VISIBLE|COHERENT
+  mesh), regular hexagon radius 0.6 (aspect handled by the transform/shader, not the mesh). New shaders:
+  `transform.slang` (FrameUniforms {float4x4 transform; float3 tint; float time} = 80 bytes, offsets 0/64/76;
+  entry points vertexUniform = ConstantBuffer set 0 binding 0 -> SPIR-V struct `FrameUniforms_std140`, vertexPush =
+  [[vk::push_constant]] -> `FrameUniforms_std430`, same offsets), `device_address.slang` (`Instance*` in a 16-byte
+  push block; pointee layout named `Instance_natural`, stride 32), `bindless.slang` (`StructuredBuffer<Instance>
+  objects[]` + NonUniformResourceIndex). Verified facts: Slang default matrix layout = column-major in memory (SPIR-V
+  shows `RowMajor` + MatrixStride 16 and OpVectorTimesMatrix for mul(M, v): HLSL rows map to SPIR-V columns), so the
+  host uploads columns; SV_InstanceID needs DrawParameters (BaseInstance) like SV_VertexID, so the shaders use
+  SV_VulkanInstanceID; Slang 2026.1 warns 41012 for NonUniformResourceIndex (claims extra capabilities, the SPIR-V
+  only has RuntimeDescriptorArray + ShaderNonUniform) -> `#pragma warning(disable: 41012)` in bindless.slang.
+  17: per-slot uniform buffer, persistently mapped (never unmapped; vkFreeMemory unmaps), set layout/pool (maxSets 2,
+  no FREE_DESCRIPTOR_SET)/2 sets/one vkUpdateDescriptorSets; `reflect()` parses the SPIR-V (OpName/OpMemberName/
+  OpTypePointer/OpVariable/OpDecorate set+binding/OpMemberDecorate Offset) and the program refuses to start on a
+  mismatch with offset_of!/offsetof. C++ keeps plain set handles via raii `release()` (raii DescriptorSet frees in
+  its destructor = needs FREE_DESCRIPTOR_SET). 18: `--push-descriptor`; push constants default (80-byte range,
+  maxPushConstantsSize 256 here); push descriptors need Vulkan14Features.pushDescriptor enabled
+  (VUID-vkCmdPushDescriptorSet-None-10356), maxPushDescriptors 32; device feature enabled only on that path.
+  19: bufferDeviceAddress, buffer usage SHADER_DEVICE_ADDRESS only (no STORAGE_BUFFER), MemoryAllocateFlagsInfo
+  DEVICE_ADDRESS; addresses printed on `[addr]` lines (new stdout exception next to [timing]/[lib]; on this machine
+  both languages got 0x6f94000 every run, not guaranteed). 20: layout capacity 4096 (checked against UAB limits),
+  set variable count 256, 63 written at start, the 64th written at frame 120 while the other slot may be pending;
+  binding flags VARIABLE_DESCRIPTOR_COUNT|PARTIALLY_BOUND|UPDATE_AFTER_BIND|UPDATE_UNUSED_WHILE_PENDING, layout
+  UPDATE_AFTER_BIND_POOL, pool UPDATE_AFTER_BIND. Limits on the RTX 3080 Ti: classic and UAB storage-buffer limits
+  all 1048576, maxUpdateAfterBindDescriptorsInAllPools 4294967295, shaderStorageBufferArrayNonUniformIndexingNative
+  true. TRAP: VUID-vkUpdateDescriptorSets-None-03047 is satisfied by UPDATE_AFTER_BIND alone, so validation is silent
+  without UPDATE_UNUSED_WHILE_PENDING (tried) although only that flag's definition covers updates while pending.
+  GPU-AV (VK_KHRONOS_VALIDATION_GPUAV_ENABLE=true): 17/19/20 clean apart from GPU-AV's own setup warnings (it forces
+  features like shaderInt64/bufferDeviceAddress and lowers maxUpdateAfterBindDescriptorsInAllPools to 4194304, so 20's
+  printed limit changes under GPU-AV). Negative tests (temporary edits, reverted): 19 drawing 65 instances -> GPU-AV
+  "Out of bounds access: 32 bytes read at buffer device address 0x6f94800" (VUID-RuntimeSpirv-PhysicalStorageBuffer64-11819);
+  20 drawing one instance more than written (unwritten partially-bound element) -> VK_ERROR_DEVICE_LOST, no GPU-AV
+  message before the loss. Measured (release, sync validation on, 3 s, MAILBOX, not a benchmark): 2000-2900 fps for
+  all four. Logs: scratchpad m9/ (session-local).
+- Module 8 review fixes, round 2 (2026-10-11, EN lessons only; RU memory pages are still placeholders):
+  - gpu-allocator experiment (scratch cargo project, deleted after; logs check*.log in the session scratchpad gpualloc/):
+    gpu-allocator =0.28.0 (features std+vulkan) + `[patch.crates-io] ash = { git = ash-rs/ash, rev = f4c2ca3 }`.
+    The patch WORKS for type unification (Cargo.lock has ONE ash, version `0.38.0+1.4.352` from git, which satisfies
+    `ash = "0.38"`), but gpu-allocator then fails to compile: `error[E0599]: no method named push_next found for struct
+    MemoryAllocateInfo<'a>` at gpu-allocator-0.28.0/src/vulkan/mod.rs:372 (ash master has only the `push` trait method,
+    ash/src/vk.rs:84). Outcome B: allocators.mdx quotes the error, quiz Q3 says "does not compile, even via [patch]".
+  - Sync validation re-measured (Rust release 15, `--mib 64` and `--bar --mib 64`, `--seconds 1`, 3 runs each, logs
+    m8lesson/sync.*): host writes 7.4-13.4 ms (type 3) and 13.1-16.4 ms (type 5) = same as without it; fps drops from
+    2616-2816 to 1530-1991 (proves the layer setting was active). staging-uploads now says so.
+  - Step 16 ratios per run (raw / allocator): create+bind 26-53x, destroy+free 98-182x (quiz Q1 of allocators).
+  - VUID facts: vkAllocateMemory's "Exceeding this limit will result in undefined behavior..." is DESCRIPTION text, not
+    VUID-04101 (whose text is "There must be less than ...maxMemoryAllocationCount..."). The maintenance8 feature rule
+    for VK_DEPENDENCY_QUEUE_FAMILY_OWNERSHIP_TRANSFER_USE_ALL_STAGES_BIT_KHR exists for vkCmdPipelineBarrier (10206)
+    and vkCmdWaitEvents2 (10205) only, not for vkCmdPipelineBarrier2 (validusage.json, SDK 1.4.341).
 
 ## TODO
 
@@ -348,6 +397,21 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
   2 s x3): 2903-2999 vs 2907-2936 (no measurable difference for 176 bytes). vulkaninfo 2026-10-11: type 2 "usable
   for" no image either; heap budgets quoted in memory-types. Heap 1 = exactly half of the 68630528000 bytes of RAM.
 - [ ] Module 8: independent review of the EN lessons (facts vs spec/runs, quizzes), then the RU lessons.
+  Round-2 fixes done 2026-10-11 (see State); the RU lessons must carry the same facts when written.
+- [x] Module 9 examples 17-20 (2026-10-11): fmt + clippy -D warnings, C++ /W4 clean (clean rebuild of all 20), run on
+  the RTX 3080 Ti with VK_KHRONOS_VALIDATION_VALIDATE_SYNC=true: only the bandicam warning; stdout identical Rust vs C++
+  without `[timing]`/`[addr]` lines (17; 18 default and --push-descriptor; 19; 20). New shaders transform/device_address/
+  bindless.slang (+ spv, manifest; tests/shaders.test.ts passes). Details in State "examples 17-20".
+- [ ] Screenshots of 17-20: NOT taken - the capture of the 17 window was white again on 2026-10-11 (same as 10-16).
+  Retake `examples/screenshots/{17_uniforms,18_push_constants,19_buffer_device_address,20_bindless}.png`; the
+  column-major matrix upload (17/18) is verified from the SPIR-V only, not visually.
+- [ ] Module 9: independent reviews of 17-20 (code vs spec), then the EN lessons descriptors/{uniform-buffers,
+  descriptor-sets, push-constants, buffer-device-address, bindless}; `sync:vuids` for the VUIDs named in 17-20 comments.
+- [ ] Proposal: a step 16b using gpu-allocator through `[patch.crates-io]` once a gpu-allocator release (or its main)
+  builds against ash master (`push_next` -> `push`); 0.28.0 does not. Needs a Cargo.toml change: coordinate with the
+  owner of examples/rust/Cargo.toml. Also update the Cargo.toml comment (lines 18-21) to mention the [patch] result.
+- [ ] examples/cpp/src/15_staging.cpp ~346 still says "only 256 MiB of address space"; mirror the Rust doc comment
+  ("a 256 MiB BAR, of which the driver exposes 214 MiB as heap 2").
 
 - [x] Stage 1: course-kit engine; [x] site on the kit; [x] examples 01-05 both languages; [x] lessons 1-10
 - [x] ObjectGraph map + build modes; [x] two reviewers, findings fixed; [x] CI (tests, clippy/fmt, Pages)

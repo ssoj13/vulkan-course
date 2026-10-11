@@ -130,11 +130,13 @@ The whole ladder of who makes what available and visible, for this module's uplo
 | Operation | Makes available | Makes visible to |
 |---|---|---|
 | CPU writes to `HOST_COHERENT` memory | the writes, in the host domain (by themselves) | (nothing yet) |
+| `vkFlushMappedMemoryRanges` | CPU writes to non-coherent memory, in the host domain (ranges rounded to `nonCoherentAtomSize`) | (nothing yet) |
 | a queue submission | host writes made before it, host domain → device domain | all device accesses of that submission and later |
 | fence signal | all device writes before it | **nothing** |
 | pipeline barrier | the writes of its source access scope | the accesses of its destination access scope |
-| semaphore signal → wait | all device writes before the signal | all device accesses after the wait |
+| semaphore signal → wait | all device writes before the signal (within the signal's stage mask) | all device accesses after the wait (within the wait's stage mask) |
 | barrier with destination `HOST` / `HOST_READ` | device writes, device domain → host domain | host reads of coherent memory |
+| `vkInvalidateMappedMemoryRanges` | (nothing) | device writes already available in the host domain → host reads of non-coherent memory (same rounding) |
 
 The last row is the answer to a promise from the [fences lesson](lesson:fences-and-semaphores#fences-the-gpu-tells-the-host):
 to read GPU results on the CPU, record a barrier from the writer's stage and access to `HOST` / `HOST_READ` *before*
@@ -198,8 +200,10 @@ a defined stage."
 
 **The exception.** With that flag set in the barriers' `dependencyFlags`, the stages a release or acquire would
 otherwise ignore take part in the synchronization, so the semaphore could name precise stages and avoid a full
-pipeline stall. The flag belongs to `VK_KHR_maintenance8` and may be used only when its `maintenance8` feature is
-enabled (`VUID-vkCmdPipelineBarrier-maintenance8-10206`). The course GPU supports the feature (vulkaninfo:
+pipeline stall. The flag belongs to `VK_KHR_maintenance8` and its `maintenance8` feature. The valid-usage rule that
+requires the feature is written for the sync1 command (`VUID-vkCmdPipelineBarrier-maintenance8-10206`) and for
+`vkCmdWaitEvents2`; the registry of SDK 1.4.341 has no such rule for `vkCmdPipelineBarrier2`, which step 15 uses, so
+enable the feature before relying on the flag either way. The course GPU supports the feature (vulkaninfo:
 `maintenance8 = true`); step 15 sticks to Vulkan 1.4 core and uses `ALL_COMMANDS`.
 
 ### The acquire
@@ -238,8 +242,10 @@ with two limits:
 
 - **CPU time**: the CPU does the moving, at the speed of uncached writes over the bus (measured below).
 
-With ReBAR on, heap 2 should grow to about the size of VRAM (not measured on the course machine yet) (see the check in [memory types](lesson:memory-types#types-how-a-heap-can-be-used));
-the CPU-time limit stays.
+With ReBAR on, the `DEVICE_LOCAL | HOST_VISIBLE` memory should grow to about the size of VRAM, but this is not measured
+on the course machine yet, and the driver may expose it differently, for example as a type on heap 0 instead of a
+bigger heap 2; to be measured once ReBAR is enabled (see the check in
+[memory types](lesson:memory-types#types-how-a-heap-can-be-used)). The CPU-time limit stays.
 
 ## What each road costs
 
@@ -293,8 +299,10 @@ What the numbers say, and what they do not:
   such as the uniforms of the next module, belongs in the BAR heap when it fits.
 - **We did not find why** the BAR writes run at 4-5 GB/s when the link carries 11-13 GB/s for the copy engines; the
   write-combining path of the CPU is the usual suspect. Treat the ratio as this machine's, not a law.
-- **Synchronization validation changes the picture**: with `VK_KHRONOS_VALIDATION_VALIDATE_SYNC=true` the same 64 MiB of
-  host writes took 68-89 ms in earlier runs, in either memory type. Never measure with it on.
+- **Synchronization validation slows the frames, not the host writes**: with `VK_KHRONOS_VALIDATION_VALIDATE_SYNC=true`
+  (Rust, three runs per path, 2026-10-11) the 64 MiB host writes took 7.4-13.4 ms into type 3 and 13.1-16.4 ms into
+  type 5, the same range as without it: a `memcpy` into mapped memory makes no Vulkan call for the layer to check. The
+  render loop that follows dropped from 2600-2800 to 1500-2000 frames per second. Still, never measure with it on.
 
 ## What the program prints
 

@@ -69,7 +69,8 @@ const vramGiB = (gpu.memory.heaps[0]!.size / (1024 * MiB)).toFixed(1);
 				<li>NVIDIA Control Panel → System Information → the Resizable BAR line;</li>
 				<li>
 					<code>vulkaninfo</code>, memory heaps: the heap that has a DEVICE_LOCAL | HOST_VISIBLE type is about 256 MiB with
-					ReBAR off ({barMiB} MiB usable here) and roughly the size of VRAM with it on.
+					ReBAR off ({barMiB} MiB usable here); with it on, DEVICE_LOCAL | HOST_VISIBLE memory should cover roughly the
+					whole VRAM, though the driver may report it differently (for example as a type on the VRAM heap itself).
 				</li>
 			</ul>
 			<p>
@@ -79,8 +80,9 @@ const vramGiB = (gpu.memory.heaps[0]!.size / (1024 * MiB)).toFixed(1);
 			</p>
 			<p>
 				The data in these labs is a real snapshot of the course machine <b>with ReBAR off</b> (heap {barHeap}: {barMiB}{' '}
-				MiB next to {vramGiB} GiB of VRAM). With ReBAR on the numbers differ: the heap should grow to about the size of
-				VRAM. That state has not been measured yet, so it is only described here, not shown.
+				MiB next to {vramGiB} GiB of VRAM). With ReBAR on the numbers differ: the CPU-visible VRAM should grow to about
+				the size of VRAM, either as a bigger heap {barHeap} or as a HOST_VISIBLE type on another heap; the driver decides.
+				That state has not been measured yet, so it is only described here, not shown.
 			</p>
 		</Aside>
 	)

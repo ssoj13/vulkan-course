@@ -456,7 +456,7 @@
     "queue-family-ownership-transfer": {
       "label": "Передача владения между семействами очередей",
       "aka": ["queue family ownership transfer", "release", "acquire", "VK_SHARING_MODE_EXCLUSIVE", "srcQueueFamilyIndex", "dstQueueFamilyIndex"],
-      "def": "Передача EXCLUSIVE-ресурса от одного семейства очередей другому: барьер release в очереди исходного семейства и парный барьер acquire в очереди целевого, упорядоченные семафором. Без неё содержимое ресурса для чтения вторым семейством не определено."
+      "def": "Передача EXCLUSIVE-ресурса от одного семейства очередей другому: барьер release в очереди исходного семейства и парный барьер acquire в очереди целевого, упорядоченные зависимостью выполнения, обычно семафором. Без неё содержимое ресурса для чтения вторым семейством не определено."
     },
     "sub-allocation": {
       "label": "Суб-аллокация",
@@ -600,7 +600,7 @@
     "vertex-input-attribute|related|shader": "питает Location",
     "staging-buffer|uses|host-visible": "живёт в",
     "queue-family-ownership-transfer|built-on|pipeline-barrier": "release и acquire",
-    "queue-family-ownership-transfer|uses|vk-semaphore": "упорядочивается",
+    "queue-family-ownership-transfer|uses|vk-semaphore": "обычно упорядочивается",
     "queue-family-ownership-transfer|related|queue-family": "переносит ресурс между",
     "sub-allocation|built-on|vk-device-memory": "нарезает",
     "vma|uses|sub-allocation": "реализует",

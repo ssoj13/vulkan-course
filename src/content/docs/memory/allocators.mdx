@@ -43,7 +43,7 @@ texture atlas. One big texture, many small ones placed at offsets, one bind inst
 
 ## Three reasons not to allocate per resource
 
-**1. Each allocation is expensive.** Measured below: about 130-150 µs to create, allocate and bind one buffer with its
+**1. Each allocation is expensive.** Measured below: about 127-150 µs to create, allocate and bind one buffer with its
 own allocation, about 3 µs with an allocator. The difference is the `vkAllocateMemory` and `vkFreeMemory` calls.
 
 **2. Their number is limited.** `maxMemoryAllocationCount` is how many allocations may exist at once:
@@ -54,9 +54,11 @@ own allocation, about 3 µs with an allocator. The difference is the `vkAllocate
 maxMemoryAllocationCount: 4294967295 (the spec guarantees at least 4096)
 ```
 
-This driver reports the largest 32-bit value; the spec only guarantees 4096, and exceeding the real limit is not a
-polite error: "Exceeding this limit will result in undefined behavior, and an application should not rely on the use of
-the returned error code in order to identify when the limit is reached" (`VUID-vkAllocateMemory-maxMemoryAllocationCount-04101`).
+This driver reports the largest 32-bit value; the spec only guarantees 4096. Staying below the limit is a valid-usage
+rule: "There must be less than `VkPhysicalDeviceLimits::maxMemoryAllocationCount` device memory allocations currently
+allocated on the device" (`VUID-vkAllocateMemory-maxMemoryAllocationCount-04101`). And breaking it is not a polite
+error; the description of `vkAllocateMemory` warns: "Exceeding this limit will result in undefined behavior, and an
+application should not rely on the use of the returned error code in order to identify when the limit is reached".
 A scene with 10 000 meshes and one allocation each is a broken program on any device that reports the minimum.
 
 **3. Allocations come in coarse sizes.** A driver hands out memory in its own granularity, and a 256-byte uniform
@@ -74,8 +76,9 @@ An allocator may put a resource at offset *o* of a block of type *t* when:
 - and, if the neighbors are of the other kind (a buffer or linear image next to an optimal-tiling image), they do not
   share a page of [bufferImageGranularity](term:buffer-image-granularity) bytes. The spec phrases it with page numbers:
   the end of the first resource and the start of the second "must be on separate 'pages' of size
-  bufferImageGranularity". On the course GPU that page is 1024 bytes. The reason is that an optimal-tiling image may be
-  laid out and cached differently from linear data, and the driver wants a clean boundary between the two.
+  bufferImageGranularity". On the course GPU that page is 1024 bytes. The spec gives no reason; the usual explanation is
+  that the hardware may give a page holding an optimal-tiling image different attributes or a different layout than a
+  page of linear data, so the two must not share one.
 
 Step 16 places buffers only, so the granularity never applies there; an allocator that mixes buffers and images
 (VMA does) checks it at every placement.
@@ -116,7 +119,20 @@ Here the two languages part ways, deliberately. The region has the same name in 
 **Rust: our own linear allocator.** The Rust ecosystem's allocator is `gpu-allocator`. Its latest release, 0.28.0,
 depends on `ash` 0.38 from crates.io; this course pins `ash` from git for Vulkan 1.4 (the crates.io release stops at
 Vulkan 1.3.281), and the types of two different `ash` crates do not mix: a `vk::Device` of one is not a `vk::Device` of
-the other. So step 16 contains the simplest allocator that works, and the one every allocator starts from: a
+the other. Cargo can make them one crate: a `[patch.crates-io]` entry that points `ash` at the same git commit
+(its version there is `0.38.0+1.4.352`, so it satisfies gpu-allocator's `ash = "0.38"`). We tried it on 2026-10-11;
+the types unify, and then gpu-allocator itself no longer compiles, because ash master renamed a builder method it
+calls:
+
+```text
+error[E0599]: no method named `push_next` found for struct `MemoryAllocateInfo<'a>` in the current scope
+   --> gpu-allocator-0.28.0\src\vulkan\mod.rs:372:28
+    |
+372 |                 alloc_info.push_next(&mut flags_info)
+    |                            ^^^^^^^^^ method not found in `MemoryAllocateInfo<'_>`
+```
+
+(ash master calls it `push`.) So step 16 contains the simplest allocator that works, and the one every allocator starts from: a
 [linear allocator](term:linear-allocator) for one memory type. It keeps big blocks (64 MiB) and an offset in the last
 one; to place a resource it rounds the offset up to the alignment and bumps it by the size, and when the block is full
 it allocates the next. A resource larger than a block gets a block of its own. What it cannot do is free one
@@ -219,7 +235,7 @@ paths, so the absolute numbers are higher than in a release program without it; 
 - **Big allocators do more.** VMA also tracks budgets through `VK_EXT_memory_budget`, keeps memory persistently mapped,
   defragments, and creates dedicated allocations when the driver prefers them. On the Rust side, `gpu-allocator`
   offers a free-list allocator and dedicated blocks with an API close to VMA's; this course will switch to it once a
-  release supports the `ash` that Vulkan 1.4 needs.
+  release builds against the `ash` that Vulkan 1.4 needs (0.28.0 fails on `push_next`, see above).
 
 <Quiz
 	questions={[
@@ -228,7 +244,7 @@ paths, so the absolute numbers are higher than in a release program without it; 
 			options: [
 				{
 					text: 'Yes, the limit is far away and allocations are as cheap as buffer creation',
-					why: 'Measured, an allocation plus its free costs hundreds of microseconds, 40 times more than placing a buffer in a block.',
+					why: 'Measured, an allocation plus its free costs hundreds of microseconds: dozens of times more than placing a buffer in a block (26-53x for create + bind, 98-182x for destroy + free).',
 				},
 				{
 					text: 'Yes on this driver; the limit only matters on other GPUs',
@@ -278,11 +294,11 @@ paths, so the absolute numbers are higher than in a release program without it; 
 				},
 				{
 					text: 'Because a linear allocator is always faster than any general-purpose allocator such as gpu-allocator',
-					why: 'It is simpler, not a replacement: it cannot free one resource. The reason is a dependency conflict.',
+					why: 'It is simpler, not a replacement: it cannot free one resource. The reason is that gpu-allocator 0.28.0 does not build with the course\'s ash.',
 				},
 				{
-					text: 'It is built on crates.io ash 0.38, a different crate from the course\'s git ash',
-					why: 'Right: two different ash crates have incompatible types, and ash 0.38 stops at Vulkan 1.3.281.',
+					text: 'Its 0.28.0 is built for ash 0.38 and does not compile with the course\'s git ash, even via [patch]',
+					why: 'Right: unpatched, the two ash crates have incompatible types; patched into one, gpu-allocator calls push_next, which ash master renamed to push. The own allocator also shows the mechanics.',
 				},
 				{
 					text: 'Rust forbids calling vkAllocateMemory from a library',

@@ -108,7 +108,7 @@ each built on the one below:
 |---|---|---|
 | [DEVICE_LOCAL](term:device-local) | "the most efficient for device access"; set exactly when the heap is device-local | VRAM on a discrete GPU: where the GPU wants its data |
 | [HOST_VISIBLE](term:host-visible) | "can be mapped for host access using `vkMapMemory`" | the CPU can get a pointer into it |
-| [HOST_COHERENT](term:host-coherent) | the flush and invalidate commands "are not needed to manage availability and visibility on the host" | CPU writes need no explicit flush |
+| [HOST_COHERENT](term:host-coherent) | the flush and invalidate commands "are not needed to manage availability and visibility on the host" | no flush after CPU writes, no invalidate before CPU reads |
 | [HOST_CACHED](term:host-cached) | "cached on the host"; "uncached memory is always host coherent" | CPU **reads** go through the CPU caches: fast readback |
 | [LAZILY_ALLOCATED](term:lazily-allocated) | "only allows device access"; backing may be provided lazily | transient attachments on tile-based GPUs; no type has it here |
 
@@ -156,7 +156,9 @@ Limits: maxMemoryAllocationCount 4294967295, minMemoryMapAlignment 64, nonCohere
   4294967295, the largest 32-bit value. The spec only guarantees 4096, and that is the number a portable program plans
   for: a program that gives each of its 10 000 buffers its own allocation breaks on a driver that reports the minimum.
   The [allocators lesson](lesson:allocators) measures why you would not want to anyway;
-- `minMemoryMapAlignment`: a pointer from `vkMapMemory` is aligned to at least 64 bytes;
+- `minMemoryMapAlignment`: the alignment of a mapped allocation in the CPU's address space. The pointer
+  `vkMapMemory` returns, minus the `offset` it was given, is always a multiple of 64 here; so a mapping at offset 0
+  starts 64-byte aligned;
 - `nonCoherentAtomSize`: the granularity of flushes and invalidates of *non-coherent* memory. Every `HOST_VISIBLE`
   type on this GPU is also `HOST_COHERENT`, so it does not apply here, but it does on GPUs with a cached, non-coherent
   type;
@@ -263,7 +265,8 @@ Each answer is worth a sentence:
   small BAR heap and fill it with meshes;
 - **staging → type 3**, not 4 or 5: the plainest `HOST_VISIBLE | HOST_COHERENT` type, ordinary system RAM;
 - **readback → type 4.** `HOST_CACHED` was only preferred; the first pass finds it, so the CPU will read through its
-  caches;
+  caches. Here type 4 is also coherent; on a GPU whose cached type is not, the same rule picks memory that needs
+  `vkInvalidateMappedMemoryRanges` before every read;
 - **per-frame data → type 5**: small data the CPU rewrites every frame, preferably in VRAM. The heap behind it is only
   214 MiB here, which is why the next lessons treat it as a precious resource.
 
@@ -425,7 +428,7 @@ parent.
 				},
 				{
 					text: 'Record a pipeline barrier with srcAccessMask HOST_WRITE before the draw, in the same command buffer',
-					why: 'Only needed in the rare case where no submission happens between the write and the read; here the submit does it.',
+					why: 'Not needed: the submission already orders earlier host writes. Host writes made after a submit need an event (vkSetEvent + vkCmdWaitEvents2 with a HOST source stage), not a barrier: HOST is not a stage of any recorded command.',
 				},
 			],
 			answer: 1,
