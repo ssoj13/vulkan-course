@@ -1,6 +1,352 @@
 ---
 title: Наборы дескрипторов
-description: 'Как «set 0, binding 0» в шейдере превращается в настоящий буфер: layout набора, пул, набор, обновление, привязка — и почему наборы группируют по частоте изменений.'
+description: 'Как «set 0, binding 0» в шейдере превращается в настоящий буфер: layout набора, пул, набор, обновление, привязка — иерархия под pipeline layout, когда набор можно менять и почему наборы группируют по частоте изменений.'
 ---
 
-Русская версия урока готовится.
+import { Aside } from '@astrojs/starlight/components';
+import MindMap from 'course-kit/components/MindMap.astro';
+import Quiz from 'course-kit/components/Quiz.astro';
+import Step from '../../../../components/Step.astro';
+import ObjectGraph from '../../../../components/ObjectGraph.astro';
+
+Шейдер из [прошлого урока](lesson:uniform-buffers) читает «set 0, binding 0». У программы есть handle `VkBuffer`. Ни
+одно из них ничего не знает о другом. Что их связывает, и зачем Vulkan понадобились четыре новых объекта и вызова
+(layout, пул, набор, обновление), чтобы передать один буфер одному шейдеру?
+
+## Место в курсе
+
+Второй урок модуля **«Дескрипторы»** — тот, что наполняет pipeline layout, оставленный пустым в
+[модуле о пайплайне](lesson:pipeline-layout). Слои: объекты API (layout набора, пул, набор), команда, которая их
+привязывает, и под ними память дескрипторов, которую драйвер держит для GPU. Цепочка:
+
+`VkDescriptorSetLayout (the shape) → VkPipelineLayout (lists set layouts by set number) → VkDescriptorPool (an arena) → VkDescriptorSet (allocated with a layout) → vkUpdateDescriptorSets (writes "this buffer, this range" into binding 0) → vkCmdBindDescriptorSets (set 0 for the draws that follow)`
+
+[Дескриптор](term:descriptor) — маленькая запись, которая говорит шейдеру, где лежит ресурс и как его читать.
+Дескрипторы сидят в [binding](term:descriptor-binding) — пронумерованных слотах [descriptor set](term:vk-descriptor-set)
+(набора дескрипторов). Набор выделяется из [descriptor pool](term:vk-descriptor-pool) по
+[layout набора](term:vk-descriptor-set-layout); [pipeline layout](term:vk-pipeline-layout) перечисляет layout наборов, а
+правила [совместимости pipeline layout](term:pipeline-layout-compatibility) решают, переживёт ли привязанный набор смену
+пайплайна. Как делить ресурсы между наборами — вопрос дизайна: [группировка по частоте
+изменений](term:set-frequency). До этого: [pipeline layout](lesson:pipeline-layout), [uniform-буферы](lesson:uniform-buffers).
+Дальше: [push-константы и push-дескрипторы](lesson:push-constants), которые обходятся без большинства этих объектов, и
+[bindless](lesson:bindless), где на всё хватает одного набора.
+
+## Дескриптор — ссылка, а не данные
+
+Материал в DCC не содержит своих текстур. Он содержит *ссылки* на них: путь к файлу, цветовое пространство, фильтр, а
+рендерер разрешает эти ссылки, когда шейдит. Дескриптор — такая же ссылка для GPU. Для uniform-буфера он говорит
+«буфер X, начиная со смещения O, длиной R байт»; для текстуры скажет «вот этот [image view](lesson:image-views),
+читать вот этим сэмплером» (текстуры — модуль 10). Байты дескриптора — в формате, который знают только драйвер и GPU, и
+их немного: на GPU курса `VK_EXT_descriptor_buffer` (оно эти размеры раскрывает) сообщает 8 байт для дескриптора
+uniform-буфера, 16 для storage-буфера и 4 для sampled image (vulkaninfo, драйвер 616.64). Обычные descriptor set этих
+байт никогда не показывают.
+
+Четыре слоя, снаружи внутрь, — это иерархия из урока о pipeline layout, наполненная содержимым:
+
+| Слой | Объект или вызов | В шаге 17 | Аналогия |
+|---|---|---|---|
+| pipeline layout | `VkPipelineLayout` | set 0 = layout с uniform-буфером | полная сигнатура функции |
+| layout набора | `VkDescriptorSetLayout` | binding 0: 1 x `UNIFORM_BUFFER`, вершинная стадия | объявление одной группы параметров |
+| набор | `VkDescriptorSet` | по одному на слот кадра | заполненный экземпляр этой группы |
+| дескриптор | пишется `vkUpdateDescriptorSets` | uniform-буфер i, смещение 0, диапазон 80 | значение одного аргумента |
+
+Layout — это класс, набор — его экземпляр. Пайплайн компилируется только против layout; наборы с настоящими ресурсами
+привязываются при записи команд, и один пайплайн может рисовать с любым набором подходящего layout.
+
+## 1. Layout набора: форма
+
+<Step file="17_uniforms" region="set-layout" />
+
+Layout набора — это список binding. У каждого `VkDescriptorSetLayoutBinding` есть:
+
+- `binding` — номер, который использует шейдер (`[[vk::binding(0, 0)]]`, второе число — номер set);
+- `descriptorType` — вид ресурса, здесь `UNIFORM_BUFFER`. Бывают ещё `STORAGE_BUFFER` ([bindless](lesson:bindless)),
+  `SAMPLED_IMAGE`, `SAMPLER`, `COMBINED_IMAGE_SAMPLER`, `STORAGE_IMAGE` (изображения, модуль 10) и несколько других;
+- `descriptorCount` — сколько дескрипторов, то есть массив. Здесь 1, в уроке о bindless — 4096;
+- `stageFlags` — каким стадиям шейдеров его можно читать. Указать только вершинную стадию — не формальность: драйвер
+  может готовить дескрипторы отдельно для каждой стадии, и стадия, которой нет в списке, не имеет права трогать этот
+  binding.
+
+## 2. Pipeline layout перечисляет layout наборов по номерам
+
+<Step file="17_uniforms" region="pipeline-layout" />
+
+Позиция в `pSetLayouts` и есть номер набора: индекс 0 — set 0. Пайплайн создаётся с этим layout, и объявления шейдера
+должны им покрываться: ресурс, который шейдер использует в set 0, binding 0, обязан быть в layout с binding, видимым
+стадии шейдера (`VUID-VkGraphicsPipelineCreateInfo-layout-07988`), и с подходящим типом дескриптора
+(`VUID-VkGraphicsPipelineCreateInfo-layout-07990`).
+
+**Совместимость.** Два pipeline layout «совместимы для set N», если они «created with identically defined descriptor set
+layouts for sets zero through N» и имеют «identical push constant ranges» (раздел спецификации «Pipeline Layout
+Compatibility»; третье условие касается флага `INDEPENDENT_SETS` у graphics pipeline libraries, здесь он не нужен).
+Важны два события:
+
+- **Привязка набора N** может испортить (disturb) другие наборы. Набор M ниже N, привязанный раньше, портится, если два
+  layout не совместимы для set M. Если же набор, привязанный раньше в N, был привязан с layout, не совместимым для
+  set N, портятся ещё и все наборы выше N. Испорченный набор считается содержащим неопределённые дескрипторы.
+- **Привязка пайплайна** ничего не портит, но пайплайн «can correctly access any previously bound descriptor set N if
+  it was bound with a compatible pipeline layout for set N, and it was not disturbed». Набор, привязанный с
+  несовместимым layout, остаётся привязанным — просто этот пайплайн не может им пользоваться.
+
+Именно это правило стоит за разделом [о группировке наборов по частоте изменений](#наборы-по-частоте-изменений) ниже.
+
+## 3. Пул: арена для наборов
+
+<Step file="17_uniforms" region="descriptor-pool" />
+
+Descriptor set не создаются у устройства по одному: их выделяют из пула, как command buffer из command pool. Размер
+пула задаётся заранее двумя числами:
+
+- `maxSets` — сколько наборов можно выделить из него всего (2);
+- `pPoolSizes` — сколько дескрипторов каждого типа все эти наборы могут держать вместе (2 дескриптора uniform-буфера).
+
+Выход за эти числа не обязан закончиться ошибкой: спецификация говорит, что выделение «may fail due to lack of space»
+(реализация вправе и справиться). Но если выделение не удалось из-за пула, «and not because of system or device memory
+exhaustion, then `VK_ERROR_OUT_OF_POOL_MEMORY` must be returned». Тогда рендерер заводит новый пул; фатальной эта ошибка
+не считается.
+
+Без флага `FREE_DESCRIPTOR_SET` разрешены только выделение и `vkResetDescriptorPool`, освобождать наборы по одному
+нельзя, и драйвер может вести пул как простой bump-аллокатор. Сброс «recycles all of the resources from all of the
+descriptor sets allocated from the descriptor pool» — когда GPU закончил со всеми ними
+(`VUID-vkResetDescriptorPool-descriptorPool-00313`). Частый приём в движках — пул на каждый кадр в полёте, который
+сбрасывают, когда fence этого слота просигналил; шагу 17 не нужно ни то ни другое: два его набора живут столько же,
+сколько программа.
+
+## 4. Выделяем наборы
+
+<Step file="17_uniforms" region="allocate-sets" />
+
+По одному layout на каждый выделяемый набор: два набора, оба в форме set 0. В C++ `vk::raii::DescriptorSet` вызвал бы в
+деструкторе `vkFreeDescriptorSets`, а для пула без `eFreeDescriptorSet` это запрещено; поэтому программа держит обычные
+handle (`release()`) и оставляет пулу забрать наборы с собой.
+
+Свежий набор пуст в строгом смысле: «When a descriptor set is allocated, the initial state is largely uninitialized and
+all descriptors are undefined». Привязать его в таком виде можно, но каждый дескриптор, который шейдер статически
+использует, должен быть записан до того, как набор будет прочитан ([урок о bindless](lesson:bindless) ослабит
+«статически» до «динамически»).
+
+## 5. Записываем дескрипторы
+
+<Step file="17_uniforms" region="write-sets" />
+
+`vkUpdateDescriptorSets` принимает массив записей (и массив копирований между наборами, здесь пустой). Каждая
+`VkWriteDescriptorSet` называет набор, binding, первый элемент массива, тип дескриптора и сами ресурсы; для буферов это
+`VkDescriptorBufferInfo` (буфер, смещение, диапазон). Две записи в одном вызове заполняют оба набора.
+
+Обновление — операция **хоста**: драйвер пишет байты дескриптора сразу, а не тогда, когда выполнится command buffer.
+Поэтому у неё свои правила о времени. Набор нельзя обновлять, пока command buffer, который им пользуется, находится в
+состоянии pending, если только у binding нет одного из флагов bindless:
+
+> `VUID-vkUpdateDescriptorSets-None-03047`: The dstSet member of each element of pDescriptorWrites or pDescriptorCopies
+> for bindings which were created without the VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT or
+> VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT bits set must not be used by any command that was recorded to a
+> command buffer which is in the pending state
+
+Шаг 17 записывает наборы один раз, до первого кадра, и больше их не трогает: наборы всегда указывают на одни и те же
+два буфера. Каждый кадр меняется **содержимое** буферов, а его охраняют fence из прошлого урока. Такое разделение —
+дескрипторы неподвижны, данные меняются — и есть нормальный случай.
+
+## 6. Привязываем набор и рисуем
+
+<Step file="17_uniforms" region="bind-and-draw" />
+
+`vkCmdBindDescriptorSets` записывает «используй эти наборы, начиная с номера `firstSet`, в графической точке привязки,
+трактуя их через этот pipeline layout». У графики и compute разные точки привязки, так что dispatch не портит наборы
+отрисовки. Последний аргумент — список динамических смещений, здесь пустой.
+
+Когда GPU читает дескрипторы? Спецификация задаёт не момент, а окно: без `UPDATE_AFTER_BIND` содержимое «may be
+consumed ... during host execution of the command, or during shader execution of the resulting draws and dispatches, or
+any time in between. Thus, the contents of a descriptor set binding must not be altered (overwritten by an update
+command, or freed) between the first point in time that it may be consumed, and when the command completes executing on
+the queue.» Значит, с момента вызова привязки и до тех пор, пока GPU не закончит, набор заморожен. Шаг 17 привязывает
+набор своего слота, fence которого дождались до записи команд, так что окно никогда не нарушается.
+
+<Aside type="note" title="Две дорожки времени">
+Дескриптор называет буфер; буфер хранит матрицу. Замороженный набор не замораживает буфер: CPU может записать в буфер
+другую матрицу, пока набор, указывающий на него, привязан, — лишь бы никакая ожидающая работа GPU этот буфер не читала.
+В шаге 17 и то и другое заведено на слот, и одно ожидание fence покрывает оба.
+</Aside>
+
+## 7. Уборка
+
+<Step file="17_uniforms" region="cleanup" />
+
+`vkDestroyDescriptorPool` освобождает все выделенные из него наборы. Layout набора можно уничтожить, как только из него
+больше ничего не будут создавать; здесь он переживает пул лишь потому, что код уничтожает объекты в обратном порядке
+создания.
+
+## Собери сам
+
+Все новые объекты висят на устройстве; у набора два родителя — пул, из которого он выделен, и layout, задающий его
+форму:
+
+<ObjectGraph
+	mode="build"
+	scope={['instance', 'physical-device', 'device', 'descriptor-set-layout', 'pipeline-layout', 'descriptor-pool', 'descriptor-set']}
+	caption="Набору дескрипторов нужны пул и layout. Тот же layout набора нужен и pipeline layout, так что один layout питает и пайплайн, и наборы."
+/>
+
+## Наборы по частоте изменений
+
+В шаге 17 набор один. Настоящий рендерер рисует тысячи объектов с десятками материалов, и данные распадаются на группы,
+которые меняются с разной частотой: камера и свет — раз в кадр, текстуры и параметры материала — со сменой материала,
+трансформ объекта — для каждого объекта. Обычная раскладка наборов следует этому, и сама спецификация советует так
+делать в примечании к «Pipeline Layout Compatibility»:
+
+> Place the least frequently changing descriptor sets near the start of the pipeline layout, and place the descriptor
+> sets representing the most frequently changing resources near the end. When pipelines are switched, only the
+> descriptor set bindings that have been invalidated will need to be updated and the remainder of the descriptor set
+> bindings will remain in place.
+
+<Aside type="caution" title="Соглашение, а не правило API">
+Нумерация ниже — широко распространённое **соглашение** (движки, туториалы и руководства производителей пользуются его
+вариантами), а не требование Vulkan. Vulkan определяет только совместимость; что класть в какой набор — ваш дизайн.
+</Aside>
+
+| Set | Что обычно лежит | Когда привязывается |
+|---|---|---|
+| 0 | на кадр: матрицы камеры, свет, время | раз в кадр |
+| 1 | на проход или материал: текстуры, параметры материала | при смене материала |
+| 2 | на объект: трансформ, данные скиннинга | на каждый объект (или заменяется push-константами / индексом) |
+
+Где layout наборов 0..N у пайплайнов совпадают, переход от пайплайна одного материала к пайплайну другого оставляет
+set 0 привязанным: для совместимости по set 0 нужны лишь тот же layout set 0 и те же диапазоны push-констант. Сколько
+наборов можно привязать одновременно, говорит `maxBoundDescriptorSets`: не меньше 4 в Vulkan 1.0, не меньше 7 в
+Vulkan 1.4, на GPU курса 32. Современные движки часто сводят уровень объекта к нулю: значения объекта уходят в
+[push-константы](lesson:push-constants), а ресурсы объекта достаются по индексу в одном большом наборе
+([bindless](lesson:bindless)).
+
+## Что печатает программа
+
+Часть вывода шага 17, относящаяся к дескрипторам (весь вывод — в [прошлом уроке](lesson:uniform-buffers#что-печатает-программа)):
+
+```text
+Descriptor set layout: binding 0 = UNIFORM_BUFFER x 1, stage VERTEX
+Pipeline layout: 1 set layout (set 0), no push constants
+Graphics pipeline created (vertexUniform reads set 0, binding 0)
+...
+Descriptor pool: maxSets 2, UNIFORM_BUFFER x 2
+Allocated 2 descriptor sets
+vkUpdateDescriptorSets: slot 0's set, binding 0 -> uniform buffer 0 (offset 0, range 80)
+vkUpdateDescriptorSets: slot 1's set, binding 0 -> uniform buffer 1 (offset 0, range 80)
+
+2 frames in flight, each with its own uniform buffer and descriptor set
+```
+
+(Сокращено: пропущенные строки — uniform-буферы из прошлого урока.)
+
+## Карта урока
+
+<MindMap />
+
+## Что под капотом
+
+- **Дескрипторы — это память.** Обычно драйвер держит дескрипторы в памяти, видимой GPU, — в своей куче дескрипторов.
+  Пул — резерв в ней, набор — диапазон в ней, а `vkUpdateDescriptorSets` заставляет CPU записать в этот диапазон байты
+  каждого дескриптора в формате железа. Привязка набора тогда сводится к тому, чтобы сообщить GPU базовый адрес этого
+  диапазона для set N. Поэтому обновления — операции хоста, и поэтому ожидающее чтение GPU их запрещает.
+- **Layout фиксирует адресацию.** Раз «set N» должен работать одинаково для всех пайплайнов, совместимых по set N,
+  драйвер компилирует каждый шейдер так, чтобы искать дескрипторы set N способом, зависящим только от layout наборов
+  0..N (спецификация говорит об этом в примечании для разработчиков реализаций). Приложение смещений дескрипторов не
+  видит — оно только обещает формы.
+- **Новые расширения открывают эту память напрямую.** `VK_EXT_descriptor_buffer` позволило приложениям самим писать
+  дескрипторы в буферы, а `VK_EXT_descriptor_heap` (ратифицировано, драйвер 616.64 GPU курса его перечисляет) «was
+  developed based on issues discovered with VK_EXT_descriptor_buffer», с более переносимыми гарантиями (спецификация).
+  Курс остаётся на обычных descriptor set; модель этого урока — как раз то, что эти расширения делают явным.
+
+<Quiz
+	questions={[
+		{
+			q: 'Какой объект фиксирует «binding 0 — один uniform-буфер, виден вершинной стадии», а какой держит сам буфер?',
+			options: [
+				{
+					text: 'Pipeline layout — и то и другое',
+					why: 'Pipeline layout только перечисляет layout наборов и диапазоны push-констант; ресурсов он не держит никогда.',
+				},
+				{
+					text: 'Пул фиксирует форму, layout набора держит буфер',
+					why: 'Пул лишь резервирует место под наборы и дескрипторы, а layout набора — объявление без ресурсов.',
+				},
+				{
+					text: 'Layout набора фиксирует форму, выделенный по нему набор держит буфер',
+					why: 'Верно: layout — объявление, набор — его экземпляр, который заполняет vkUpdateDescriptorSets.',
+				},
+				{
+					text: 'Шейдерный модуль: [[vk::binding(0, 0)]] объявляет форму, и драйвер по ней сам находит буфер',
+					why: 'Шейдер объявляет, чем пользуется, но Vulkan нужна форма в виде объекта API — чтобы собрать пайплайн и выделять наборы.',
+				},
+			],
+			answer: 2,
+			ref: '#дескриптор--ссылка-а-не-данные',
+		},
+		{
+			q: 'Изменённый шаг 17 привязывает набор, а потом, ещё до отправки command buffer, вызывает vkUpdateDescriptorSets для того же набора. Флагов bindless нет. Что говорит спецификация?',
+			options: [
+				{
+					text: 'Можно: без флагов bindless дескрипторы читаются только при отправке command buffer',
+					why: 'Без UPDATE_AFTER_BIND их могут прочитать уже во время самого вызова привязки, так что после неё менять их нельзя.',
+				},
+				{
+					text: 'Нельзя: от привязки до завершения работы GPU набор меняться не должен',
+					why: 'Верно: содержимое могут прочитать в любой момент от вызова привязки до завершения команды, поэтому оно должно остаться прежним.',
+				},
+				{
+					text: 'Обновление встанет в очередь и применится, когда GPU закончит',
+					why: 'Обновление — операция хоста, выполняемая сразу; никакой очереди для него нет.',
+				},
+				{
+					text: 'Можно, если не трогать буфер, на который указывает набор',
+					why: 'Правило касается дескрипторов, что бы ни происходило с содержимым буфера.',
+				},
+			],
+			answer: 1,
+			ref: '#6-привязываем-набор-и-рисуем',
+		},
+		{
+			q: 'Рендерер держит данные камеры в set 0, а текстуры материала в set 1. Почему при переходе на пайплайн другого материала set 0 может остаться привязанным?',
+			options: [
+				{
+					text: 'Любой пайплайн может читать любой привязанный набор, с каким бы layout его ни привязали',
+					why: 'Пайплайн может пользоваться set N, только если тот привязан с layout, совместимым по set N с layout самого пайплайна (и с тех пор не испорчен).',
+				},
+				{
+					text: 'Set 0 особенный и никогда не портится',
+					why: 'Особенных номеров нет; правило одинаково для всех наборов.',
+				},
+				{
+					text: 'Потому что данные камеры лежат в uniform-буфере',
+					why: 'Тип дескриптора тут ни при чём; правило — о совместимости layout.',
+				},
+				{
+					text: 'У обоих layout одинаковые layout set 0 и диапазоны push-констант, значит, они совместимы по set 0',
+					why: 'Верно: совместимость по set N требует одинаково определённых layout наборов 0..N и одинаковых диапазонов push-констант.',
+				},
+			],
+			answer: 3,
+			ref: '#2-pipeline-layout-перечисляет-layout-наборов-по-номерам',
+		},
+		{
+			q: 'vkAllocateDescriptorSets вернул VK_ERROR_OUT_OF_POOL_MEMORY. Что это значит?',
+			options: [
+				{
+					text: 'В пуле не осталось места под этот набор или его дескрипторы; выделяйте из другого пула',
+					why: 'Верно: спецификация возвращает этот код, когда кончился пул, а не память устройства. Движки заводят новый пул.',
+				},
+				{
+					text: 'У GPU кончилась VRAM',
+					why: 'Тогда была бы ошибка нехватки памяти устройства; OUT_OF_POOL_MEMORY — про собственные счётчики пула.',
+				},
+				{
+					text: 'Layout набора недопустим',
+					why: 'Недопустимый layout — нарушение valid usage, его ловит валидация, а не код возврата.',
+				},
+				{
+					text: 'Сначала надо освободить ранее выделенные наборы через vkFreeDescriptorSets, иначе пул новых не примет',
+					why: 'Без FREE_DESCRIPTOR_SET этот вызов вообще запрещён; сбросьте пул или возьмите другой.',
+				},
+			],
+			answer: 0,
+			ref: '#3-пул-арена-для-наборов',
+		},
+	]}
+/>

@@ -30,7 +30,7 @@ After: [buffer device address](lesson:buffer-device-address), which pushes an 8-
 
 ## Three ways to hand a shader the same 80 bytes
 
-Back to the Houdini asset. Its parameters can be set in three ways: link them to a separate parameter node that many
+Think of a Houdini digital asset. Its parameters can be set in three ways: link them to a separate parameter node that many
 assets read (a uniform buffer behind a descriptor set), point the asset at a different parameter node right in the
 network (a push descriptor), or type the values straight into the asset (push constants). The values are the same; what
 differs is where they are stored and how much setup each route needs.

@@ -3,4 +3,319 @@ title: Адреса буферов на GPU
 description: 'Указатели GPU вместо дескрипторов: возможность bufferDeviceAddress, нужные флаги, указатели в Slang (PhysicalStorageBuffer64) и GPU-assisted validation, которая ловит чтение за концом буфера.'
 ---
 
-Русская версия урока готовится.
+import { Aside } from '@astrojs/starlight/components';
+import MindMap from 'course-kit/components/MindMap.astro';
+import Quiz from 'course-kit/components/Quiz.astro';
+import Snippet from 'course-kit/components/Snippet.astro';
+import Step from '../../../../components/Step.astro';
+
+До сих пор шейдер добирался до буфера через дескриптор — запись, которой владеет драйвер: буфер, смещение, диапазон.
+Программист на C++ добирается до памяти куда проще — указателем. Может ли так шейдер? С Vulkan 1.2 — да: у буфера может
+быть 64-битный адрес на GPU, программа передаёт это число шейдеру любым удобным способом, а шейдер его разыменовывает.
+Что нужно, чтобы получить такой адрес, и чем мы платим, когда указатель заменяет дескриптор?
+
+## Место в курсе
+
+Четвёртый урок модуля **«Дескрипторы»** — тот, где мы от дескрипторов уходим. Слои: возможность устройства, usage
+буфера и флаг выделения памяти (API); 64-битное число в push-константе; тип-указатель в Slang и класс памяти
+`PhysicalStorageBuffer` в SPIR-V; и под ними виртуальное адресное пространство GPU. Цепочка:
+
+`feature bufferDeviceAddress → buffer usage SHADER_DEVICE_ADDRESS + memory allocated with DEVICE_ADDRESS → vkGetBufferDeviceAddress → u64 in a push constant → Instance* in Slang → OpPtrAccessChain + OpLoad in PhysicalStorageBuffer → instances[instance index]`
+
+[Buffer device address](term:buffer-device-address) — 64-битный виртуальный адрес [VkBuffer](term:vk-buffer) на GPU;
+шейдер читает по нему в классе памяти [PhysicalStorageBuffer](term:physical-storage-buffer), без всякого
+[дескриптора](term:descriptor). Едет адрес в [push-константах](term:push-constant). Раз такие чтения никто не проверяет,
+ловит ошибки инструмент другого рода — [GPU-assisted validation](term:gpu-av). До этого:
+[push-константы](lesson:push-constants) (как передать адрес). Дальше: [bindless](lesson:bindless) — другой способ
+достать много буферов из одной отрисовки, на этот раз с дескрипторами.
+
+## 64 шестиугольника, одна отрисовка, один указатель
+
+Шаг 19 рисует 64 маленьких шестиугольника сеткой 8x8 **одной** индексированной отрисовкой на 64 экземпляра. Каждый
+экземпляр читает свою 32-байтовую запись (позиция, масштаб, фаза, цвет, вращение) из буфера на 64 записи. В Houdini
+это облако точек, где у каждой точки свои атрибуты, а нода copy-to-points читает их для каждой копии. Здесь «точки» —
+записи, «копии» — экземпляры, и запись `i` шейдер находит по адресу `address + i * 32`.
+
+<Step file="19_buffer_device_address" region="instance" />
+
+Запись занимает 32 байта со смещениями 0, 8, 12, 16 и 28; assert'ы их закрепляют. Данные под указателем Slang
+раскладывает в своей «естественной» (natural) раскладке, которая для этой структуры совпадает и с std430, и с
+`repr(C)` (в SPIR-V тип называется `Instance_natural`, а у указателя `ArrayStride 32`).
+
+## Шейдер: указатель в push-константе
+
+<Snippet src="shaders/device_address.slang" />
+
+Блок push-констант — 16 байт: `Instance*`, затем `time` и `aspect`. `push.instances[instance]` — адресная арифметика:
+адрес плюс `instance * 32` байт. `SV_VulkanInstanceID` — это `InstanceIndex` в SPIR-V, номер экземпляра внутри
+отрисовки (здесь 0..63).
+
+SPIR-V показывает, что изменилось под исходником:
+
+```text
+OpCapability PhysicalStorageBufferAddresses
+OpMemoryModel PhysicalStorageBuffer64 GLSL450
+%36 = OpPtrAccessChain %_ptr_PhysicalStorageBuffer_Instance_natural %35 %26
+%37 = OpLoad %Instance_natural %36 Aligned 4
+```
+
+Модель адресации модуля — `PhysicalStorageBuffer64`: указатели в буферы — это 64-битные числа. `OpPtrAccessChain` и
+есть `[i]`, а у загрузки есть операнд `Aligned 4`: загрузка через физический указатель обязана сама назвать
+выравнивание, на которое ей можно рассчитывать, — ведь никакой дескриптор ничего не сообщает компилятору о памяти за
+этим адресом.
+
+Сторона хоста повторяет блок push-констант:
+
+<Step file="19_buffer_device_address" region="push-data" />
+
+`u64` (в C++ — `vk::DeviceAddress`) идёт первым, поэтому он выровнен на 8 без добивки, а весь блок — 16 байт
+инициализированных данных.
+
+## Три переключателя, нужны все
+
+### 1. Возможность устройства
+
+<Step file="19_buffer_device_address" region="device-features" />
+
+`bufferDeviceAddress` — возможность Vulkan 1.2. Каждое устройство Vulkan 1.3 обязано её поддерживать (список
+возможностей, обязательных для 1.3), но, как и с push-дескрипторами, программа должна её включить. Без неё недопустим
+`vkGetBufferDeviceAddress` (`VUID-vkGetBufferDeviceAddress-bufferDeviceAddress-03324`), а также флаг выделения памяти
+ниже (`VUID-VkMemoryAllocateInfo-flags-03331`). Сам по себе usage-флаг не запрещён: никакое правило не связывает usage
+`SHADER_DEVICE_ADDRESS` с возможностью, но без возможности законного способа получить адрес просто нет.
+
+### 2. Usage и флаг выделения
+
+<Step file="19_buffer_device_address" region="create-buffer" />
+
+`create_buffer` из шага 14 с одним добавлением: `VkMemoryAllocateFlagsInfo` в цепочке `pNext` при выделении памяти.
+Для буфера с usage `SHADER_DEVICE_ADDRESS` этот флаг — не подсказка:
+
+- `VUID-vkBindBufferMemory-bufferDeviceAddress-03339`: если возможность включена и у буфера usage
+  `SHADER_DEVICE_ADDRESS`, память «must have been allocated with the VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT bit set»;
+- `VUID-VkMemoryAllocateInfo-flags-03331`: самому флагу нужна возможность.
+
+Почему это касается выделения памяти? Флаг говорит драйверу, что у этой памяти должен быть адрес, которым смогут
+пользоваться шейдеры, и драйвер может соответственно настроить отображение на GPU; больше спецификация ничего не
+объясняет. Для аллокатора это ещё одна вещь, которую надо отслеживать: блоки памяти под буферы с адресом требуют флага,
+поэтому, например, у VMA есть `VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT`, который его добавляет.
+
+### 3. Буфер
+
+<Step file="19_buffer_device_address" region="instance-buffer" />
+
+Только usage `SHADER_DEVICE_ADDRESS`. Без `STORAGE_BUFFER`: этот usage существует для того, чтобы на буфер мог
+указывать **дескриптор** storage-буфера, а здесь дескриптора не будет никогда. Память — `HOST_VISIBLE | HOST_COHERENT`
+тип 3 из шага 14, запись один раз; [staging](lesson:staging-uploads) в VRAM сработал бы так же — адресу всё равно, где
+живёт память.
+
+## Получаем адрес
+
+<Step file="19_buffer_device_address" region="get-address" />
+
+`vkGetBufferDeviceAddress` возвращает «an address of the start of» буфера, и «addresses in the range
+[bufferBaseAddress, bufferBaseAddress + VkBufferCreateInfo::size) can be used to access the memory bound to this
+buffer». И ещё: «A value of zero is reserved as a "null" pointer and must not be returned as a valid buffer device
+address», поэтому программа считает 0 ошибкой.
+
+```text
+[addr] instance buffer device address: 0x6f94000
+[addr] instances[1] at 0x6f94020 (+32), instances[63] at 0x6f947e0 (+2016)
+```
+
+На машине курса оба языка в каждом запуске получали `0x6f94000`, но никто этого не обещает. Поэтому строки начинаются с
+`[addr]` и исключаются при сравнении вывода двух языков. Адрес — свойство одного буфера на одном устройстве: он
+действителен, пока буфер существует, а в другом запуске, с другим драйвером или при другом порядке выделений число будет
+другим. Инструментам, которые записывают и воспроизводят программу (например, RenderDoc), нужны те же адреса снова, и
+для этого в спецификации есть возможность по запросу — `bufferDeviceAddressCaptureReplay`, с ней «the return value will
+be the same address that was returned at capture time».
+
+## Отрисовка
+
+<Step file="19_buffer_device_address" region="push-and-draw" />
+
+Адрес записывается как любое другое значение push-константы, затем одна отрисовка на 64 экземпляра. Ни набора, ни
+дескриптора, ни вызова привязки для данных экземпляров: в pipeline layout только 16-байтовый диапазон push-констант.
+
+```text
+Push constant range: stage VERTEX, offset 0, size 16 (8-byte address + time + aspect)
+Pipeline layout: no set layouts, 1 push constant range
+```
+
+С точки зрения модели памяти чтение через указатель — обычное чтение памяти буфера: хост записал данные до первой
+отправки, и отправка делает эти записи видимыми — так же, как для uniform-буфера.
+
+## У указателя нет размера
+
+Дескриптор несёт диапазон, и драйвер его знает; с возможностями robustness (`robustBufferAccess` и её наследниками)
+обращения за пределы диапазона через дескриптор делаются безвредными. Голый адрес не несёт ничего: `instances[64]` — это
+просто `address + 2048`, за концом буфера. Что там случится, зависит от того, что лежит по этому адресу, — или GPU
+словит fault. Обычная валидация этого тоже не видит: слой валидации проверяет вызовы API, а адрес для него — просто
+число внутри push-константы.
+
+Видит это **GPU-assisted validation** (GPU-AV) — режим того же слоя валидации Khronos, который встраивает проверки в
+шейдеры и проверяет каждое обращение прямо во время их работы на GPU. Включается он через
+`VK_KHRONOS_VALIDATION_GPUAV_ENABLE=true` (или в vkconfig). В качестве негативного теста курс временно изменил шаг 19 так,
+чтобы он рисовал 65 экземпляров — на один больше, чем помещается в буфере, — и запустил его с GPU-AV (2026-10-11).
+Отрисовка выдала:
+
+```text
+[ERROR][VALIDATION] vkCmdDrawIndexed(): Out of bounds access: 32 bytes read at buffer device address 0x6f94800. This read corresponds to a full OpTypeStruct load. While not all members of the struct might be accessed, it is up to the source language or tooling to detect that and reflect it in the SPIR-V.
+Stage has multiple OpEntryPoint (Vertex, Fragment) and could not detect stage. 
+Command buffer (0x22e0072a0d0)
+	Draw Index 0
+Shader Module (0x3f000000003f) (internal ID 5)
+SPIR-V Instruction: %37 = OpLoad %28 %36 2 4
+(Unable to find shader source, build shader with debug info to get source information)
+The Vulkan spec states: If the PhysicalStorageBuffer64 addressing model is enabled the pointer value of a memory access instruction in the PhysicalStorageBuffer Storage Class must reference a buffer created with the VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT usage flag set (https://docs.vulkan.org/spec/latest/appendices/spirvenv.html#VUID-RuntimeSpirv-PhysicalStorageBuffer64-11819)
+```
+
+Разберём внимательно:
+
+- `0x6f94800` — базовый адрес `0x6f94000` плюс 2048, ровно `instances[64]`, а 32 байта — вся запись: Slang загружает
+  структуру одной `OpLoad`, инструкцией `%37` из дизассемблера выше.
+- Правило, на которое ссылается сообщение, `VUID-RuntimeSpirv-PhysicalStorageBuffer64-11819`, требует, чтобы физический
+  указатель ссылался на буфер с usage `SHADER_DEVICE_ADDRESS`. Адрес за концом буфера не ссылается ни на какой буфер,
+  поэтому правило нарушено.
+- «Unable to find shader source»: slangc не выдал отладочной информации, и сообщение само советует «build shader with
+  debug info to get source information».
+
+У GPU-AV есть цена. Он медленный (его собственное первое предупреждение говорит об этом: «this is not recommend as it
+will be very slow» рядом с основной валидацией) и меняет устройство, на котором работает: в этих запусках он
+принудительно включал возможности вроде `shaderInt64`, `vulkanMemoryModel` и `storageBuffer8BitAccess` и печатал
+«Warning that validation is adjusting settings». Это инструмент для охоты на ошибки памяти в шейдерах, а не настройка на
+каждый день. Без изменения шаги 17, 19 и 20 проходят GPU-AV чисто, если не считать этих предупреждений о настройке.
+
+## Указатели или дескрипторы?
+
+| | Дескриптор (storage-буфер) | Buffer device address |
+|---|---|---|
+| Что получает шейдер | запись в формате драйвера: буфер, смещение, диапазон | 64-битное число |
+| Знает ли драйвер границы | да, диапазон | нет |
+| Как передать | набор, push-дескриптор | как угодно: push-константы, внутри других буферов, вычислить |
+| Указатели внутри данных | нет | да: деревья, связные списки, таблицы указателей на объекты |
+| Что нужно | binding в layout набора | возможность, `SHADER_DEVICE_ADDRESS`, флаг выделения `DEVICE_ADDRESS` |
+| Типичное применение | текстуры (всегда через дескрипторы), большинство буферов | большие данные сцены, GPU-driven рендеринг, ray tracing (shader binding table и acceleration structure работают с адресами) |
+
+До изображений по адресу не добраться вовсе: текстуры и сэмплеры всегда идут через дескрипторы. Следующий урок
+сохраняет дескрипторы и учит их масштабироваться.
+
+## Что печатает программа
+
+Шаг 19 (Rust, release, `--seconds 2`; сборка на C++ печатает те же строки, а в этих запусках — и те же строки `[addr]`):
+
+```text
+Window: 800x600 pixels
+Found 1 GPU(s)
+GPU 0: NVIDIA GeForce RTX 3080 Ti
+
+Picked: NVIDIA GeForce RTX 3080 Ti
+Graphics + present family: 0
+VkDevice created with VK_KHR_swapchain + feature bufferDeviceAddress
+Swapchain: 800x600 B8G8R8A8_SRGB, MAILBOX, 3 images
+
+SPIR-V: 2556 bytes (device_address.spv), entry points vertexMain, fragmentMain
+Push constant range: stage VERTEX, offset 0, size 16 (8-byte address + time + aspect)
+Pipeline layout: no set layouts, 1 push constant range
+Graphics pipeline created (vertexMain reads instances through the pointer)
+
+Mesh: regular hexagon, 7 vertices, 18 indices (step 14's buffers, memory type 3)
+Instance struct: 32 bytes (offset 0, scale 8, phase 12, color 16, spin 28)
+Instance buffer: 64 x 32 = 2048 bytes, SHADER_DEVICE_ADDRESS, memory type 3 (HOST_VISIBLE | HOST_COHERENT), allocated with DEVICE_ADDRESS
+[addr] instance buffer device address: 0x6f94000
+[addr] instances[1] at 0x6f94020 (+32), instances[63] at 0x6f947e0 (+2016)
+
+2 frames in flight; each frame: 18 indices x 64 instances in one vkCmdDrawIndexed
+Rendering. Close the window to exit.
+Window closed
+[timing] 4972 frames in 2.0 s, 2477 fps
+```
+
+## Карта урока
+
+<MindMap />
+
+## Что под капотом
+
+- **GPU и так работает с виртуальными адресами.** Каждый буфер, который драйвер отдаёт GPU, где-то лежит в
+  виртуальном адресном пространстве GPU, и дескрипторы обычно содержат такой адрес плюс размер. Buffer device address
+  открывает приложению адресную часть; загрузка в шейдере через него обычно компилируется в обычную загрузку из
+  глобальной памяти.
+- **Нет диапазона — нет ограничения.** Загрузку через дескриптор может проверить на границы железо или код robustness
+  в драйвере; загрузку через физический указатель — нет, сверять не с чем. Это сознательная сделка расширения, и
+  поэтому GPU-AV приходится инструментировать шейдер, чтобы что-то узнать.
+- **Зачем флаг выделения?** Спецификация его только требует. Вероятная причина — некоторым реализациям нужно иначе
+  размещать или отображать память, чтобы она была адресуема из шейдеров; флаг позволяет делать это только там, где нужно.
+
+<Quiz
+	questions={[
+		{
+			q: 'Буфер создан с usage SHADER_DEVICE_ADDRESS, а его память выделена без VkMemoryAllocateFlagsInfo. Возможность включена. Что не так?',
+			options: [
+				{
+					text: 'Всё в порядке: флаг — подсказка о производительности, от него зависит лишь скорость поиска адреса',
+					why: 'Это требование: привязать такой буфер к памяти без DEVICE_ADDRESS — недопустимое использование.',
+				},
+				{
+					text: 'Привязка памяти нарушает VUID-vkBindBufferMemory-bufferDeviceAddress-03339',
+					why: 'Верно: при включённой возможности буфер с SHADER_DEVICE_ADDRESS нужно привязывать к памяти, выделенной с DEVICE_ADDRESS.',
+				},
+				{
+					text: 'vkGetBufferDeviceAddress вернёт для него 0',
+					why: '0 никогда не бывает допустимым адресом, а результат недопустимого использования спецификация не определяет. Ошибка — уже в привязке.',
+				},
+				{
+					text: 'Буферу нужен ещё usage STORAGE_BUFFER',
+					why: 'STORAGE_BUFFER нужен для дескрипторов; буферу, который читают только по адресу, он не нужен.',
+				},
+			],
+			answer: 1,
+			ref: '#2-usage-и-флаг-выделения',
+		},
+		{
+			q: 'Оба языка в каждом запуске печатали адрес 0x6f94000. Можно ли сохранить это число в файл и использовать в следующий раз?',
+			options: [
+				{
+					text: 'Да, адреса фиксированы для модели GPU',
+					why: 'Их ничто не фиксирует: они зависят от драйвера, запуска и порядка выделений.',
+				},
+				{
+					text: 'Да, если стоит та же версия драйвера',
+					why: 'Даже тогда это ничем не гарантировано; гарантию даёт только capture replay с opaque capture address.',
+				},
+				{
+					text: 'Только для буферов в памяти DEVICE_LOCAL',
+					why: 'Тип памяти тут ни при чём.',
+				},
+				{
+					text: 'Нет: адрес действителен лишь пока жив буфер; тот же адрес снова даёт только bufferDeviceAddressCaptureReplay',
+					why: 'Верно: спецификация обещает тот же адрес только буферам, созданным с capture address при этой возможности.',
+				},
+			],
+			answer: 3,
+			ref: '#получаем-адрес',
+		},
+		{
+			q: 'Шаг 19, изменённый так, чтобы рисовать 65 экземпляров, читает instances[64]. Кто об этом сообщит?',
+			options: [
+				{
+					text: 'GPU-assisted validation: она инструментирует шейдер и проверяет обращение во время работы',
+					why: 'Верно: GPU-AV сообщила «Out of bounds access: 32 bytes read at buffer device address 0x6f94800».',
+				},
+				{
+					text: 'Обычная валидация, на вызове vkCmdDrawIndexed',
+					why: 'Обычная валидация видит только вызов API; адрес для неё — число внутри push-константы.',
+				},
+				{
+					text: 'Драйвер: он обрежет чтение по концу буфера и молча вернёт вместо записи 65-го экземпляра одни нули',
+					why: 'У физического указателя нет диапазона, по которому можно обрезать; robustness работает для дескрипторов.',
+				},
+				{
+					text: 'slangc, при компиляции',
+					why: 'Индекс — номер экземпляра, он известен только во время отрисовки.',
+				},
+			],
+			answer: 0,
+			ref: '#у-указателя-нет-размера',
+		},
+	]}
+/>

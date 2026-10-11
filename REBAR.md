@@ -59,6 +59,12 @@ snapshot; the memory labs and the gpu lesson explain both states and how to chec
 second snapshot (ReBAR on) and let the memory labs switch between the two measured profiles; until then the ON state is
 described qualitatively, never with invented numbers.
 
+Both states are presented as possible misconfigurations (`src/components/RebarCheck.astro`, 2026-10-11). ON-side
+pitfalls stated there: UEFI/CSM-off requirement breaks legacy (MBR) installs; NVIDIA enables ReBAR per application
+profile because some games regress (TechSpot measured regressions, e.g. Watch Dogs Legion -10% at 1080p:
+https://www.techspot.com/review/2234-nvidia-resizable-bar/), forcing it globally with profile tools can regress; in
+Vulkan code a large DEVICE_LOCAL|HOST_VISIBLE heap is uncached for CPU reads, so readbacks belong in HOST_CACHED memory.
+
 ## Undo
 
 Set `Re-Size BAR Support` back to Disabled (and `Above 4G Decoding` if wanted). If the machine does not boot after

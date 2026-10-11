@@ -131,7 +131,7 @@ Files per lab `<slug>`: model `src/lib/labs/<slug>.ts` (pure, no DOM), view `src
 | object-builder | ObjectGraph (`src/components/ObjectGraph*`, model `src/lib/objects.ts`) | devices/logical-device |
 | queue-sync | QueueSync | sync/fences-and-semaphores (EN + RU) |
 | graphics-pipeline | GraphicsPipeline | pipeline/graphics-pipeline (EN + RU) |
-| buffer-memory | BufferMemory | memory/memory-types (EN; RU lesson is a placeholder) |
+| buffer-memory | BufferMemory | memory/memory-types (EN + RU) |
 
 Widget texts: fill placeholders ONLY with `tfmt(lang, text, vars)` from `src/lib/text.ts` (never the engine `fmt`).
 Counts use ICU-style plural placeholders `{n|# очередь|# очереди|# очередей}` (ru: one/few/many, en: one/other, `#` =
@@ -402,7 +402,7 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
   --nearest --address clamp, mirror, border), 22 (default, --no-depth), 23 (default, --no-mips, --anisotropy), 24
   (--samples 1/2/4/8). Release, validation + sync on, 3 s, MAILBOX: 1900-2850 fps (not a benchmark). Logs: scratchpad
   m10/logs (session-local).
-- Module 8 review fixes, round 2 (2026-10-11, EN lessons only; RU memory pages are still placeholders):
+- Module 8 review fixes, round 2 (2026-10-11, EN lessons; the RU lessons written afterwards carry the same facts):
   - gpu-allocator experiment (scratch cargo project, deleted after; logs check*.log in the session scratchpad gpualloc/):
     gpu-allocator =0.28.0 (features std+vulkan) + `[patch.crates-io] ash = { git = ash-rs/ash, rev = f4c2ca3 }`.
     The patch WORKS for type unification (Cargo.lock has ONE ash, version `0.38.0+1.4.352` from git, which satisfies
@@ -451,8 +451,8 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
 - [ ] Screenshots of 14/15: NOT taken - on 2026-10-11 (module 8 session) the capture of the 14 window was white again (same as
   10-12). Retake `examples/screenshots/{14_vertex_buffer,15_staging}.png` when the desktop shows Vulkan windows.
 - [x] Module 8 EN lessons (2026-10-11): memory/{memory-types (embeds BufferMemory + RebarCheck, ObjectGraph build with
-  device-memory/buffer), vertex-and-index-buffers, staging-uploads, allocators}; RU pages are placeholders («Русская
-  версия урока готовится.»). Regions shown once: 13 all; 14 vertex/mesh/vertex-input/create-buffer/vertex-buffer/
+  device-memory/buffer), vertex-and-index-buffers, staging-uploads, allocators}; RU lessons written 2026-10-11 (same regions,
+  outputs, measurements, VUIDs; memory-types embeds BufferMemory, RebarCheck, ObjectGraph). Regions shown once: 13 all; 14 vertex/mesh/vertex-input/create-buffer/vertex-buffer/
   index-buffer/bind-and-draw (+ `<Snippet src="shaders/mesh.slang">`); 15 cli/mesh-bytes/staging-buffer/
   device-local-buffers/record-copy/copy-barrier/finish-upload/transfer-family/release-ownership/acquire-ownership/
   bar-write; 16 allocation-limit/cli/test-buffers/raw/allocator/sub-allocate. Not shown: 14/15 regions identical to
@@ -468,8 +468,11 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
   16: raw 127-150 us create / 316-368 us destroy per buffer, allocator 2.8-4.8 / 1.9-3.8 us. 14 vs 15 fps (Rust,
   2 s x3): 2903-2999 vs 2907-2936 (no measurable difference for 176 bytes). vulkaninfo 2026-10-11: type 2 "usable
   for" no image either; heap budgets quoted in memory-types. Heap 1 = exactly half of the 68630528000 bytes of RAM.
-- [ ] Module 8: independent review of the EN lessons (facts vs spec/runs, quizzes), then the RU lessons.
-  Round-2 fixes done 2026-10-11 (see State); the RU lessons must carry the same facts when written.
+- [x] Module 8 RU lessons (2026-10-11): ru/memory/{memory-types, vertex-and-index-buffers, staging-uploads,
+  allocators}, authored from the round-2 EN facts; lint, tests, astro check clean.
+- [ ] Module 8: independent review of the EN lessons (facts vs spec/runs, quizzes), then of the RU lessons.
+- [x] RebarCheck (EN+RU, 2026-10-11) presents ReBAR ON as a possible misconfiguration too (CSM/MBR boot, NVIDIA
+  per-app profiles and measured regressions, uncached BAR heap vs readbacks); sources in REBAR.md.
 - [x] Module 9 examples 17-20 (2026-10-11): fmt + clippy -D warnings, C++ /W4 clean (clean rebuild of all 20), run on
   the RTX 3080 Ti with VK_KHRONOS_VALIDATION_VALIDATE_SYNC=true: only the bandicam warning; stdout identical Rust vs C++
   without `[timing]`/`[addr]` lines (17; 18 default and --push-descriptor; 19; 20). New shaders transform/device_address/
@@ -480,7 +483,7 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
 - [ ] Module 9: independent reviews of 17-20 (code vs spec), then the EN lessons descriptors/{uniform-buffers,
   descriptor-sets, push-constants, buffer-device-address, bindless}; `sync:vuids` for the VUIDs named in 17-20 comments.
 - [x] Module 9 EN lessons (2026-10-11): module `descriptors` ("Descriptors and shader data") in course.json/course.ru.json;
-  RU pages are placeholders. Regions shown once: 17 mesh/uniform-struct/transform/reflect/check-layout/frame-resources/
+  RU pages written afterwards (next item). Regions shown once: 17 mesh/uniform-struct/transform/reflect/check-layout/frame-resources/
   uniform-buffers/update-uniforms (uniform-buffers, + Snippet transform.slang), 17 set-layout/pipeline-layout/
   descriptor-pool/allocate-sets/write-sets/bind-and-draw/cleanup (descriptor-sets, ObjectGraph build with pool/set),
   18 cli/limits/push-constant-range/push-constants/frame-resources/device-features/push-descriptor-layout/
@@ -495,6 +498,9 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
   Spec facts (vkspec 1.4.365): maxPushConstantsSize min 128 core, **256 for Vulkan 1.4**; maxUniformBufferRange 16384
   core / 65536 1.4; maxBoundDescriptorSets 4 / 7 (1.4); 1.4 requires pushDescriptor + scalarBlockLayout support, 1.3
   bufferDeviceAddress, 1.2 uniformBufferStandardLayout; descriptor indexing is NOT required by core 1.4 (Roadmap 2022 only).
+- [x] Module 9 RU lessons (2026-10-11): ru/descriptors/* authored (same regions, VUIDs, outputs, quiz facts as EN; RU term
+  labels buffer-device-address/subgroup/update-after-bind/partially-bound/non-uniform-indexing now the English terms).
+  [ ] Independent review of them.
 - [x] Module 10 examples 21-24 (2026-10-11): see State "examples 21-24"; CMake STEPS/WINDOW_STEPS and READMEs updated.
 - [ ] Screenshots of 21-24: NOT taken - the 21 window was white again in window and full-screen captures on 2026-10-11
   (same as 10-20). Retake `examples/screenshots/{21_texture,22_depth,23_mipmaps,24_msaa}.png` (23: one with and one with

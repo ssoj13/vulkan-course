@@ -48,6 +48,17 @@ const vramGiB = (gpu.memory.heaps[0]!.size / (1024 * MiB)).toFixed(1);
 				копирования. Пока окно 256 MiB, большие загрузки идут через staging; с ReBAR туда помещаются и крупные буферы.
 			</p>
 			<p>
+				Но и <b>включённый</b> ReBAR не гарантия порядка: ошибкой конфигурации может оказаться любое из двух состояний.
+				Для ReBAR нужна UEFI-загрузка с выключенным CSM, и система, установленная под legacy (MBR), после этого перестаёт
+				загружаться, пока диск не сконвертируют. NVIDIA включает ReBAR через профили приложений, потому что часть игр с
+				ним работает медленнее; обзоры такие просадки измеряли, а принудительное включение для всех программ
+				сторонними утилитами профилей может их вернуть. В собственном Vulkan-коде большая куча DEVICE_LOCAL |
+				HOST_VISIBLE — ловушка для наивного выбора типа памяти: для CPU эта память некэшируемая, поэтому то, что CPU
+				читает обратно (readback, копии на стороне CPU), должно лежать в HOST_CACHED-памяти, а не в BAR-куче только
+				потому, что это первый HOST_VISIBLE-тип. Отдаёт ли драйвер NVIDIA большую кучу любой Vulkan-программе, на машине
+				курса ещё не проверено.
+			</p>
+			<p>
 				Данные этих интерактивов — настоящий снимок машины курса <b>с выключенным ReBAR</b> (куча {barHeap}: {barMiB} MiB при{' '}
 				{vramGiB} GiB VRAM). С включённым ReBAR цифры другие: видимая CPU часть VRAM должна вырасти примерно до размера
 				всей VRAM — либо как большая куча {barHeap}, либо как HOST_VISIBLE-тип на другой куче; решает драйвер. Это
@@ -79,6 +90,16 @@ const vramGiB = (gpu.memory.heaps[0]!.size / (1024 * MiB)).toFixed(1);
 				What it changes for Vulkan: through that heap the CPU writes straight into VRAM (vkMapMemory and memcpy), with
 				no staging buffer and no copy. While the window is 256 MiB, large uploads go through staging; with ReBAR large
 				buffers fit there too.
+			</p>
+			<p>
+				ReBAR <b>on</b> is not automatically right either; both states can be a misconfiguration. Turning it on means
+				UEFI boot with CSM off, so a system installed for legacy (MBR) boot stops booting until it is converted. NVIDIA
+				enables ReBAR per application profile because some games run slower with it; reviews measured such regressions,
+				and forcing it on for every program with profile tools can bring them back. In your own Vulkan code a big
+				DEVICE_LOCAL | HOST_VISIBLE heap is a trap for naive type selection: that memory is uncached for the CPU, so
+				data the CPU reads back (readbacks, CPU-side copies) belongs in HOST_CACHED memory, not in the BAR heap just
+				because it is the first HOST_VISIBLE type. Whether NVIDIA's Vulkan driver exposes the large heap to every
+				program has not been checked on the course machine yet.
 			</p>
 			<p>
 				The data in these labs is a real snapshot of the course machine <b>with ReBAR off</b> (heap {barHeap}: {barMiB}{' '}

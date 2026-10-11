@@ -3,4 +3,349 @@ title: Push-константы и push-дескрипторы
 description: 'Два лёгких пути для данных кадра: байты прямо в командном буфере (push-константы, 256 байт гарантированы в Vulkan 1.4) или дескриптор в нём же (push-дескрипторы, ядро 1.4).'
 ---
 
-Русская версия урока готовится.
+import { Aside } from '@astrojs/starlight/components';
+import MindMap from 'course-kit/components/MindMap.astro';
+import Quiz from 'course-kit/components/Quiz.astro';
+import Step from '../../../../components/Step.astro';
+
+Шагу 17 понадобились layout набора, пул, два набора, два буфера, два постоянных отображения и вызов обновления — и всё
+ради 80 байт на кадр. Для текстур и больших данных эта машинерия окупается, но для одной матрицы её многовато. Нет ли
+дороги покороче? В Vulkan их две: записать в command buffer сами **байты** или записать туда **дескриптор** вместо
+набора. Что стоит каждая, что она экономит и где её пределы?
+
+## Место в курсе
+
+Третий урок модуля **«Дескрипторы»**. Данные те же, что в [уроке об uniform-буферах](lesson:uniform-buffers), тот же
+файл шейдера, тот же шестиугольник; меняется только дорога от CPU к шейдеру. Цепочки:
+
+`push constants: host struct → vkCmdPushConstants (bytes copied into the command buffer at record time) → push constant range in the pipeline layout → [[vk::push_constant]] block (std430)`
+
+`push descriptors: uniform buffer per frame → vkCmdPushDescriptorSet (descriptor copied into the command buffer) → set layout with PUSH_DESCRIPTOR → set 0, binding 0 in the shader`
+
+[Push-константы](term:push-constant) — небольшой блок байт, который хранится прямо в command buffer; объявляет его
+диапазон push-констант в [pipeline layout](term:vk-pipeline-layout). [Push-дескрипторы](term:push-descriptor) — это
+[дескрипторы](term:descriptor), которые хранятся в command buffer, а не в [descriptor set](term:vk-descriptor-set), для
+[layout набора](term:vk-descriptor-set-layout), созданного с `PUSH_DESCRIPTOR`. До этого: [наборы
+дескрипторов](lesson:descriptor-sets). Дальше: [buffer device address](lesson:buffer-device-address), где вместо
+дескриптора передаётся 8-байтовый указатель.
+
+## Три способа передать шейдеру одни и те же 80 байт
+
+Возьмём цифровой ассет в Houdini. Его параметры можно задать тремя способами: связать их с отдельной нодой параметров,
+которую читают многие ассеты (uniform-буфер за descriptor set); прямо в сети указать ассету на другую ноду параметров
+(push-дескриптор); или вбить значения прямо в сам ассет (push-константы). Значения одни и те же; различается, где они
+хранятся и сколько подготовки требует каждый путь.
+
+Шаг 18 умеет ходить двумя дорогами; третья, descriptor set, — это шаг 17:
+
+<Step file="18_push_constants" region="cli" />
+
+По умолчанию — push-константы; `--push-descriptor` выбирает push-дескрипторы.
+
+## Сколько помещается
+
+<Step file="18_push_constants" region="limits" />
+
+```text
+Limits: maxPushConstantsSize = 256 bytes (at least 128 everywhere), maxPushDescriptors = 32
+```
+
+- `maxPushConstantsSize` — размер всего блока push-констант, на все стадии вместе. Vulkan 1.0 гарантирует 128 байт —
+  отсюда старый совет «128 — переносимый бюджет». **Vulkan 1.4 поднял минимум до 256** (таблица обязательных лимитов в
+  спецификации: «128 (Vulkan Core)» и «256 (Vulkan 1.4)»); GPU курса сообщает ровно 256. Программа, требующая
+  устройство 1.4, как весь этот курс, может рассчитывать на 256; 128 важны только для устройств ниже 1.4. Строка самой
+  программы говорит «at least 128 everywhere» — это остаётся верным для любого устройства Vulkan.
+- `maxPushDescriptors` — сколько дескрипторов может держать один layout набора с push-дескрипторами: не меньше 32,
+  здесь ровно 32.
+
+Два `float4x4` — это 128 байт, так что матрица модели и матрица model-view-projection влезают даже в старый минимум, а в
+256 помещаются четыре матрицы. Всё, что больше, едет в буферах.
+
+## Дорога 1: push-константы
+
+### Диапазон объявляет pipeline layout
+
+<Step file="18_push_constants" region="push-constant-range" />
+
+Layout набора нет вовсе: в pipeline layout один `VkPushConstantRange` (стадия VERTEX, смещение 0, размер 80). Диапазон
+должен влезать в лимит (`VUID-VkPushConstantRange-size-00298`), и каждая стадия может встречаться не больше чем в одном
+диапазоне (`VUID-VkPipelineLayoutCreateInfo-pPushConstantRanges-00292`): вершинный и фрагментный шейдеры могут
+поделить блок на два диапазона или разделить один диапазон, указанный для обеих стадий.
+
+Со стороны шейдера `[[vk::push_constant]] ConstantBuffer<FrameUniforms> pushed` — блок в классе памяти
+`PushConstant`, и Slang раскладывает его по **std430** (структура в SPIR-V называется `FrameUniforms_std430`). Для
+`FrameUniforms` это даёт те же смещения, что std140 (0, 64, 76), поэтому одна структура хоста обслуживает оба шага;
+таблица в [уроке об uniform-буферах](lesson:uniform-buffers#правила-раскладки-где-лежит-каждый-байт) показывает
+структуры, где правила расходятся.
+
+### Записываем байты
+
+<Step file="18_push_constants" region="push-constants" />
+
+`vkCmdPushConstants` копирует 80 байт **в command buffer, в момент записи команд**. В этом весь фокус: буфера нет, а
+значит, нет и ничего, что GPU прочитает позже и что CPU мог бы переписать слишком рано. Посмотрите, чего в этом шаге
+больше нет:
+
+<Step file="18_push_constants" region="frame-resources" />
+
+На пути push-констант в слоте кадра нет ни одного буфера. Матрицу не охраняет никакой fence: у каждого command buffer
+своя копия. Остаются правила самой записи:
+
+- «When a command buffer begins recording, all push constant values are undefined»: в каждом command buffer записывайте
+  push-константы до первой отрисовки, которая их читает;
+- смещение и размер кратны 4 (`VUID-vkCmdPushConstants-offset-00368`, `VUID-vkCmdPushConstants-size-00369`), и каждый
+  записанный байт должен лежать в диапазоне layout для каждой названной стадии (`VUID-vkCmdPushConstants-offset-01795`);
+- запись инкрементальна: последующая запись байт 64..80 меняет только их, а отрисовка видит значения, записанные до
+  неё. Поэтому значения на объект получаются сами собой: push, draw, push, draw.
+- «Binding a pipeline with a layout that is not compatible with the push constant layout does not disturb the push
+  constant values», но в момент отрисовки layout привязанного пайплайна должен быть совместим с layout, через которые
+  значения записывали.
+
+Как их характеризует сама спецификация: «Push constants represent a high speed path to modify constant data in
+pipelines that is expected to outperform memory-backed resource updates.»
+
+## Дорога 2: push-дескрипторы
+
+Push-константы несут байты; для буфера или текстуры по-прежнему нужен дескриптор. Push-дескриптор — средний путь:
+ресурс остаётся в памяти, а его дескриптор записывается в command buffer, без пула и без набора.
+
+### Возможность ядра, которую надо включить
+
+<Step file="18_push_constants" region="device-features" />
+
+Push-дескрипторы были расширением `VK_KHR_push_descriptor` и вошли в ядро Vulkan 1.4 возможностью `pushDescriptor` в
+`VkPhysicalDeviceVulkan14Features`. Каждое устройство 1.4 обязано её поддерживать (она есть в списке возможностей,
+обязательных для 1.4), но поддерживаемая возможность выключена, пока программа её не включит:
+
+> `VUID-vkCmdPushDescriptorSet-None-10356`: If the VK_KHR_push_descriptor extension is not enabled, pushDescriptor must
+> be enabled
+
+Шаг 18 включает её только на пути `--push-descriptor`; push-константы существуют с Vulkan 1.0 и ничего не требуют.
+Разницу видно в выводе: «VkDevice created with VK_KHR_swapchain + feature pushDescriptor».
+
+### Layout набора получает флаг
+
+<Step file="18_push_constants" region="push-descriptor-layout" />
+
+Layout набора из шага 17 плюс `PUSH_DESCRIPTOR`. Наборы с таким layout никогда не выделяются, пула нет. С флагом
+приходят два правила:
+
+- не больше одного набора с push-дескрипторами на pipeline layout
+  (`VUID-VkPipelineLayoutCreateInfo-pSetLayouts-00293`), и номер набора в `vkCmdPushDescriptorSet` должен быть именно
+  его номером (`VUID-vkCmdPushDescriptorSet-set-00365`);
+- layout держит не больше `maxPushDescriptors` дескрипторов (`VUID-VkDescriptorSetLayoutCreateInfo-flags-00281`).
+
+### Записываем дескриптор
+
+<Step file="18_push_constants" region="push-descriptor" />
+
+Та же `VkWriteDescriptorSet`, что при обновлении в шаге 17, «except the `dstSet` member is ignored», переданная в
+`vkCmdPushDescriptorSet` вместе с pipeline layout и номером набора. Спецификация: «Push descriptors are a small bank of
+descriptors whose storage is internally managed by the command buffer rather than being written into a descriptor set
+and later bound to a command buffer.»
+
+Копируется **дескриптор**, а не данные. Сами 80 байт по-прежнему живут в uniform-буфере слота и пишутся через постоянное
+отображение после ожидания fence — в точности как в шаге 17. Значит, путь push-дескрипторов сохраняет буферы на слот и
+дисциплину fence, а выбрасывает пул, наборы и вызов обновления. Как и push-константы, push-дескрипторы в начале записи
+не определены. Записи инкрементальны: push перезаписывает только свои дескрипторы, остальные сохраняют значения для
+последующих отрисовок — пока набор не испортят (правила из [урока о наборах
+дескрипторов](lesson:descriptor-sets#2-pipeline-layout-перечисляет-layout-наборов-по-номерам)) или пока дескрипторы не
+запишут с другим layout набора; тогда «all push descriptors are undefined». В шаге 18 один binding, и он записывается
+каждый кадр, так что каждый push просто заменяет его.
+
+Ещё спецификация замечает: «Push descriptors do not use dynamic offsets. Instead, the corresponding non-dynamic
+descriptor types can be used and the offset member of `VkDescriptorBufferInfo` can be changed each time the descriptor
+is written». То есть один большой буфер со слотом на кадр или на объект и новое смещение в каждом push.
+
+## Три дороги рядом
+
+Шаг 18 сам печатает сравнение:
+
+<Step file="18_push_constants" region="compare" />
+
+```text
+Setup for the per-frame FrameUniforms:
+  descriptor sets (step 17): set layout + pool + 2 sets + 2 uniform buffers + vkUpdateDescriptorSets; per frame: write buffer, bind set
+  push descriptors:          set layout (PUSH_DESCRIPTOR) + 2 uniform buffers; per frame: write buffer, vkCmdPushDescriptorSet
+  push constants:            a push constant range in the pipeline layout; per frame: vkCmdPushConstants (80 bytes)
+```
+
+| | Наборы дескрипторов | Push-дескрипторы | Push-константы |
+|---|---|---|---|
+| Где живут данные | в буфере | в буфере | в command buffer |
+| Где живёт дескриптор | в наборе из пула | в command buffer | (его нет) |
+| Что создать | layout набора, пул, наборы, буферы | layout набора, буферы | диапазон в pipeline layout |
+| Предел размера | `maxUniformBufferRange` (здесь 65536) на буфер | то же на буфер; `maxPushDescriptors` (32) дескрипторов | `maxPushConstantsSize` (256) байт всего |
+| Может держать текстуры | да | да | нет (только байты) |
+| Правило времени жизни для CPU | буфер и набор не меняются, пока pending | буфер не меняется, пока pending | нет: копируется при записи |
+| Переиспользуется между command buffer | да, привязать тот же набор | нет, push в каждом | нет, push в каждом |
+| Версия Vulkan | 1.0 | ядро 1.4 (возможность `pushDescriptor`) | 1.0 |
+
+Как выбирать, если коротко: значения на отрисовку, которые помещаются, — в push-константы; несколько ресурсов на
+отрисовку (целевая текстура post-process прохода, временный буфер) — в push-дескрипторы; данные, общие для многих
+отрисовок и привязанные надолго, или большие таблицы ресурсов — в наборы ([bindless](lesson:bindless) доводит это до
+предела).
+
+<Aside type="note" title="Чего мы не измеряли">
+На машине курса все три дороги рисуют этот шестиугольник с одной скоростью (2300–2800 кадров в секунду в этих
+запусках, упор во всё остальное в кадре); одна отрисовка на кадр не может показать цену работы с дескрипторами.
+«High speed path» push-констант — ожидание спецификации, а не замер этого курса.
+</Aside>
+
+## Что печатает программа
+
+Шаг 18 с push-константами (Rust, release, `--seconds 2`; сборка на C++ печатает те же строки, кроме `[timing]`):
+
+```text
+Window: 800x600 pixels
+Path: push constants (--push-descriptor selects push descriptors)
+Found 1 GPU(s)
+GPU 0: NVIDIA GeForce RTX 3080 Ti
+
+Picked: NVIDIA GeForce RTX 3080 Ti
+Graphics + present family: 0
+Limits: maxPushConstantsSize = 256 bytes (at least 128 everywhere), maxPushDescriptors = 32
+VkDevice created with VK_KHR_swapchain
+Swapchain: 800x600 B8G8R8A8_SRGB, MAILBOX, 3 images
+
+SPIR-V: 2604 bytes (transform.spv), entry points vertexPush, fragmentMain
+Push constant range: stage VERTEX, offset 0, size 80
+Pipeline layout: no set layouts, 1 push constant range
+Graphics pipeline created (vertexPush reads the push constants)
+
+Mesh: regular hexagon, 7 vertices, 18 indices (step 14's buffers, memory type 3)
+```
+
+(Сокращено: дальше идут сравнение выше, «2 frames in flight» и строки анимации и окна из шага 17;
+`[timing] 4826 frames in 2.0 s, 2406 fps`.)
+
+С `--push-descriptor` отличаются такие строки:
+
+```text
+Path: push descriptors (--push-descriptor)
+VkDevice created with VK_KHR_swapchain + feature pushDescriptor
+SPIR-V: 2604 bytes (transform.spv), entry points vertexUniform, fragmentMain
+Descriptor set layout: binding 0 = UNIFORM_BUFFER x 1, stage VERTEX, flags PUSH_DESCRIPTOR
+Pipeline layout: 1 set layout (set 0), no push constants
+Graphics pipeline created (vertexUniform reads set 0, binding 0)
+Uniform buffers: 2 x 80 bytes, UNIFORM_BUFFER, memory type 3 (HOST_VISIBLE | HOST_COHERENT), persistently mapped
+```
+
+Оба пути проходят валидацию с включённой синхронизационной валидацией чисто (только знакомое предупреждение
+`VK_LAYER_bandicam_helper`).
+
+## Карта урока
+
+<MindMap />
+
+## Что под капотом
+
+- **Push-константы**: обычно драйвер кладёт байты в константную память на кристалле (регистры или небольшую
+  константную область) в момент отрисовки, перенося их в потоке команд, который он строит из command buffer. Так
+  обычно и объясняют, почему они быстрые и почему места мало; спецификация же говорит только, что это «a high speed path
+  ... that is expected to outperform memory-backed resource updates». Если на железе места меньше, чем блок, драйвер
+  может держать часть в памяти; API эту разницу прячет.
+- **Push-дескрипторы** превращаются в байты дескрипторов, которые драйвер пишет в память, управляемую им для каждого
+  command buffer («small bank» из спецификации), а binding указывает шейдеру на них — так же, как набор. Экономия — на
+  стороне приложения: нет пула, который надо рассчитать, и нет времени жизни набора, за которым надо следить.
+- **Почему только один набор с push-дескрипторами на layout?** Спецификация даёт правило без объяснения. Она говорит, что
+  «there is a separate set of push descriptor bindings for each pipeline type», — один банк на точку привязки; единственный
+  номер набора на layout держит этот банк в одном фиксированном слоте layout. Вероятно, причина в этом (это наше
+  прочтение, не слова спецификации).
+
+<Quiz
+	questions={[
+		{
+			q: 'На пути push-констант в шаге 18 нет ни uniform-буфера на слот, ни записи матрицы под охраной fence. Почему это безопасно при двух кадрах в полёте?',
+			options: [
+				{
+					text: 'vkCmdPushConstants копирует байты в command buffer в момент записи',
+					why: 'Верно: у каждого command buffer своя копия, так что CPU может менять свою структуру сразу после вызова.',
+				},
+				{
+					text: 'Push-константы лежат в памяти HOST_COHERENT, которую GPU читает при отправке',
+					why: 'Объекта памяти нет вовсе; значения — часть записанных команд.',
+				},
+				{
+					text: 'Вершинный шейдер успевает закончить до того, как CPU начнёт следующий кадр, так что ничто не перекрывается',
+					why: 'С двумя кадрами в полёте перекрытие есть, в нём весь смысл кадров в полёте.',
+				},
+				{
+					text: 'Это небезопасно, программе просто везёт',
+					why: 'Спецификация это гарантирует: pValues потребляет сам вызов.',
+				},
+			],
+			answer: 0,
+			ref: '#записываем-байты',
+		},
+		{
+			q: 'Программа требует устройство Vulkan 1.4. На сколько байт push-констант она может рассчитывать без проверки?',
+			options: [
+				{
+					text: '128 — переносимый бюджет',
+					why: '128 — минимум Vulkan 1.0. Vulkan 1.4 поднял обязательный минимум.',
+				},
+				{
+					text: '256 — минимум, которого требует Vulkan 1.4',
+					why: 'Верно: в таблице обязательных лимитов для Vulkan 1.4 стоит 256; GPU курса сообщает ровно столько.',
+				},
+				{
+					text: '65536, как maxUniformBufferRange',
+					why: 'Это предел одного дескриптора uniform-буфера, а не блока push-констант.',
+				},
+				{
+					text: 'Ни на сколько: на десктопных GPU maxPushConstantsSize бывает 0, поэтому проверять его надо всегда',
+					why: 'У любого устройства Vulkan есть минимум 128 байт, у устройств 1.4 — минимум 256.',
+				},
+			],
+			answer: 1,
+			ref: '#сколько-помещается',
+		},
+		{
+			q: 'Шаг 18 создаёт устройство 1.4, не включив pushDescriptor, и вызывает vkCmdPushDescriptorSet. Что происходит?',
+			options: [
+				{
+					text: 'Ничего страшного: push-дескрипторы в ядре 1.4, значит, включены всегда',
+					why: '«В ядре» значит, что каждое устройство 1.4 поддерживает возможность, а не что она включена. Включать её нужно при создании устройства.',
+				},
+				{
+					text: 'vkCreateDevice вернёт ошибку',
+					why: 'Устройство создастся; ошибка — в последующем использовании.',
+				},
+				{
+					text: 'Нарушено VUID-vkCmdPushDescriptorSet-None-10356: возможность должна быть включена',
+					why: 'Верно: без расширения вызывать его можно, только включив возможность pushDescriptor.',
+				},
+				{
+					text: 'Вызов молча откатится к обычному набору дескрипторов из скрытого пула, которым управляет драйвер',
+					why: 'Таких откатов в Vulkan нет; использовать API без его возможности — недопустимое использование.',
+				},
+			],
+			answer: 2,
+			ref: '#возможность-ядра-которую-надо-включить',
+		},
+		{
+			q: 'Что на пути --push-descriptor записывается в command buffer, а что по-прежнему нуждается в fence слота?',
+			options: [
+				{
+					text: 'Записываются 80 байт; fence не нужен ничему',
+					why: 'Это описание push-констант. Push-дескриптор записывает только ссылку на буфер.',
+				},
+				{
+					text: 'Записывается набор дескрипторов; fence нужен пулу',
+					why: 'На этом пути нет ни набора, ни пула; дескриптор лежит в command buffer.',
+				},
+				{
+					text: 'Ничего не записывается; драйвер читает буфер при отправке',
+					why: 'vkCmdPushDescriptorSet записывает дескриптор в command buffer.',
+				},
+				{
+					text: 'Записывается дескриптор; uniform-буфер, на который он указывает, по-прежнему охраняет fence',
+					why: 'Верно: данные остаются в буфере слота и пишутся после ожидания fence, как в шаге 17.',
+				},
+			],
+			answer: 3,
+			ref: '#записываем-дескриптор',
+		},
+	]}
+/>

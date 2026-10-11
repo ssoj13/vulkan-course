@@ -554,8 +554,8 @@
       "def": "Дескрипторы, которые vkCmdPushDescriptorSet записывает в командный буфер вместо выделенного набора; в ядре Vulkan 1.4 за возможностью pushDescriptor, не больше одного такого набора на pipeline layout."
     },
     "buffer-device-address": {
-      "label": "Адрес буфера на GPU",
-      "aka": ["buffer device address", "bufferDeviceAddress", "vkGetBufferDeviceAddress", "VkDeviceAddress", "SHADER_DEVICE_ADDRESS", "BDA"],
+      "label": "Buffer device address",
+      "aka": ["адрес буфера на GPU", "bufferDeviceAddress", "vkGetBufferDeviceAddress", "VkDeviceAddress", "SHADER_DEVICE_ADDRESS", "BDA"],
       "def": "64-битный виртуальный адрес буфера на GPU, полученный vkGetBufferDeviceAddress; шейдер разыменовывает его как указатель. Нужны возможность, usage SHADER_DEVICE_ADDRESS и память, выделенная с DEVICE_ADDRESS."
     },
     "physical-storage-buffer": {
@@ -589,13 +589,13 @@
       "def": "Флаг привязки: descriptorCount в layout — только верхняя граница, а настоящую длину каждый набор получает при выделении; разрешён только у привязки с наибольшим номером."
     },
     "partially-bound": {
-      "label": "Частично заполненная привязка",
-      "aka": ["partially bound", "PARTIALLY_BOUND", "descriptorBindingPartiallyBound", "dynamically used"],
+      "label": "Partially bound",
+      "aka": ["частично заполненная привязка", "PARTIALLY_BOUND", "descriptorBindingPartiallyBound", "dynamically used"],
       "def": "Флаг привязки: дескрипторы, к которым ни один вызов шейдера на деле не обращается (не используются динамически), можно не записывать; без него должен быть допустим каждый статически используемый дескриптор."
     },
     "update-after-bind": {
-      "label": "Обновление после привязки",
-      "aka": ["update after bind", "UPDATE_AFTER_BIND", "UPDATE_UNUSED_WHILE_PENDING", "UPDATE_AFTER_BIND_POOL"],
+      "label": "Update-after-bind",
+      "aka": ["обновление после привязки", "UPDATE_AFTER_BIND", "UPDATE_UNUSED_WHILE_PENDING", "UPDATE_AFTER_BIND_POOL"],
       "def": "Флаги привязки, ослабляющие правило «набор нельзя менять»: UPDATE_AFTER_BIND — между привязкой и отправкой (GPU увидит новые дескрипторы), UPDATE_UNUSED_WHILE_PENDING — для элементов, которые ожидающий выполнения командный буфер не использует."
     },
     "dynamically-uniform": {
@@ -604,13 +604,13 @@
       "def": "Значение, одинаковое для всех вызовов группы вызовов, а для вершинного шейдера это все вызовы одной команды отрисовки; номер экземпляра таким не является."
     },
     "non-uniform-indexing": {
-      "label": "Неоднородная индексация",
-      "aka": ["non-uniform indexing", "NonUniform", "NonUniformResourceIndex", "nonuniformEXT", "StorageBufferArrayNonUniformIndexing"],
+      "label": "Non-uniform indexing",
+      "aka": ["неоднородная индексация", "NonUniform", "NonUniformResourceIndex", "nonuniformEXT", "StorageBufferArrayNonUniformIndexing"],
       "def": "Индексация массива дескрипторов значением, которое различается между вызовами шейдера: нужны возможность и capability SPIR-V, а декорация NonUniform — на самом операнде обращения."
     },
     "subgroup": {
-      "label": "Подгруппа",
-      "aka": ["subgroup", "warp", "wave", "wavefront", "subgroupSize", "варп"],
+      "label": "Subgroup",
+      "aka": ["подгруппа", "warp", "wave", "wavefront", "subgroupSize", "варп"],
       "def": "Группа вызовов шейдера, которую GPU планирует вместе на одном шейдерном ядре и которая умеет быстро обмениваться данными и синхронизироваться: 32 на GPU курса (warp у NVIDIA, wave у AMD). Lockstep Vulkan не обещает (начиная с Volta у NVIDIA потоки планируются независимо); общие для всей подгруппы значения железо может держать в скалярных регистрах."
     }
   },

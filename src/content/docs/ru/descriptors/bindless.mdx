@@ -3,4 +3,462 @@ title: Bindless-дескрипторы
 description: 'Один набор с большим массивом дескрипторов, привязанный один раз и индексируемый в шейдере: descriptor indexing, четыре флага привязки, обновление набора во время кадров в полёте и неоднородная индексация.'
 ---
 
-Русская версия урока готовится.
+import { Aside } from '@astrojs/starlight/components';
+import MindMap from 'course-kit/components/MindMap.astro';
+import Quiz from 'course-kit/components/Quiz.astro';
+import Snippet from 'course-kit/components/Snippet.astro';
+import Step from '../../../../components/Step.astro';
+
+В сцене тысячи объектов, у каждого свои данные и текстуры. С наборами из [урока о наборах
+дескрипторов](lesson:descriptor-sets) нарисовать их значит тысячи раз за кадр повторить «привязать набор объекта,
+нарисовать, привязать следующий, нарисовать». А что, если один набор держит дескрипторы **всего**, привязывается один
+раз, а каждый вызов шейдера сам выбирает свой элемент по индексу? Именно это рендереры называют bindless. Что для этого
+должен разрешить API (огромные наборы, наполовину пустые наборы, наборы, которые меняются, пока ими пользуются кадры), и
+что должен сказать шейдер, когда соседние вызовы выбирают разные элементы?
+
+## Место в курсе
+
+Последний урок модуля **«Дескрипторы»**. Слои: возможности устройства (descriptor indexing), флаги layout набора и
+пула (API), правила обновления во времени (хост против command buffer в состоянии pending) и правила однородности в
+шейдере — вплоть до того, как GPU выполняет одну инструкцию для целого subgroup. Цепочка:
+
+`descriptor indexing features → set layout: binding 0 = STORAGE_BUFFER x 4096 + binding flags (VARIABLE_DESCRIPTOR_COUNT | PARTIALLY_BOUND | UPDATE_AFTER_BIND | UPDATE_UNUSED_WHILE_PENDING) → UPDATE_AFTER_BIND pool → one set of 256 → writes 0..62, later 63 → bind once → one draw → objects[NonUniformResourceIndex(instance)] → NonUniform decoration + StorageBufferArrayNonUniformIndexing capability`
+
+[Bindless](term:bindless) — устройство рендерера, построенное на [descriptor indexing](term:descriptor-indexing): один
+[набор дескрипторов](term:vk-descriptor-set) с большим массивом дескрипторов, здесь [storage-буферов](term:storage-buffer).
+Его детали: [переменное число дескрипторов](term:variable-descriptor-count), [partially bound](term:partially-bound)
+массивы, [update-after-bind](term:update-after-bind), а в шейдере — [non-uniform indexing](term:non-uniform-indexing)
+(неоднородная индексация). Она нужна потому, что индекс, который не является [динамически
+однородным](term:dynamically-uniform), может различаться внутри одного [subgroup](term:subgroup). До этого: [наборы
+дескрипторов](lesson:descriptor-sets), [push-константы](lesson:push-constants), [buffer device
+address](lesson:buffer-device-address) (другой способ достать много буферов). Дальше: текстуры в таких массивах
+(модуль 10) и compute.
+
+## Одна таблица вместо тысячи привязок
+
+UDIM — знакомая версия этой идеи: вместо того чтобы назначать каждому патчу свою текстуру, меш получает один материал,
+который читает целое семейство тайлов, а тайл выбирает UV-координата. Bindless делает то же со всеми ресурсами:
+рендерер держит одну таблицу всех буферов и текстур, привязывает её один раз, а каждая отрисовка или каждый экземпляр
+несёт только **индекс** в ней.
+
+Шаг 20 снова рисует 64 шестиугольника шага 19, но теперь 32-байтовая запись каждого экземпляра лежит в **собственном**
+буфере, как будто каждый объект владеет своими данными. Один набор держит массив дескрипторов storage-буферов; экземпляр
+`i` читает `objects[i]`:
+
+<Snippet src="shaders/bindless.slang" />
+
+`StructuredBuffer<Instance> objects[]` — массив [storage-буферов](term:storage-buffer) без размера (в SPIR-V
+`OpTypeRuntimeArray`, capability `RuntimeDescriptorArray`). Storage-буфер (SSBO) — буферный ресурс общего назначения:
+раскладка std430, большой размер (`maxStorageBufferRange` не меньше 2^27 байт), и шейдеры могут в него писать, если он
+не объявлен только для чтения. Здесь его только читают, по одной записи на буфер.
+
+<Step file="20_bindless" region="sizes" />
+
+Три размера, и урок в основном о том, зачем их три: ёмкость layout (4096), длина единственного реально выделенного
+набора (256) и сколько элементов записано (63 на старте, 64 начиная с кадра 120).
+
+## Возможности
+
+<Step file="20_bindless" region="device-features" />
+
+Всё это — возможности Vulkan 1.2 (они пришли из `VK_EXT_descriptor_indexing`):
+
+| Возможность | Что разрешает |
+|---|---|
+| `runtimeDescriptorArray` | `objects[]` без размера в шейдере: без неё «descriptors must not be declared in runtime arrays» |
+| `shaderStorageBufferArrayNonUniformIndexing` | индексировать массив storage-буферов «by non-uniform integer expressions» и объявлять соответствующую capability SPIR-V |
+| `descriptorBindingPartiallyBound` | флаг привязки `PARTIALLY_BOUND` |
+| `descriptorBindingVariableDescriptorCount` | флаг привязки `VARIABLE_DESCRIPTOR_COUNT` |
+| `descriptorBindingStorageBufferUpdateAfterBind` | `UPDATE_AFTER_BIND` у привязки storage-буфера (`VUID-VkDescriptorSetLayoutBindingFlagsCreateInfo-descriptorBindingStorageBufferUpdateAfterBind-03008`) |
+| `descriptorBindingUpdateUnusedWhilePending` | флаг привязки `UPDATE_UNUSED_WHILE_PENDING` |
+
+В отличие от push-дескрипторов и buffer device address, descriptor indexing **не** входит в список возможностей,
+обязательных для каждого устройства Vulkan 1.4. Его требует профиль Vulkan Roadmap 2022, который «is intended to be
+supported by newer mid-to-high-end devices shipping in 2022 or shortly thereafter», и GPU курса поддерживает всё
+перечисленное. Программа, нацеленная на старые или слабые устройства, проверяет эти возможности, прежде чем на них
+полагаться.
+
+## Два семейства лимитов
+
+<Step file="20_bindless" region="limits" />
+
+```text
+Descriptor limits for storage buffers:
+  maxPerStageDescriptorStorageBuffers                = 1048576 (only layouts without UPDATE_AFTER_BIND_POOL)
+  maxDescriptorSetStorageBuffers                     = 1048576
+  maxPerStageDescriptorUpdateAfterBindStorageBuffers = 1048576 (all sets, incl. UPDATE_AFTER_BIND)
+  maxDescriptorSetUpdateAfterBindStorageBuffers      = 1048576
+  maxPerStageUpdateAfterBindResources                = 4294967295 (all resource types)
+  maxUpdateAfterBindDescriptorsInAllPools            = 4294967295
+  shaderStorageBufferArrayNonUniformIndexingNative   = true
+This program: layout capacity 4096, one set of 256, 64 buffers written
+```
+
+Семейств два, и считают они разное. Классические лимиты учитывают **только** дескрипторы в layout, созданных **без**
+`UPDATE_AFTER_BIND_POOL`; минимум спецификации для `maxPerStageDescriptorStorageBuffers` — всего 4 (30 в Roadmap 2022,
+200 в Roadmap 2026). Семейство `...UpdateAfterBind...` «similar to» классическому, «but counts descriptors from
+descriptor sets created with or without» этим флагом: оно ограничивает **все** layout pipeline layout вместе, и его
+обязательный минимум — 500000 на устройствах, поддерживающих update-after-bind. Значит, layout с этим флагом
+проверяется только по второму семейству. На NVIDIA GPU курса оба семейства — 1048576; на другом железе спецификация
+разрешает классическим числам быть намного меньше, и это одна из практических причин, по которым bindless-layout ставят
+update-after-bind, даже если после привязки ничего не обновляют. Программа проверяет свои 4096 по наименьшему из трёх
+применимых лимитов, а 256 пула — по `maxUpdateAfterBindDescriptorsInAllPools` (для него спецификация не даёт правила
+valid usage, только «pool creation may fail» при превышении, так что проверка — наша).
+
+<Aside type="note" title="Валидация меняет числа">
+Под GPU-assisted validation та же строка напечатала `maxUpdateAfterBindDescriptorsInAllPools = 4194304`: GPU-AV
+снижает лимит для собственного учёта и прямо об этом говорит («Setting VkPhysicalDeviceVulkan12Properties::maxUpdateAfterBindDescriptorsInAllPools
+to 4194304»). Лимиты, прочитанные под слоем, — это лимиты слоя.
+</Aside>
+
+## Layout набора: четыре флага привязки
+
+<Step file="20_bindless" region="set-layout" />
+
+Флаги идут в `VkDescriptorSetLayoutBindingFlagsCreateInfo`, прицепленную к create info layout, по одной записи на
+binding. Каждый флаг ослабляет одно из правил [урока о наборах дескрипторов](lesson:descriptor-sets), и определения
+спецификации настолько точны, что их стоит процитировать:
+
+- **`VARIABLE_DESCRIPTOR_COUNT`**: «this is a variable-sized descriptor binding whose size will be specified when a
+  descriptor set is allocated using this layout. The value of descriptorCount is treated as an upper bound on the size
+  of the binding.» Такой флаг может быть только у binding с наибольшим номером
+  (`VUID-VkDescriptorSetLayoutBindingFlagsCreateInfo-pBindingFlags-03004`), а в лимиты всё равно засчитывается полная
+  верхняя граница.
+- **`PARTIALLY_BOUND`**: «descriptors in this binding that are not dynamically used need not contain valid descriptors
+  at the time the descriptors are consumed. A descriptor is dynamically used if any shader invocation executes an
+  instruction that performs any memory access using the descriptor.» Без него каждый дескриптор, который шейдер
+  использует *статически*, должен быть допустимым, а для массива с индексом, известным только во время работы, это
+  каждый элемент.
+- **`UPDATE_AFTER_BIND`**: «if descriptors in this binding are updated between when the descriptor set is bound in a
+  command buffer and when that command buffer is submitted to a queue, then the submission will use the most recently
+  set descriptors for this binding and the updates do not invalidate the command buffer.» Layout с таким binding
+  требует `UPDATE_AFTER_BIND_POOL` (`VUID-VkDescriptorSetLayoutCreateInfo-flags-03000`), а его наборы выделяются из
+  пулов, созданных с `UPDATE_AFTER_BIND`.
+- **`UPDATE_UNUSED_WHILE_PENDING`**: «descriptors in this binding can be updated after a command buffer has bound this
+  descriptor set, or while a command buffer that uses this descriptor set is pending execution, as long as the
+  descriptors that are updated are not used by those command buffers.» Вместе с `PARTIALLY_BOUND` «not used» значит «не
+  используются *динамически*», без него — «не используются *статически*».
+
+Прочтите два последних флага рядом: `UPDATE_AFTER_BIND` покрывает окно между **привязкой и отправкой**, и GPU потом видит
+новые дескрипторы; `UPDATE_UNUSED_WHILE_PENDING` покрывает command buffer в состоянии **pending** — для элементов,
+которыми они не пользуются. Спецификация проговаривает разницу в примечании: второй флаг «is a weaker requirement since
+it is only about descriptors that are not used, whereas `VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT` requires the
+implementation to observe updates to descriptors that are used.»
+
+## Пул и единственный набор
+
+<Step file="20_bindless" region="pool-and-set" />
+
+Пул создан с `UPDATE_AFTER_BIND` и рассчитан на то, что из него выделяется, — 256 дескрипторов storage-буферов, а не на
+4096 из layout. Настоящая длина набора передаётся при выделении в `VkDescriptorSetVariableDescriptorCountAllocateInfo`.
+Так один layout обслуживает наборы разной длины, и пулу не нужно резервировать худший случай для каждого.
+
+## Заполняем массив
+
+<Step file="20_bindless" region="object-buffers" />
+
+64 буфера по 32 байта, по одной записи в каждом. В настоящем рендерере 64 отдельных выделения памяти были бы
+расточительством (см. [аллокаторы](lesson:allocators)); здесь они изображают объекты, данные которых создаются и
+уничтожаются независимо.
+
+<Step file="20_bindless" region="write-descriptors" />
+
+Одна `VkWriteDescriptorSet` может заполнить подряд идущие элементы массива: `dstArrayElement` — первый из них, а число
+buffer info — количество. Диапазон — `VK_WHOLE_SIZE`, весь буфер.
+
+<Step file="20_bindless" region="initial-writes" />
+
+Элементы 0..62 записываются до первого кадра; элементы 63..255 остаются неопределёнными. Это законно только благодаря
+`PARTIALLY_BOUND`, и только пока ни один вызов к ним на деле не обращается: первые 120 кадров отрисовка читает индексы
+0..62.
+
+### Что на практике значит «не должен использоваться динамически»
+
+Однажды курс проверил обратную сторону — негативным тестом (2026-10-11, временная правка, потом откаченная): нарисовать
+на один экземпляр больше, чем записано элементов, чтобы какой-то вызов прочитал незаписанный элемент 63. Тот запуск не
+дал ни неправильной картинки, ни сообщения валидации — он потерял устройство:
+
+```text
+device_wait_idle failed: The logical device has been lost. See <https://registry.khronos.org/vulkan/specs/latest/html/vkspec.html#devsandqueues-lost-device>
+Error: ERROR_DEVICE_LOST
+```
+
+а последней строкой программы была `[timing] 2 frames in 4.4 s, 0 fps`. В этом запуске была включена GPU-assisted
+validation, и GPU-AV до потери устройства ничего об этом обращении не напечатала. Считайте это одним наблюдением на одной
+машине, а не ожидаемым поведением: чтение неопределённого дескриптора — неопределённое поведение, и на другом драйвере
+оно может вернуть мусор, нули или случайно сработать. И это не доказывает, что GPU-AV никогда не ловит такое чтение: в
+этом запуске она его не поймала.
+
+## Подгружаем элемент в живой набор
+
+<Step file="20_bindless" region="stream-in" />
+
+На кадре 120 программа записывает элемент 63, пока набор привязан в command buffer другого слота кадра, который, возможно,
+ещё ждёт выполнения на GPU. Законным это делают два флага — для двух разных command buffer:
+
+- command buffer **другого** слота в состоянии pending и рисует 63 экземпляра, то есть элемент 63 никогда не
+  использует: обновление разрешает `UPDATE_UNUSED_WHILE_PENDING` («not used by those command buffers»);
+- command buffer **этого** слота перезаписывается после обновления и рисует 64 экземпляра, так что его отрисовка читает
+  новый элемент. Он не в состоянии pending (его fence дождались), поэтому видит дескриптор, как любое обновление до
+  записи команд.
+
+Вот почему хватает одного набора, а не набора на каждый кадр в полёте: данные в каждом буфере никогда не меняются, а
+дескрипторы меняются только в тех элементах, которыми никто не пользуется.
+
+<Aside type="caution" title="Ловушка: без нужного флага валидация молчит">
+`VUID-vkUpdateDescriptorSets-None-03047` запрещает обновлять набор, которым пользуется command buffer в состоянии
+pending, для binding, «created without the `VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT` or
+`VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT` bits set». Правилу удовлетворяет любой из двух флагов. Когда
+шаг 20 попробовали с одним `UPDATE_AFTER_BIND`, обновление на кадре 120 не вызвало ни одного сообщения валидации. Но по
+определениям выше обновление, пока command buffer в состоянии **pending**, покрывает только
+`UPDATE_UNUSED_WHILE_PENDING`; `UPDATE_AFTER_BIND` говорит о времени между привязкой и отправкой. Раздел спецификации
+о привязке наборов говорит это прямо: для binding с `UPDATE_AFTER_BIND` «the contents may be consumed when the command
+buffer is submitted to a queue, or during shader execution of the resulting draws and dispatches, or any time in
+between. Thus, the contents of a descriptor set binding must not be altered (overwritten by an update command, or freed)
+between the first point in time that it may be consumed, and when the command completes executing on the queue.» Шаг 20
+ставит флаг из-за определений, а не из-за сообщения. Молчание слоя валидации — не доказательство правильности.
+</Aside>
+
+## Одна привязка, одна отрисовка
+
+<Step file="20_bindless" region="bind-and-draw" />
+
+Набор привязывается один раз на command buffer, push-константы несут время и соотношение сторон, и одна отрисовка
+покрывает все экземпляры. Рендерер с десятью тысячами объектов сохраняет ту же форму: данные объекта — это индекс
+(номер экземпляра, push-константа или поле, прочитанное из другого буфера), а не новая привязка.
+
+## Non-uniform indexing
+
+Теперь тонкая часть шейдера. В вершинном шейдере вызовы одной отрисовки образуют то, что Vulkan называет **invocation
+group** («any shader invocations executed as the result of a single command such as ... `vkCmdDraw` form a command
+scope instance», а для шейдеров без workgroup это и есть invocation group). Значение [динамически
+однородно](term:dynamically-uniform) (dynamically uniform), если оно одинаково для всех вызовов этой группы. `instance`
+таким не является: одна отрисовка выполняет экземпляры 0..63, и вершины разных экземпляров могут выполняться бок о бок в
+одном [subgroup](term:subgroup) (на этом GPU это варп из 32 лейнов).
+
+Для массива storage-буферов спецификация различает два уровня разрешения: динамически однородному индексу нужна
+`shaderStorageBufferArrayDynamicIndexing`, **неоднородному** — `shaderStorageBufferArrayNonUniformIndexing` и
+capability SPIR-V `StorageBufferArrayNonUniformIndexing`. А само обращение должно быть помечено:
+
+- `VUID-RuntimeSpirv-StorageBufferArrayNonUniformIndexing-10136`: если capability не объявлена, «the storage buffer
+  through which that memory is accessed must be dynamically uniform within the invocation group or subgroup»;
+- `VUID-RuntimeSpirv-subgroupSize-10149`: если ресурс не однороден ни в invocation group, ни в subgroup, «the operand
+  corresponding to that resource (e.g. the pointer or sampled image operand) must be decorated with NonUniform».
+
+Второе правило точно говорит, **куда** ставится декорация: на операнд инструкции, обращающейся к памяти, — на указатель,
+которым пользуется загрузка, а не просто на индекс. В Slang пометка — `NonUniformResourceIndex(index)` (в GLSL —
+`nonuniformEXT`), и компилятор должен донести её до каждого указателя, выведенного из этого индекса.
+
+### Почему на NVIDIA работает, а на другом железе ломается
+
+GPU курса сообщает `shaderStorageBufferArrayNonUniformIndexingNative = true`. Обратный случай спецификация определяет
+так: «If this is `VK_FALSE`, then a single dynamic instance of an instruction that non-uniformly indexes an array of
+storage buffers may execute multiple times in order to access all the descriptors.» Иначе говоря, железо без native-поддержки
+обрабатывает по одному дескриптору за проход: компилятор строит цикл, который каждый раз берёт индекс одного лейна,
+обслуживает все лейны с тем же индексом и повторяет, пока не обслужит всех. Декорация NonUniform и говорит компилятору
+построить этот цикл. Без неё такой компилятор считает индекс одинаковым для всех лейнов и может взять дескриптор одного
+лейна на весь subgroup: каждый шестиугольник варпа прочитал бы одну и ту же запись. Так работают GPU, держащие
+дескрипторы в скалярных (общих на subgroup) регистрах, — известный пример AMD; GPU NVIDIA — native, и пропущенная
+декорация на них никак не проявляется. Именно поэтому такие ошибки живут на одном вендоре и вылезают на другом, и
+поэтому курс не может доказать правильность декорации, просто запустив пример на своём GPU.
+
+### Ошибка компилятора и что курс с ней делает
+
+Когда писался шаг 20, у SPIR-V, который Slang 2026.1 (версия из SDK 1.4.341.1) выдавал для `bindless.slang`, нашлись две
+проблемы — их нашли, читая дизассемблер против двух правил выше:
+
+1. **Нет capability.** slangc не объявлял `StorageBufferArrayNonUniformIndexing`, так что по VUID 10136 неоднородный
+   индекс был неопределённым поведением. Всё работало только потому, что NVIDIA — native. В Slang 2026.1 для неё нет
+   имени capability (`slangc -h capability` перечисляет только `spvShaderNonUniform`), поэтому `bindless.slang` объявляет
+   её встроенным SPIR-V: `spirv_asm { OpCapability StorageBufferArrayNonUniformIndexing; }`, а slangc переносит её в
+   список capability модуля.
+2. **Декорация не на том указателе.** slangc декорировал access chain, выбирающий дескриптор, но загрузка читает через
+   второй access chain, выведенный из первого (в элемент 0 буфера), а тот оставался без декорации. VUID 10149 требует
+   декорацию на указателе, которым пользуется загрузка, и некоторые компиляторы (например, в Mesa) не идут по цепочке
+   назад, чтобы её найти. С `-O2` Slang вообще выбрасывал декорацию.
+
+Исправление в апстриме (shader-slang/slang#10525, влито в 2026-06) проверили на Slang 2026.19: capability он теперь
+объявляет сам, но его загрузки по-прежнему идут через недекорированные выведенные цепочки. Поэтому курс исправляет
+результат, а не исходник: `bun run sync:shaders` прогоняет небольшой проход (`decorateNonUniform` в
+`scripts/sync-shaders.ts`), который добавляет `NonUniform` каждому access chain, копии и загрузке, чей указатель выведен
+из NonUniform-указателя, — так, как это делает glslang. Тесты закрепляют точный список capability каждого шейдера и
+падают, если у выведенного указателя нет декорации. Результат в закоммиченном SPIR-V:
+
+```text
+OpCapability StorageBufferArrayNonUniformIndexing
+OpCapability RuntimeDescriptorArray
+OpCapability ShaderNonUniform
+OpDecorate %129 NonUniform
+OpDecorate %130 NonUniform
+OpDecorate %131 NonUniform
+%129 = OpAccessChain %_ptr_StorageBuffer_StructuredBuffer %objects %23
+%130 = OpAccessChain %_ptr_StorageBuffer_Instance_std430 %129 %int_0 %int_0
+%131 = OpLoad %Instance_std430 %130
+```
+
+`%129` выбирает дескриптор, `%130` — указатель в него, которым пользуется загрузка, `%131` — сама загрузка: все три
+декорированы. Вывод для вашего рендерера: для неоднородного доступа к ресурсам хотя бы раз прочитайте SPIR-V; пометка в
+шейдерном языке — лишь просьба к компилятору, а правило говорит о том, что окажется в модуле.
+
+## Что печатает программа
+
+Шаг 20 (Rust, release, `--seconds 4`; сборка на C++ печатает те же строки, кроме `[timing]`):
+
+```text
+Window: 800x600 pixels
+Found 1 GPU(s)
+GPU 0: NVIDIA GeForce RTX 3080 Ti
+
+Picked: NVIDIA GeForce RTX 3080 Ti
+Graphics + present family: 0
+Descriptor limits for storage buffers:
+  maxPerStageDescriptorStorageBuffers                = 1048576 (only layouts without UPDATE_AFTER_BIND_POOL)
+  maxDescriptorSetStorageBuffers                     = 1048576
+  maxPerStageDescriptorUpdateAfterBindStorageBuffers = 1048576 (all sets, incl. UPDATE_AFTER_BIND)
+  maxDescriptorSetUpdateAfterBindStorageBuffers      = 1048576
+  maxPerStageUpdateAfterBindResources                = 4294967295 (all resource types)
+  maxUpdateAfterBindDescriptorsInAllPools            = 4294967295
+  shaderStorageBufferArrayNonUniformIndexingNative   = true
+This program: layout capacity 4096, one set of 256, 64 buffers written
+VkDevice created with VK_KHR_swapchain + runtimeDescriptorArray, shaderStorageBufferArrayNonUniformIndexing,
+  descriptorBindingPartiallyBound, descriptorBindingVariableDescriptorCount,
+  descriptorBindingStorageBufferUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending
+Swapchain: 800x600 B8G8R8A8_SRGB, MAILBOX, 3 images
+
+SPIR-V: 2736 bytes (bindless.spv), entry points vertexMain, fragmentMain
+Descriptor set layout (UPDATE_AFTER_BIND_POOL): binding 0 = STORAGE_BUFFER x up to 4096, stage VERTEX
+  binding flags: VARIABLE_DESCRIPTOR_COUNT | PARTIALLY_BOUND | UPDATE_AFTER_BIND | UPDATE_UNUSED_WHILE_PENDING
+Pipeline layout: 1 set layout (set 0), push constants 8 bytes (time + aspect)
+Graphics pipeline created (vertexMain reads objects[NonUniformResourceIndex(instance)])
+
+Mesh: regular hexagon, 7 vertices, 18 indices (step 14's buffers, memory type 3)
+Object buffers: 64 x 32 bytes (one Instance each), STORAGE_BUFFER, memory type 3 (HOST_VISIBLE | HOST_COHERENT)
+Descriptor pool (UPDATE_AFTER_BIND): maxSets 1, STORAGE_BUFFER x 256
+Allocated 1 set with variable descriptor count 256
+vkUpdateDescriptorSets: elements 0..62 -> object buffers 0..62 (63 descriptors in one write); 193 elements unwritten
+
+2 frames in flight; each frame binds the one set and draws 18 indices x 63 instances (64 from frame 120)
+Rendering. Close the window to exit.
+Frame 120: element 63 written while the set is bound by a command buffer that may be pending; instances 63 -> 64
+Window closed
+[timing] 9906 frames in 4.0 s, 2473 fps
+```
+
+Валидация с включённой синхронизационной валидацией не сообщает ничего, кроме предупреждения `VK_LAYER_bandicam_helper`,
+а GPU-AV — только свои предупреждения о настройке.
+
+## Карта урока
+
+<MindMap />
+
+## Что под капотом
+
+- **Массив дескрипторов — это таблица в памяти.** Обычно дескрипторы набора лежат подряд в памяти дескрипторов
+  драйвера, так что `objects[i]` — это «база набора + i размеров дескриптора»: шейдер сначала загружает дескриптор, а
+  потом уже загружает через него. Поэтому неоднородный индекс может стоить дополнительно на железе, которому нужен один
+  дескриптор на subgroup, и ничего не стоить на железе, которое загружает дескриптор для каждого лейна.
+- **Update-after-bind**, в нашем прочтении определения из спецификации, значит, что драйвер не может копировать
+  дескрипторы в command buffer при записи или снимать с них снимок при привязке; он обязан читать их из памяти набора
+  достаточно поздно, чтобы увидеть обновления, сделанные до отправки. Если какому-то железу для этого нужна память
+  дескрипторов другого рода, это объяснило бы отдельные лимиты update-after-bind; сама спецификация не говорит, зачем они.
+- **Дальше наборов.** `VK_EXT_descriptor_buffer` и `VK_EXT_descriptor_heap` (драйвер GPU курса перечисляет оба) дают
+  приложению самому размещать дескрипторы в буферах или кучах — естественная конечная точка bindless. Расширение с
+  кучами «was developed based on issues discovered with VK_EXT_descriptor_buffer» (спецификация). Понятия этого урока
+  (массивы, индексы, однородность, время жизни дескриптора, пока его читает GPU) переносятся туда без изменений.
+
+<Quiz
+	questions={[
+		{
+			q: 'В layout набора descriptorCount 4096, набор выделен с переменной длиной 256, записано 63 элемента. Какой флаг делает законными 193 незаписанных элемента набора?',
+			options: [
+				{
+					text: 'VARIABLE_DESCRIPTOR_COUNT: он позволяет набору быть короче 4096',
+					why: 'Он задаёт длину (256), но ничего не говорит об элементах внутри этой длины, которые так и не записали.',
+				},
+				{
+					text: 'PARTIALLY_BOUND: элементы, которые не используются динамически, могут быть недопустимыми',
+					why: 'Верно: без него каждый статически используемый дескриптор должен быть допустимым, а для массива с индексом времени выполнения это каждый элемент.',
+				},
+				{
+					text: 'UPDATE_AFTER_BIND: он позволяет дописать оставшиеся элементы когда угодно позже, уже после привязки набора',
+					why: 'Он разрешает обновления между привязкой и отправкой; незаписанные элементы допустимыми он не делает.',
+				},
+				{
+					text: 'Никакой: незаписанные дескрипторы всегда допустимы',
+					why: 'Без PARTIALLY_BOUND каждый статически используемый дескриптор должен быть записан до того, как набор прочитают.',
+				},
+			],
+			answer: 1,
+			ref: '#layout-набора-четыре-флага-привязки',
+		},
+		{
+			q: 'На кадре 120 шаг 20 записывает элемент 63, пока command buffer другого слота, использующий набор, может быть в состоянии pending. Определение какого флага это покрывает?',
+			options: [
+				{
+					text: 'UPDATE_AFTER_BIND: с одним этим флагом слой валидации принимает такую запись и ничего не сообщает',
+					why: 'Валидация её действительно принимает (VUID 03047 удовлетворяет любой из двух флагов), но определение UPDATE_AFTER_BIND покрывает только время от привязки до отправки.',
+				},
+				{
+					text: 'UPDATE_UNUSED_WHILE_PENDING: ожидающий command buffer элемент 63 не использует',
+					why: 'Верно: он разрешает обновления, пока command buffer в состоянии pending, для дескрипторов, которыми этот command buffer не пользуется.',
+				},
+				{
+					text: 'PARTIALLY_BOUND: элемент 63 до этого не был записан',
+					why: 'PARTIALLY_BOUND — о чтении незаписанных элементов, а не о том, когда их можно обновлять.',
+				},
+				{
+					text: 'Флаг не нужен: обновления на хосте не влияют на GPU',
+					why: 'Обновления пишут в память дескрипторов, которую читает GPU; без флага они запрещены, пока command buffer в состоянии pending.',
+				},
+			],
+			answer: 1,
+			ref: '#подгружаем-элемент-в-живой-набор',
+		},
+		{
+			q: 'Шейдер индексирует objects[instance]. Почему обращение нужно пометить как неоднородное, хотя на GPU курса программа и без этого работает правильно?',
+			options: [
+				{
+					text: 'instance различается внутри одной отрисовки, и железо без native-поддержки иначе может взять дескриптор одного лейна на весь subgroup',
+					why: 'Верно: индекс не динамически однороден; декорация NonUniform велит не-native компиляторам обработать каждый отдельный индекс.',
+				},
+				{
+					text: 'NonUniform ускоряет шейдер на NVIDIA',
+					why: 'На native-железе она ничего заметного не меняет; речь о правильности на другом железе.',
+				},
+				{
+					text: 'Номер экземпляра может выйти за размер массива',
+					why: 'Границы — отдельный вопрос; однородность — о том, согласны ли лейны насчёт индекса.',
+				},
+				{
+					text: 'Storage-буферы можно индексировать только константами',
+					why: 'Динамическая и неоднородная индексация разрешены при соответствующих возможностях.',
+				},
+			],
+			answer: 0,
+			ref: '#почему-на-nvidia-работает-а-на-другом-железе-ломается',
+		},
+		{
+			q: 'Где должна стоять декорация NonUniform по VUID-RuntimeSpirv-subgroupSize-10149?',
+			options: [
+				{
+					text: 'Только на переменной с индексом',
+					why: 'Правило называет операнд обращения к памяти, например указатель, которым пользуется загрузка; именно здесь ошибся Slang 2026.1.',
+				},
+				{
+					text: 'На OpVariable массива дескрипторов',
+					why: 'Сам массив однороден; от вызова к вызову различается только выбранный элемент.',
+				},
+				{
+					text: 'Нигде, если объявлена capability StorageBufferArrayNonUniformIndexing',
+					why: 'Capability разрешает неоднородную индексацию; декорация на обращении всё равно обязательна.',
+				},
+				{
+					text: 'На операнде обращения — указателе, которым пользуется загрузка',
+					why: 'Верно: декорирован должен быть операнд, соответствующий ресурсу, поэтому выведенным access chain она тоже нужна.',
+				},
+			],
+			answer: 3,
+			ref: '#non-uniform-indexing',
+		},
+	]}
+/>
