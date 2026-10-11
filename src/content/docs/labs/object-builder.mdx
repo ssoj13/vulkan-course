@@ -1,0 +1,23 @@
+---
+title: Build the object tree
+description: Create and destroy Vulkan objects in any order; the simulator answers with the real validation rules.
+---
+import ObjectGraph from '../../../components/ObjectGraph.astro';
+
+Every Vulkan object is made from a parent and must be destroyed before it. Try it: create the objects of the first
+section in any order, destroy them in any order, and read what the simulator says. Wrong orders get the exact text
+of the validation rule (VUID) the real validation layer would report. The rules are explained in
+[the logical device lesson](lesson:logical-device) and [the map of Vulkan objects](lesson:object-map).
+
+<ObjectGraph
+	mode="build"
+	scope={['instance', 'debug-messenger', 'physical-device', 'device', 'queue']}
+	caption="Click an object, then Create or Destroy. Dashed boxes do not exist yet; glowing ones can be created now."
+/>
+
+Things to try:
+
+- create the device before the physical device;
+- create the debug messenger without enabling `VK_EXT_debug_utils` on the instance;
+- destroy the instance while the device is still alive;
+- destroy the queue.

@@ -34,5 +34,19 @@
         { "slug": "logical-device", "title": "Logical device and queues", "short": "Logical device", "summary": "Opening a VkDevice with the features and queues we chose, and getting VkQueue handles." }
       ]
     }
+  ],
+  "labs": [
+    { "slug": "warp-divergence", "lesson": "gpu", "title": "Warp divergence", "summary": "32 lanes, one instruction stream: write a condition and watch the warp run both branches with lanes switched off." },
+    { "slug": "memory-path", "lesson": "gpu", "title": "Where the data lives", "summary": "VRAM, system RAM and the PCIe bus between them, with the real bandwidths of the course GPU: what a frame costs if a buffer crosses the bus." },
+    { "slug": "command-path", "lesson": "talking-to-gpu", "title": "The path of a command", "summary": "CPU records, submits, moves on; the GPU runs the work later. A CPU/GPU timeline you can scrub." },
+    { "slug": "gl-vs-vulkan", "lesson": "why-vulkan", "title": "OpenGL state vs Vulkan pipelines", "summary": "Change state in a GL-style driver and see when it has to rebuild a shader behind your back; do the same with prebuilt Vulkan pipelines." },
+    { "slug": "loader-chain", "lesson": "loader-and-instance", "title": "Through the loader", "summary": "Pick a Vulkan call and the enabled layers, then follow it from the trampoline through the layers to the terminator and the drivers." },
+    { "slug": "messenger-filter", "lesson": "validation", "title": "Debug messenger filters", "summary": "Severity and type masks applied to a real validation log: which messages reach your callback." },
+    { "slug": "device-picker", "lesson": "physical-devices", "title": "Pick a GPU", "summary": "The real properties, features and limits of the course GPU, and the picking rule of step 03 that you can change." },
+    { "slug": "queue-planner", "lesson": "queue-families", "title": "Queue planner", "summary": "The real queue families of the course GPU: choose graphics, async compute and transfer queues and see what you get." },
+    { "slug": "object-builder", "lesson": "logical-device", "title": "Build the object tree", "summary": "Create and destroy Vulkan objects in any order; the simulator answers with the real validation rules." },
+    { "slug": "queue-sync", "title": "Queues, semaphores and fences", "summary": "Submit batches to several queues with wait and signal semaphores and a fence: see what overlaps, what waits and where a race appears." },
+    { "slug": "graphics-pipeline", "title": "The graphics pipeline", "summary": "Walk the stages from vertex input to color output, and see which state is baked into a pipeline and which is dynamic in Vulkan 1.4." },
+    { "slug": "buffer-memory", "title": "Buffers and memory", "summary": "From buffer usage to memory requirements to a memory type of the real course GPU, and a staging upload through the BAR window." }
   ]
 }
