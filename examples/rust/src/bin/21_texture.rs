@@ -868,8 +868,10 @@ impl Vk {
         // linear before filtering, so blending between texels and the shader
         // math happen in linear light, and the _SRGB swapchain re-encodes on
         // write. R8G8B8A8_UNORM would hand the shader the raw encoded numbers:
-        // right for data (normal maps, roughness, masks), too dark and wrongly
-        // filtered for color.
+        // right for data (normal maps, roughness, masks), wrong for color - the
+        // already-encoded values are taken as linear, the _SRGB swapchain
+        // encodes them a second time (too bright, washed out), and filtering
+        // blends non-linear values.
         let pixels = texture_pixels();
         println!(
             "\nTexture: {TEX_SIZE}x{TEX_SIZE} RGBA8, {} bytes, generated on the CPU (FNV-1a {:#010x})",
@@ -959,7 +961,11 @@ impl Vk {
         // The sampler is independent of any image: filters (magnification:
         // a texel covers many pixels; minification: many texels per pixel),
         // address modes for UVs outside [0, 1] (u, v and w), anisotropy, and
-        // the mip settings (one level here: maxLod 0). Anisotropic filtering
+        // the mip settings (one level here: maxLod 0). maxLod 0 clamps the LOD
+        // lambda to <= 0, so the texture always counts as magnified and
+        // magFilter is the one used; harmless here because both filters are
+        // equal (spec Note "Mapping of OpenGL to Vulkan Filter Modes": GL's
+        // non-mipmapped minification is maxLod 0.25). Anisotropic filtering
         // takes up to maxAnisotropy samples along the direction in which the
         // texture is squeezed on screen; 16 is the usual maximum, clamped to
         // the device limit (VUID-VkSamplerCreateInfo-anisotropyEnable-01071).

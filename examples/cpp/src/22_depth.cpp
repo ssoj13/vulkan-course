@@ -263,8 +263,8 @@ Mat4 rotateY(float a) {
 //   w_clip = -z                    the distance in front of the camera
 //
 // After the divide by w: z = -near gives depth 0, z = -far gives depth 1.
-// Depth is then proportional to 1/distance, so most of its precision sits near
-// the camera. REVERSED-Z (near -> 1, far -> 0, compare GREATER, clear to 0)
+// Depth is then linear (affine) in 1/distance - depth = far / (far - near) *
+// (1 - near / distance) - so most of its precision sits near the camera. REVERSED-Z (near -> 1, far -> 0, compare GREATER, clear to 0)
 // pairs that with the float format's own precision near 0 and is the usual
 // choice for large scenes with D32_SFLOAT; this step keeps the classic mapping.
 Mat4 perspective(float fovy, float aspect, float nearZ, float farZ) {

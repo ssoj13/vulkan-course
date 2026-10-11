@@ -481,6 +481,14 @@ void uploadTexture(const vk::raii::Device& device, const vk::PhysicalDeviceMemor
     if (device.waitForFences(*fence, vk::True, std::numeric_limits<uint64_t>::max()) != vk::Result::eSuccess) {
         throw std::runtime_error("waitForFences failed");
     }
+    // Destroy the upload's objects now, as Rust's UploadScratch drop does, so
+    // the line below is true: the fence wait proved the GPU is done with them.
+    // The command buffer is freed before its pool, the buffer before its memory.
+    fence.clear();
+    cmd.clear();
+    pool.clear();
+    staging.buffer.clear();
+    staging.memory.clear();
     std::println("Upload complete (fence waited); staging buffer destroyed");
     std::println("[timing] texture upload {:.3f} ms (staging write + record + submit + wait)",
                  std::chrono::duration<double, std::milli>(Clock::now() - start).count());
@@ -732,7 +740,9 @@ try {
     // filtering, so blending between texels and the shader math happen in
     // linear light, and the _SRGB swapchain re-encodes on write. R8G8B8A8_UNORM
     // would hand the shader the raw encoded numbers: right for data (normal
-    // maps, roughness, masks), too dark and wrongly filtered for color.
+    // maps, roughness, masks), wrong for color - the already-encoded values are
+    // taken as linear, the _SRGB swapchain encodes them a second time (too
+    // bright, washed out), and filtering blends non-linear values.
     const std::vector<uint8_t> pixels = texturePixels();
     std::println("\nTexture: {}x{} RGBA8, {} bytes, generated on the CPU (FNV-1a {:#010x})", texSize, texSize, pixels.size(),
                  fnv1a(pixels));
@@ -800,7 +810,11 @@ try {
     // The sampler is independent of any image: filters (magnification: a texel
     // covers many pixels; minification: many texels per pixel), address modes
     // for UVs outside [0, 1] (u, v and w), anisotropy, and the mip settings
-    // (one level here: maxLod 0). Anisotropic filtering takes up to
+    // (one level here: maxLod 0). maxLod 0 clamps the LOD lambda to <= 0, so
+    // the texture always counts as magnified and magFilter is the one used;
+    // harmless here because both filters are equal (spec Note "Mapping of
+    // OpenGL to Vulkan Filter Modes": GL's non-mipmapped minification is
+    // maxLod 0.25). Anisotropic filtering takes up to
     // maxAnisotropy samples along the direction in which the texture is
     // squeezed on screen; 16 is the usual maximum, clamped to the device limit
     // (VUID-VkSamplerCreateInfo-anisotropyEnable-01071). With --nearest it is

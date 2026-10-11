@@ -188,8 +188,8 @@ static_assert(sizeof(Vertex) == 20);
 
 // #region floor
 // The floor: y = 0, x from -20 to 20, z from 5 (behind the camera) to -200.
-// UV = world position / 2, so the texture repeats every 2 units (REPEAT address
-// mode) - 20 x 102.5 copies. Corners counter-clockwise seen from above, the
+// UV = offset world position / 2 (u = (x + 20) / 2, v = (5 - z) / 2), so the
+// texture repeats every 2 units (REPEAT address mode) - 20 x 102.5 copies. Corners counter-clockwise seen from above, the
 // front face (step 22).
 constexpr std::array<Vertex, 4> vertices{{
     {{-20.0f, 0.0f, -200.0f}, {0.0f, 102.5f}},
@@ -377,8 +377,11 @@ template <typename T, size_t N> void writeMapped(const vk::raii::DeviceMemory& m
 // step 21's three features, plus BLIT_SRC and BLIT_DST (vkCmdBlitImage2 may
 // read and write it). The blit's LINEAR filter additionally needs
 // SAMPLED_IMAGE_FILTER_LINEAR on the source format, which is already in the
-// list. Formats without blit support (many compressed and integer formats) get
-// their mips from the CPU or an offline tool instead.
+// list. Formats without blit or linear-filter support (block-compressed formats;
+// integer formats, which lack SAMPLED_IMAGE_FILTER_LINEAR - none has it on the
+// RTX 3080 Ti - and so cannot be blitted with LINEAR,
+// VUID-VkBlitImageInfo2-filter-02001) get their mips from the CPU or an offline
+// tool instead.
 constexpr std::array<std::pair<vk::FormatFeatureFlagBits, std::string_view>, 5> neededFeatures{{
     {vk::FormatFeatureFlagBits::eSampledImage, "SAMPLED_IMAGE"},
     {vk::FormatFeatureFlagBits::eSampledImageFilterLinear, "SAMPLED_IMAGE_FILTER_LINEAR"},
@@ -838,7 +841,9 @@ try {
     // pixel) + mipLodBias, clamped to [minLod, maxLod]. maxLod = the level count
     // lets it reach the 1x1 level (VK_LOD_CLAMP_NONE would too); --no-mips sets
     // maxLod = 0, so only level 0 is ever read although the image still has all
-    // levels. Anisotropic filtering (--anisotropy) takes several samples along
+    // levels, and with lambda <= 0 the texture always counts as magnified
+    // (magFilter; the same LINEAR as minFilter here, spec Note "Mapping of
+    // OpenGL to Vulkan Filter Modes"). Anisotropic filtering (--anisotropy) takes several samples along
     // the long axis of the pixel's footprint: on a floor seen at a grazing angle
     // the footprint is long and thin, and plain trilinear blurs it.
     const float maxLod   = args.mips ? static_cast<float>(levels) : 0.0f;

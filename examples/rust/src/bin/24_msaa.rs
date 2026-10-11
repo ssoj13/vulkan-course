@@ -6,7 +6,8 @@
 //! depth PER SAMPLE, but runs the fragment shader only once per pixel and
 //! triangle, writing its color to the covered samples. At the end the samples
 //! are averaged into one color per pixel: the RESOLVE. Edge pixels get a mix
-//! of both sides; interiors cost almost nothing extra.
+//! of both sides; interiors cost no extra shading (but still store N color
+//! and depth samples).
 //!
 //!   sample count: framebufferColorSampleCounts & framebufferDepthSampleCounts
 //!   multisampled color + depth images (TRANSIENT_ATTACHMENT, lazily
@@ -1309,12 +1310,18 @@ impl Vk {
             .level_count(1)
             .layer_count(1);
         // Step 09's layout transition to COLOR_ATTACHMENT_OPTIMAL, chained to
-        // the acquire semaphore's wait stage.
+        // the acquire semaphore's wait stage. Second scope READ | WRITE: with
+        // MSAA the swapchain image is the resolve target, and "access to the
+        // single sample attachment can be synchronized with
+        // COLOR_ATTACHMENT_READ and COLOR_ATTACHMENT_WRITE" (spec, "Render Pass
+        // Multisample Resolve Operations").
         let to_attachment = vk::ImageMemoryBarrier2::default()
             .src_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
             .src_access_mask(vk::AccessFlags2::NONE)
             .dst_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
-            .dst_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE)
+            .dst_access_mask(
+                vk::AccessFlags2::COLOR_ATTACHMENT_READ | vk::AccessFlags2::COLOR_ATTACHMENT_WRITE,
+            )
             .old_layout(vk::ImageLayout::UNDEFINED)
             .new_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
             .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
@@ -1377,12 +1384,15 @@ impl Vk {
         // #region resolve-attachment
         // With MSAA the color attachment is the multisampled image: cleared,
         // drawn, then RESOLVED - each pixel's samples averaged (resolveMode
-        // AVERAGE, the only mode for non-integer color formats) - into
+        // AVERAGE: for a non-integer color format the only fixed-function
+        // mode; NONE and CUSTOM_BIT_EXT are the other allowed values,
+        // VUID-VkRenderingAttachmentInfo-imageView-06129) - into
         // resolveImageView, the swapchain image, at the end of the rendering.
         // The samples themselves are not needed after that: DONT_CARE. The
-        // resolve runs in COLOR_ATTACHMENT_OUTPUT and writes the swapchain
-        // image as a COLOR_ATTACHMENT_WRITE, so step 09's two barriers on the
-        // swapchain image already cover it. Without MSAA (--samples 1) the
+        // resolve runs in COLOR_ATTACHMENT_OUTPUT and accesses the swapchain
+        // image as COLOR_ATTACHMENT_READ | WRITE, which the barrier into the
+        // attachment layout (dst READ | WRITE above) and step 09's barrier to
+        // PRESENT_SRC (src WRITE) cover. Without MSAA (--samples 1) the
         // swapchain image is the color attachment, as in step 22.
         let clear = vk::ClearValue {
             color: vk::ClearColorValue {

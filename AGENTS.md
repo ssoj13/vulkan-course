@@ -402,6 +402,20 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
   --nearest --address clamp, mirror, border), 22 (default, --no-depth), 23 (default, --no-mips, --anisotropy), 24
   (--samples 1/2/4/8). Release, validation + sync on, 3 s, MAILBOX: 1900-2850 fps (not a benchmark). Logs: scratchpad
   m10/logs (session-local).
+- Module 10 review fixes (2026-10-11, examples 21-24, both languages, checked against vkspec 1.4.365 + validusage.json):
+  21 UNORM comment = double sRGB encode (too bright/washed out) + filtering of non-linear values, not "too dark";
+  21/23 `--no-mips`: maxLod 0 kept (stdout unchanged), comments say lambda <= 0 -> always magnified -> magFilter, harmless
+  because min == mag (spec Note "Mapping of OpenGL to Vulkan Filter Modes"; GL non-mip min filter = maxLod 0.25);
+  24 AVERAGE = the only fixed-function resolve for non-integer color (NONE/CUSTOM_BIT_EXT also allowed,
+  VUID-VkRenderingAttachmentInfo-imageView-06129); 24 swapchain barrier dst access now COLOR_ATTACHMENT_READ|WRITE
+  ("Access to the single sample attachment can be synchronized with ..._READ_BIT and ..._WRITE_BIT", "Render Pass
+  Multisample Resolve Operations"; corrects "writes the single-sample one as WRITE" above); 22 depth is affine in
+  1/distance (far/(far-near)*(1-near/d)); 23 UV = (x+20)/2, (5-z)/2; 23 integer formats: no SAMPLED_IMAGE_FILTER_LINEAR
+  on the RTX 3080 Ti (vulkaninfo --show-formats; only D24S8/D32S8 depth aspects have it) -> VUID-VkBlitImageInfo2-filter-02001;
+  24 "interiors cost no extra shading (still N samples stored)"; C++ 21 now destroys fence/cmd/pool/staging before
+  printing "staging buffer destroyed" (= Rust UploadScratch drop). fmt/clippy/W4 clean, sync validation clean (bandicam
+  only), stdout identical without [timing] (21 default/--nearest, 22, 23 default/--no-mips, 24 default/--samples 1).
+  Examples are not scanned by scripts/vuid-refs.ts (src/ only): no sync:vuids. Logs: scratchpad m10fix/.
 - Module 8 review fixes, round 2 (2026-10-11, EN lessons; the RU lessons written afterwards carry the same facts):
   - gpu-allocator experiment (scratch cargo project, deleted after; logs check*.log in the session scratchpad gpualloc/):
     gpu-allocator =0.28.0 (features std+vulkan) + `[patch.crates-io] ash = { git = ash-rs/ash, rev = f4c2ca3 }`.
