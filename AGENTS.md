@@ -467,6 +467,27 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
   without the rendered >= n-2 WAR wait, 25 without the COMPUTE->HOST barrier (host reads are not tracked; results still
   correct on this machine). Earlier "sync validation clean" claims for storage buffers (modules 9-10) were made without
   the heuristic. All clean runs of 25-27 used both env vars: only the bandicam warning. Logs: scratchpad m11/.
+- Module 11 review fixes (2026-10-11, both languages, checked in vkspec 1.4.365 + validusage.json SDK 1.4.341):
+  26/27 refuse a particle buffer larger than maxStorageBufferRange (whole-buffer STORAGE_BUFFER descriptor =
+  VUID-VkWriteDescriptorSet-descriptorType-00333; spec minimum 2^27, no 1.4 bump; 2^24 x 16 B = 2^28 > 2^27). Not
+  reachable on the RTX 3080 Ti (limit 4294967295); on a minimum-limit device `--count` > 2^23 hits it. No stdout change.
+  25 `--uncached` rules HOST_CACHED types out (`types_with` mask on memoryTypeBits; still type 3 here); spec:
+  "uncached memory is always host coherent". 25 result/groupSums share one memory type by the spec ("memoryTypeBits is
+  identical for all VkBuffer objects created with the same value for the flags and usage"); the program checks it.
+  25 comment: 06429/06432 are shader (pipeline) rules, only groupCountX-00386 is a vkCmdDispatch rule; the 1-D check
+  now precedes the printed subgroup count (no x*y*z product). 26/27 Rust init: device_wait_idle before destroying the
+  init fence if the wait failed (VUID-vkDestroyFence-fence-01120); C++ 26/27: init fence hoisted and the IdleGuard
+  declared right after it, before init (it used to start only at the frame loop). 27 graphics submit waits
+  image_available at ALL_COMMANDS (was COLOR_ATTACHMENT_OUTPUT), so the graphics interval excludes the acquire wait
+  (cost: vertex work can no longer start before the image is acquired); the to_attachment barrier still chains (src
+  COLOR_ATTACHMENT_OUTPUT is inside ALL_COMMANDS). 27 GpuTimes: all four ticks as signed offsets from g0 modulo
+  2^validBits (shift-left/arith-shift-right), so a counter wrap below 64 bits cannot break min/max (both families have
+  64 bits here). Runs (release, VALIDATE_SYNC + shader heuristic): 25 default/--uncached/--count 8388608, 26, 27,
+  27 --same-queue, both languages: exit 0, only the bandicam warning, stdout identical without [timing].
+  RE-MEASURED 27 (release, validation on, sync off, 3 alternating runs x 2 languages, 4 s, MAILBOX, 2^20 particles):
+  graphics 269-277 us, compute 44.8-46.5 us in both modes (graphics time unchanged by the ALL_COMMANDS wait: the
+  acquire wait was negligible in MAILBOX); overlap async 2.1-5.8 us (5-12% of the compute time), same-queue 0.0 us;
+  fps async 895-1328 vs same-queue 1113-1400 (noise, CPU/present bound). Still no measurable gain. Logs: scratchpad m11fix/.
 - Sync validation re-check 09-24 with shader-access heuristic (2026-10-11): the setting's own description
   (SDK Bin/VkLayer_khronos_validation.json, key `syncval_shader_accesses_heuristic`, default false, needs validate_sync):
   "Take into account memory accesses performed by the shader based on SPIR-V static analysis. Warning: can produce
@@ -632,6 +653,11 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
   defined for every step: 25 has no window but loads SPIR-V) and READMEs updated. fmt + clippy -D warnings, C++ /W4 clean.
 - [ ] Module 11: independent reviews of 25-27 (code vs spec), then the EN lessons compute/{compute-shaders, particles,
   async-compute} (module `compute` not yet in course.json); `sync:vuids` is not needed for examples (src/ only).
+  Review 1 findings fixed 2026-10-11 (State "Module 11 review fixes"); lessons quoting 27's submit-graphics region or
+  its measurements must say image_available is waited at ALL_COMMANDS and use the re-measured numbers.
+- [ ] Course-wide (Rust windowed steps): `Vk::new` returns through `?` after creating objects, leaking them on an
+  error midway (no Drop guard until `Self` exists; C++ RAII has no such gap). Harmless at process exit, but not what
+  the course teaches; decide on a guard pattern (as in 25's `Objects`) for all `Vk::new` before changing them.
 - [x] Re-run steps 09-24 with VK_KHRONOS_VALIDATION_SYNCVAL_SHADER_ACCESSES_HEURISTIC=true (2026-10-11): clean, see
   State "Sync validation re-check 09-24". Lessons not edited.
 - [x] Lessons qualify what plain VALIDATE_SYNC tracks (2026-10-11, EN+RU): barriers-and-layouts has the one aside

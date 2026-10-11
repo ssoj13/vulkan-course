@@ -139,6 +139,18 @@ std::optional<uint32_t> chooseType(const vk::PhysicalDeviceMemoryProperties& pro
     return findType(props, bits, required);
 }
 
+// The memory types that have any of flags, as a memoryTypeBits-style mask:
+// bits & ~typesWith(...) rules them out of a choice.
+uint32_t typesWith(const vk::PhysicalDeviceMemoryProperties& props, vk::MemoryPropertyFlags flags) {
+    uint32_t mask = 0;
+    for (uint32_t i = 0; i < props.memoryTypeCount; ++i) {
+        if (props.memoryTypes[i].propertyFlags & flags) {
+            mask |= 1u << i;
+        }
+    }
+    return mask;
+}
+
 // Step 08: reads a .spv file into 32-bit words.
 std::vector<uint32_t> readSpirv(const std::filesystem::path& path) {
     std::ifstream file(path, std::ios::binary | std::ios::ate);
@@ -236,19 +248,19 @@ struct GpuBuffer {
     void* ptr;
 };
 
-// Creates a STORAGE_BUFFER of size bytes in the type chosen by chooseType and
-// maps it for the program's lifetime.
+// Creates a STORAGE_BUFFER of size bytes in the type chooseType picks among
+// those without any excluded flag, and maps it for the program's lifetime.
 GpuBuffer createBuffer(const vk::raii::Device& device, const vk::PhysicalDeviceMemoryProperties& props, vk::DeviceSize size,
-                       vk::MemoryPropertyFlags required, vk::MemoryPropertyFlags preferred) {
+                       vk::MemoryPropertyFlags required, vk::MemoryPropertyFlags preferred, vk::MemoryPropertyFlags excluded) {
     vk::raii::Buffer buffer(device, vk::BufferCreateInfo{
                                         .size        = size,
                                         .usage       = vk::BufferUsageFlagBits::eStorageBuffer,
                                         .sharingMode = vk::SharingMode::eExclusive,
                                     });
     const vk::MemoryRequirements req = buffer.getMemoryRequirements();
-    const auto memoryType            = chooseType(props, req.memoryTypeBits, required, preferred);
+    const auto memoryType            = chooseType(props, req.memoryTypeBits & ~typesWith(props, excluded), required, preferred);
     if (!memoryType) {
-        throw std::runtime_error("no memory type with " + memoryNames(required));
+        throw std::runtime_error("no memory type with " + memoryNames(required) + " and without " + memoryNames(excluded));
     }
     vk::raii::DeviceMemory memory(device, vk::MemoryAllocateInfo{.allocationSize = req.size, .memoryTypeIndex = *memoryType});
     buffer.bindMemory(*memory, 0);
@@ -444,24 +456,25 @@ try {
     // #region group-count
     // The workgroup size comes from the shader; the host only decides how many
     // groups: ceil(count / group size), so the last group may be partly past
-    // the end (the shaders check i < count). A dispatch is invalid if the group
-    // exceeds maxComputeWorkGroupInvocations (VUID-RuntimeSpirv-x-06432) or the
-    // group count exceeds maxComputeWorkGroupCount
-    // (VUID-vkCmdDispatch-groupCountX-00386).
+    // the end (the shaders check i < count). Two kinds of limits apply. The
+    // workgroup size is a rule on the shader the pipeline is created with:
+    // LocalSize x at most maxComputeWorkGroupSize[0] (VUID-RuntimeSpirv-x-06429),
+    // x * y * z at most maxComputeWorkGroupInvocations
+    // (VUID-RuntimeSpirv-x-06432). The group count is a rule on vkCmdDispatch:
+    // at most maxComputeWorkGroupCount (VUID-vkCmdDispatch-groupCountX-00386).
     std::println("\nKernels (workgroup size read from the SPIR-V):");
     std::vector<uint32_t> sizes;
     for (const auto& [file, words, entry] : {std::tuple{"saxpy.spv", &saxpySpv, "saxpy"}, std::tuple{"reduce.spv", &reduceSpv, "reduce"}}) {
         const auto [x, y, z] = localSize(*words, entry);
-        std::println("  {}: {} bytes, entry point {}, LocalSize {} x {} x {} = {} subgroups of {}", file,
-                     words->size() * sizeof(uint32_t), entry, x, y, z, (x * y * z + subgroup - 1) / subgroup, subgroup);
-        // Both kernels are 1D (y = z = 1): only x has to be checked against
-        // maxComputeWorkGroupSize (VUID-RuntimeSpirv-x-06429).
+        // Both kernels are 1D (y = z = 1), so x alone is the invocation count.
         if (y != 1 || z != 1) {
             throw std::runtime_error(std::format("{}: expected a 1D workgroup, got {}x{}x{}", entry, x, y, z));
         }
         if (x > groupSize[0] || x > limits.maxComputeWorkGroupInvocations) {
             throw std::runtime_error(std::format("{}: a workgroup of {} exceeds this device's limits", entry, x));
         }
+        std::println("  {}: {} bytes, entry point {}, LocalSize {} x {} x {} = {} subgroups of {}", file,
+                     words->size() * sizeof(uint32_t), entry, x, y, z, (x + subgroup - 1) / subgroup, subgroup);
         sizes.push_back(x);
     }
     const uint32_t saxpySize  = sizes.at(0);
@@ -488,21 +501,32 @@ try {
     // accesses to uncached memory are slower than to cached memory". Both live
     // in system RAM on this GPU, so the shaders read and write them across PCIe
     // - fine for one pass over the data; data the GPU reuses belongs in
-    // DEVICE_LOCAL memory (step 15's staging).
+    // DEVICE_LOCAL memory (step 15's staging). --uncached rules HOST_CACHED
+    // types out instead, for the comparison; the spec adds that "uncached
+    // memory is always host coherent".
     using Mem                                    = vk::MemoryPropertyFlagBits;
     const vk::PhysicalDeviceMemoryProperties mem = physicalDevice.getMemoryProperties();
-    const vk::MemoryPropertyFlags upload         = Mem::eHostVisible | Mem::eHostCoherent;
+    const vk::MemoryPropertyFlags none{};
+    const vk::MemoryPropertyFlags upload            = Mem::eHostVisible | Mem::eHostCoherent;
     const vk::MemoryPropertyFlags readbackRequired  = Mem::eHostVisible;
-    const vk::MemoryPropertyFlags readbackPreferred = args.uncached ? vk::MemoryPropertyFlags{} : Mem::eHostCached;
+    const vk::MemoryPropertyFlags readbackPreferred = args.uncached ? none : Mem::eHostCached;
+    const vk::MemoryPropertyFlags readbackExcluded  = args.uncached ? Mem::eHostCached : none;
     const size_t n                                  = args.count;
     const vk::DeviceSize floatBytes                 = n * sizeof(float);
     const vk::DeviceSize uintBytes                  = n * sizeof(uint32_t);
     const vk::DeviceSize sumsBytes                  = vk::DeviceSize{reduceGroups} * 4;
-    GpuBuffer x      = createBuffer(device, mem, floatBytes, upload, {});
-    GpuBuffer y      = createBuffer(device, mem, floatBytes, upload, {});
-    GpuBuffer values = createBuffer(device, mem, uintBytes, upload, {});
-    GpuBuffer result = createBuffer(device, mem, floatBytes, readbackRequired, readbackPreferred);
-    GpuBuffer sums   = createBuffer(device, mem, sumsBytes, readbackRequired, readbackPreferred);
+    GpuBuffer x      = createBuffer(device, mem, floatBytes, upload, none, none);
+    GpuBuffer y      = createBuffer(device, mem, floatBytes, upload, none, none);
+    GpuBuffer values = createBuffer(device, mem, uintBytes, upload, none, none);
+    GpuBuffer result = createBuffer(device, mem, floatBytes, readbackRequired, readbackPreferred, readbackExcluded);
+    GpuBuffer sums   = createBuffer(device, mem, sumsBytes, readbackRequired, readbackPreferred, readbackExcluded);
+    // "The memoryTypeBits member is identical for all VkBuffer objects created
+    // with the same value for the flags and usage members": the two outputs get
+    // the same type from the same choice, and everything below (the printout,
+    // the invalidate) treats them as one.
+    if (sums.memoryType != result.memoryType) {
+        throw std::runtime_error("result and groupSums got different memory types");
+    }
     const vk::MemoryPropertyFlags outFlags = mem.memoryTypes.at(result.memoryType).propertyFlags;
     std::println("\nMemory:");
     std::println("  inputs x, y, values ({} bytes each): memory type {} ({}), written by the CPU", floatBytes, x.memoryType,

@@ -138,6 +138,15 @@ fn choose_type(
     find_type(props, bits, required | preferred).or_else(|| find_type(props, bits, required))
 }
 
+/// The memory types that have any of `flags`, as a memoryTypeBits-style
+/// mask: `bits & !types_with(..)` rules them out of a choice.
+fn types_with(props: &vk::PhysicalDeviceMemoryProperties, flags: vk::MemoryPropertyFlags) -> u32 {
+    (0..props.memory_type_count)
+        .zip(props.memory_types_as_slice())
+        .filter(|(_, t)| t.property_flags.intersects(flags))
+        .fold(0, |mask, (i, _)| mask | (1 << i))
+}
+
 // #region local-size
 /// The workgroup size of `entry`, read from the SPIR-V: the module's
 /// OpEntryPoint names the function, OpExecutionMode LocalSize gives x, y, z.
@@ -242,15 +251,17 @@ impl Drop for Objects<'_> {
     }
 }
 
-/// Creates a STORAGE_BUFFER of `size` bytes in `memory_type` and maps it for
-/// the program's lifetime. The buffer is added to `objects` as soon as it
-/// exists, so an error halfway still destroys it.
+/// Creates a STORAGE_BUFFER of `size` bytes in the type `choose_type` picks
+/// among those without any `excluded` flag, and maps it for the program's
+/// lifetime. The buffer is added to `objects` as soon as it exists, so an
+/// error halfway still destroys it.
 fn create_buffer(
     objects: &mut Objects,
     props: &vk::PhysicalDeviceMemoryProperties,
     size: vk::DeviceSize,
     required: vk::MemoryPropertyFlags,
     preferred: vk::MemoryPropertyFlags,
+    excluded: vk::MemoryPropertyFlags,
 ) -> Result<GpuBuffer, Box<dyn Error>> {
     let device = objects.device;
     let info = vk::BufferCreateInfo::default()
@@ -268,8 +279,14 @@ fn create_buffer(
     let index = objects.buffers.len() - 1;
     // SAFETY: `buffer` belongs to this device.
     let req = unsafe { device.get_buffer_memory_requirements(buffer) };
-    let memory_type = choose_type(props, req.memory_type_bits, required, preferred)
-        .ok_or_else(|| format!("no memory type with {}", memory_names(required)))?;
+    let bits = req.memory_type_bits & !types_with(props, excluded);
+    let memory_type = choose_type(props, bits, required, preferred).ok_or_else(|| {
+        format!(
+            "no memory type with {} and without {}",
+            memory_names(required),
+            memory_names(excluded)
+        )
+    })?;
     let alloc_info = vk::MemoryAllocateInfo::default()
         .allocation_size(req.size)
         .memory_type_index(memory_type);
@@ -423,10 +440,13 @@ fn run(
     // #region group-count
     // The workgroup size comes from the shader; the host only decides how
     // many groups: ceil(count / group size), so the last group may be
-    // partly past the end (the shaders check `i < count`). A dispatch is
-    // invalid if the group exceeds maxComputeWorkGroupInvocations
-    // (VUID-RuntimeSpirv-x-06432) or the group count exceeds
-    // maxComputeWorkGroupCount (VUID-vkCmdDispatch-groupCountX-00386).
+    // partly past the end (the shaders check `i < count`). Two kinds of
+    // limits apply. The workgroup size is a rule on the shader the pipeline
+    // is created with: LocalSize x at most maxComputeWorkGroupSize[0]
+    // (VUID-RuntimeSpirv-x-06429), x * y * z at most
+    // maxComputeWorkGroupInvocations (VUID-RuntimeSpirv-x-06432). The group
+    // count is a rule on vkCmdDispatch: at most maxComputeWorkGroupCount
+    // (VUID-vkCmdDispatch-groupCountX-00386).
     println!("\nKernels (workgroup size read from the SPIR-V):");
     let mut sizes = Vec::new();
     for (file, words, entry) in [
@@ -434,19 +454,18 @@ fn run(
         ("reduce.spv", &reduce_spv, "reduce"),
     ] {
         let [x, y, z] = local_size(words, entry)?;
-        println!(
-            "  {file}: {} bytes, entry point {entry}, LocalSize {x} x {y} x {z} = {} subgroups of {subgroup}",
-            words.len() * 4,
-            (x * y * z).div_ceil(subgroup)
-        );
-        // Both kernels are 1D (y = z = 1): only x has to be checked against
-        // maxComputeWorkGroupSize (VUID-RuntimeSpirv-x-06429).
+        // Both kernels are 1D (y = z = 1), so x alone is the invocation count.
         if y != 1 || z != 1 {
             return Err(format!("{entry}: expected a 1D workgroup, got {x}x{y}x{z}").into());
         }
         if x > sx || x > limits.max_compute_work_group_invocations {
             return Err(format!("{entry}: a workgroup of {x} exceeds this device's limits").into());
         }
+        println!(
+            "  {file}: {} bytes, entry point {entry}, LocalSize {x} x {y} x {z} = {} subgroups of {subgroup}",
+            words.len() * 4,
+            x.div_ceil(subgroup)
+        );
         sizes.push(x);
     }
     let [saxpy_size, reduce_size] = sizes[..] else {
@@ -482,46 +501,32 @@ fn run(
     // memory". Both live in system RAM on this GPU, so the shaders read and
     // write them across PCIe - fine for one pass over the data; data the GPU
     // reuses belongs in DEVICE_LOCAL memory (step 15's staging).
+    // `--uncached` rules HOST_CACHED types out instead, for the comparison;
+    // the spec adds that "uncached memory is always host coherent".
     // SAFETY: `physical_device` belongs to `instance`.
     let mem = unsafe { instance.get_physical_device_memory_properties(physical_device) };
+    let none = vk::MemoryPropertyFlags::empty();
     let upload = vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT;
     let readback_required = vk::MemoryPropertyFlags::HOST_VISIBLE;
-    let readback_preferred = if args.uncached {
-        vk::MemoryPropertyFlags::empty()
+    let (readback_preferred, readback_excluded) = if args.uncached {
+        (none, vk::MemoryPropertyFlags::HOST_CACHED)
     } else {
-        vk::MemoryPropertyFlags::HOST_CACHED
+        (vk::MemoryPropertyFlags::HOST_CACHED, none)
     };
     let n = usize::try_from(args.count)?;
     let float_bytes = vk::DeviceSize::try_from(n * size_of::<f32>())?;
     let uint_bytes = vk::DeviceSize::try_from(n * size_of::<u32>())?;
     let sums_bytes = vk::DeviceSize::from(reduce_groups) * 4;
-    let x = create_buffer(
-        &mut objects,
-        &mem,
-        float_bytes,
-        upload,
-        vk::MemoryPropertyFlags::empty(),
-    )?;
-    let y = create_buffer(
-        &mut objects,
-        &mem,
-        float_bytes,
-        upload,
-        vk::MemoryPropertyFlags::empty(),
-    )?;
-    let values = create_buffer(
-        &mut objects,
-        &mem,
-        uint_bytes,
-        upload,
-        vk::MemoryPropertyFlags::empty(),
-    )?;
+    let x = create_buffer(&mut objects, &mem, float_bytes, upload, none, none)?;
+    let y = create_buffer(&mut objects, &mem, float_bytes, upload, none, none)?;
+    let values = create_buffer(&mut objects, &mem, uint_bytes, upload, none, none)?;
     let result = create_buffer(
         &mut objects,
         &mem,
         float_bytes,
         readback_required,
         readback_preferred,
+        readback_excluded,
     )?;
     let sums = create_buffer(
         &mut objects,
@@ -529,7 +534,15 @@ fn run(
         sums_bytes,
         readback_required,
         readback_preferred,
+        readback_excluded,
     )?;
+    // "The memoryTypeBits member is identical for all VkBuffer objects
+    // created with the same value for the flags and usage members": the two
+    // outputs get the same type from the same choice, and everything below
+    // (the printout, the invalidate) treats them as one.
+    if sums.memory_type != result.memory_type {
+        return Err("result and groupSums got different memory types".into());
+    }
     let type_flags = |t: u32| -> Result<vk::MemoryPropertyFlags, Box<dyn Error>> {
         Ok(mem
             .memory_types_as_slice()

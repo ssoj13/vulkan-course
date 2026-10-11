@@ -553,6 +553,15 @@ try {
     // and no CPU copy: the init shader writes the starting state.
     const vk::PhysicalDeviceMemoryProperties mem = physicalDevice.getMemoryProperties();
     const vk::DeviceSize particleBytes           = vk::DeviceSize{count} * sizeof(Particle);
+    // The descriptor below binds the whole buffer, and a storage-buffer
+    // descriptor may cover at most maxStorageBufferRange bytes
+    // (VUID-VkWriteDescriptorSet-descriptorType-00333). The spec only
+    // guarantees 2^27 = 128 MiB, less than 2^24 particles x 16 bytes.
+    const uint32_t maxRange = chosen.limits.maxStorageBufferRange;
+    if (particleBytes > maxRange) {
+        throw std::runtime_error(
+            std::format("{} particles = {} bytes exceed maxStorageBufferRange = {}", count, particleBytes, maxRange));
+    }
     GpuBuffer particles = createBuffer(device, mem, particleBytes,
                                        vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eVertexBuffer,
                                        vk::MemoryPropertyFlagBits::eDeviceLocal);
@@ -713,7 +722,12 @@ try {
     // buffer of its own, submitted once and waited for with a fence before the
     // first frame. The first frame's barrier (frame-barriers) has the compute
     // stage in its source scope, so it also orders the first simulate after
-    // these writes.
+    // these writes. The guard is declared after the init fence and everything
+    // else the GPU uses, so if anything below throws, it waits for the device
+    // before RAII destroys them (a fence of a pending submission must not be
+    // destroyed: VUID-vkDestroyFence-fence-01120).
+    const vk::raii::Fence initFence(device, vk::FenceCreateInfo{});
+    const IdleGuard idleGuard{device};
     {
         const vk::raii::CommandBuffer& initCmd = frames.front().commandBuffer;
         const Params params{.dt = 0.0f, .time = 0.0f, .count = count, .aspect = aspect};
@@ -723,10 +737,9 @@ try {
         initCmd.pushConstants<Params>(*computeLayout, vk::ShaderStageFlagBits::eCompute, 0, params);
         initCmd.dispatch(groups, 1, 1);
         initCmd.end();
-        const vk::raii::Fence fence(device, vk::FenceCreateInfo{});
         const vk::CommandBufferSubmitInfo cmdInfo{.commandBuffer = *initCmd};
-        queue.submit2(vk::SubmitInfo2{.commandBufferInfoCount = 1, .pCommandBufferInfos = &cmdInfo}, *fence);
-        if (device.waitForFences(*fence, vk::True, std::numeric_limits<uint64_t>::max()) != vk::Result::eSuccess) {
+        queue.submit2(vk::SubmitInfo2{.commandBufferInfoCount = 1, .pCommandBufferInfos = &cmdInfo}, *initFence);
+        if (device.waitForFences(*initFence, vk::True, std::numeric_limits<uint64_t>::max()) != vk::Result::eSuccess) {
             throw std::runtime_error("waitForFences failed");
         }
         // init is not needed again; the command buffer is reused by frame slot 0.
@@ -936,7 +949,6 @@ try {
     };
 
     // Step 10's loop: poll window messages, render one frame.
-    const IdleGuard idleGuard{device};
     std::println("Rendering. Close the window to exit.");
     const auto timeUp = [&] { return args.seconds && Seconds(Clock::now() - start).count() >= *args.seconds; };
     while (glfwWindowShouldClose(window.get()) == GLFW_FALSE && !timeUp()) {

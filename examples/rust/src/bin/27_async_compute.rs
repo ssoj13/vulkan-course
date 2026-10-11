@@ -203,8 +203,8 @@ const TIMESTAMPS: u32 = 2;
 struct GpuTimes {
     /// Nanoseconds per tick (timestampPeriod).
     period_ns: f64,
-    /// The valid bits common to both families' timestamps.
-    mask: u64,
+    /// The valid bits common to both families' timestamps (1-64).
+    bits: u32,
     second: u64,
     /// (frames, graphics us, compute us, overlap us) of the current second.
     current: (u64, f64, f64, f64),
@@ -216,12 +216,18 @@ impl GpuTimes {
     /// Adds graphics frame n [g0, g1] and compute step n+1 [c0, c1]. All
     /// device timestamps are in one time domain (VK_TIME_DOMAIN_DEVICE_KHR),
     /// so values from the two queues can be compared: the overlap is the
-    /// length of the intersection of the two intervals.
+    /// length of the intersection of the two intervals. Only the low `bits`
+    /// of a timestamp are meaningful and the counter wraps there, so every
+    /// value is taken as a signed tick offset from g0, computed modulo
+    /// 2^bits (right while the four lie less than 2^(bits-1) ticks apart).
     fn add(&mut self, [g0, g1]: [u64; 2], [c0, c1]: [u64; 2]) {
-        let us = |ticks: u64| (ticks & self.mask) as f64 * self.period_ns / 1000.0;
-        let graphics = us(g1.wrapping_sub(g0));
-        let compute = us(c1.wrapping_sub(c0));
-        let overlap = us(g1.min(c1).saturating_sub(g0.max(c0)));
+        let shift = 64 - self.bits;
+        let from_g0 = |t: u64| ((t.wrapping_sub(g0) << shift) as i64) >> shift;
+        let us = |ticks: i64| ticks as f64 * self.period_ns / 1000.0;
+        let (g1, c0, c1) = (from_g0(g1), from_g0(c0), from_g0(c1));
+        let graphics = us(g1);
+        let compute = us(c1 - c0);
+        let overlap = us((g1.min(c1) - c0.max(0)).max(0));
         for t in [&mut self.current, &mut self.total] {
             t.0 += 1;
             t.1 += graphics;
@@ -710,6 +716,17 @@ impl Vk {
         // SAFETY: `physical_device` was enumerated from this instance.
         let mem = unsafe { instance.get_physical_device_memory_properties(physical_device) };
         let particle_bytes = vk::DeviceSize::from(count) * size_of::<Particle>() as u64;
+        // Each descriptor binds a whole buffer, and a storage-buffer
+        // descriptor may cover at most maxStorageBufferRange bytes
+        // (VUID-VkWriteDescriptorSet-descriptorType-00333). The spec only
+        // guarantees 2^27 = 128 MiB, less than 2^24 particles x 16 bytes.
+        let max_range = chosen.limits.max_storage_buffer_range;
+        if particle_bytes > vk::DeviceSize::from(max_range) {
+            return Err(format!(
+                "{count} particles = {particle_bytes} bytes exceed maxStorageBufferRange = {max_range}"
+            )
+            .into());
+        }
         let mut particles = Vec::with_capacity(2);
         for _ in 0..2 {
             let mut info = vk::BufferCreateInfo::default()
@@ -991,7 +1008,7 @@ impl Vk {
         let query_pool = unsafe { device.create_query_pool(&pool_info, None)? };
         let gpu = GpuTimes {
             period_ns: f64::from(chosen.limits.timestamp_period),
-            mask: u64::MAX >> (64 - valid_bits.min(64)),
+            bits: valid_bits.min(64),
             ..GpuTimes::default()
         };
 
@@ -1041,6 +1058,14 @@ impl Vk {
             let waited = device
                 .queue_submit2(compute_queue, &[submit], fence)
                 .and_then(|()| device.wait_for_fences(&[fence], true, u64::MAX));
+            // A fence must not be destroyed while a submission that signals it
+            // is pending (VUID-vkDestroyFence-fence-01120): if the wait failed,
+            // wait for the whole device first.
+            if waited.is_err()
+                && let Err(e) = device.device_wait_idle()
+            {
+                eprintln!("device_wait_idle failed: {e}");
+            }
             device.destroy_fence(fence, None);
             waited?;
             device.destroy_pipeline(init, None);
@@ -1212,8 +1237,10 @@ impl Vk {
         // signal makes the writes available, the graphics queue's wait makes
         // them visible to its vertex input (semaphores carry memory
         // dependencies, no barrier needed on either side). Both at
-        // ALL_COMMANDS: the start timestamp is inside the wait's scope, so
-        // it measures the work, not the waiting.
+        // ALL_COMMANDS: the start timestamp (TOP_OF_PIPE) is inside the
+        // wait's scope, so the interval measures the work, not the waiting.
+        // A wait at a later stage would let TOP_OF_PIPE pass early and the
+        // interval would include the wait.
         let waits: Vec<vk::SemaphoreSubmitInfo> = (n > 2)
             .then(|| {
                 vk::SemaphoreSubmitInfo::default()
@@ -1401,14 +1428,20 @@ impl Vk {
 
         // #region submit-graphics
         // Waits: the swapchain image (binary, as in step 10) and state n
-        // (computed >= n; ALL_COMMANDS so the start timestamp measures the
-        // work, see submit-compute). Signals: render_finished for the present
-        // and rendered = n, which the CPU (wait-slot) and compute step n + 2
+        // (computed >= n). Both at ALL_COMMANDS, so the start timestamp comes
+        // after both waits and the graphics interval measures the work, not
+        // the waiting (see submit-compute). Step 10 waits for the image at
+        // COLOR_ATTACHMENT_OUTPUT only, which lets the vertex work start
+        // before the image is there - but then this interval would include
+        // the wait for the image. The layout transition (src
+        // COLOR_ATTACHMENT_OUTPUT) still chains to the wait: ALL_COMMANDS
+        // includes that stage. Signals: render_finished for the present and
+        // rendered = n, which the CPU (wait-slot) and compute step n + 2
         // wait for.
         let waits = [
             vk::SemaphoreSubmitInfo::default()
                 .semaphore(image_available)
-                .stage_mask(S::COLOR_ATTACHMENT_OUTPUT),
+                .stage_mask(S::ALL_COMMANDS),
             vk::SemaphoreSubmitInfo::default()
                 .semaphore(self.computed)
                 .value(n)

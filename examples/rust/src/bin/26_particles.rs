@@ -592,6 +592,17 @@ impl Vk {
         // SAFETY: `physical_device` was enumerated from this instance.
         let mem = unsafe { instance.get_physical_device_memory_properties(physical_device) };
         let particle_bytes = vk::DeviceSize::from(count) * size_of::<Particle>() as u64;
+        // The descriptor below binds the whole buffer, and a storage-buffer
+        // descriptor may cover at most maxStorageBufferRange bytes
+        // (VUID-VkWriteDescriptorSet-descriptorType-00333). The spec only
+        // guarantees 2^27 = 128 MiB, less than 2^24 particles x 16 bytes.
+        let max_range = chosen.limits.max_storage_buffer_range;
+        if particle_bytes > vk::DeviceSize::from(max_range) {
+            return Err(format!(
+                "{count} particles = {particle_bytes} bytes exceed maxStorageBufferRange = {max_range}"
+            )
+            .into());
+        }
         let particles = create_buffer(
             &device,
             &mem,
@@ -855,6 +866,14 @@ impl Vk {
             let waited = device
                 .queue_submit2(queue, &[submit], fence)
                 .and_then(|()| device.wait_for_fences(&[fence], true, u64::MAX));
+            // A fence must not be destroyed while a submission that signals it
+            // is pending (VUID-vkDestroyFence-fence-01120): if the wait failed,
+            // wait for the whole device first.
+            if waited.is_err()
+                && let Err(e) = device.device_wait_idle()
+            {
+                eprintln!("device_wait_idle failed: {e}");
+            }
             device.destroy_fence(fence, None);
             waited?;
             // `init` is not needed again; the command buffer is reused by frame slot 0.

@@ -263,7 +263,7 @@ using Ticks                   = std::array<uint64_t, 2>;
 // second and over the whole run.
 struct GpuTimes {
     double periodNs = 1.0; // nanoseconds per tick (timestampPeriod)
-    uint64_t mask   = 0;   // the valid bits common to both families' timestamps
+    uint32_t bits   = 64;  // the valid bits common to both families' timestamps (1-64)
     uint64_t second = 0;
     struct Sums {
         uint64_t frames = 0;
@@ -275,14 +275,18 @@ struct GpuTimes {
     // Adds graphics frame n [g0, g1] and compute step n+1 [c0, c1]. All device
     // timestamps are in one time domain (VK_TIME_DOMAIN_DEVICE_KHR), so values
     // from the two queues can be compared: the overlap is the length of the
-    // intersection of the two intervals.
+    // intersection of the two intervals. Only the low bits of a timestamp are
+    // meaningful and the counter wraps there, so every value is taken as a
+    // signed tick offset from g0, computed modulo 2^bits (right while the four
+    // lie less than 2^(bits-1) ticks apart).
     void add(const Ticks& g, const Ticks& c) {
-        const auto us        = [&](uint64_t ticks) { return static_cast<double>(ticks & mask) * periodNs / 1000.0; };
-        const double graphic = us(g[1] - g[0]);
-        const double comp    = us(c[1] - c[0]);
-        const uint64_t lo    = std::max(g[0], c[0]);
-        const uint64_t hi    = std::min(g[1], c[1]);
-        const double overlap = us(hi > lo ? hi - lo : 0);
+        const uint32_t shift = 64 - bits;
+        const auto fromG0    = [&](uint64_t t) { return static_cast<int64_t>((t - g[0]) << shift) >> shift; };
+        const auto us        = [&](int64_t ticks) { return static_cast<double>(ticks) * periodNs / 1000.0; };
+        const int64_t g1 = fromG0(g[1]), c0 = fromG0(c[0]), c1 = fromG0(c[1]);
+        const double graphic = us(g1);
+        const double comp    = us(c1 - c0);
+        const double overlap = us(std::max<int64_t>(std::min(g1, c1) - std::max<int64_t>(c0, 0), 0));
         for (Sums* s : {&current, &total}) {
             s->frames += 1;
             s->graphics += graphic;
@@ -625,6 +629,15 @@ try {
                                               : std::format("EXCLUSIVE (one family, {})", graphicsFamily);
     const vk::PhysicalDeviceMemoryProperties mem = physicalDevice.getMemoryProperties();
     const vk::DeviceSize particleBytes           = vk::DeviceSize{count} * sizeof(Particle);
+    // Each descriptor binds a whole buffer, and a storage-buffer descriptor may
+    // cover at most maxStorageBufferRange bytes
+    // (VUID-VkWriteDescriptorSet-descriptorType-00333). The spec only
+    // guarantees 2^27 = 128 MiB, less than 2^24 particles x 16 bytes.
+    const uint32_t maxRange = chosen.limits.maxStorageBufferRange;
+    if (particleBytes > maxRange) {
+        throw std::runtime_error(
+            std::format("{} particles = {} bytes exceed maxStorageBufferRange = {}", count, particleBytes, maxRange));
+    }
     std::vector<GpuBuffer> particles;
     for (int i = 0; i < 2; ++i) {
         vk::raii::Buffer buffer(device, vk::BufferCreateInfo{
@@ -827,14 +840,19 @@ try {
     vk::raii::QueryPool queryPool(device, vk::QueryPoolCreateInfo{.queryType = vk::QueryType::eTimestamp, .queryCount = 2 * timestamps * frameCount});
     GpuTimes gpu{
         .periodNs = static_cast<double>(chosen.limits.timestampPeriod),
-        .mask     = validBits >= 64 ? ~uint64_t{0} : (uint64_t{1} << validBits) - 1,
+        .bits     = std::min(validBits, 64u),
     };
 
     // #region init
     // Step 26's init, on the compute queue: writes state 0 into P[0] (set 0).
     // The host waits for it with a fence; compute step 1, on the same queue, is
-    // ordered after it by its own leading barrier.
+    // ordered after it by its own leading barrier. The guard is declared after
+    // the init fence and everything else the GPU uses, so if anything below
+    // throws, it waits for both queues before RAII destroys them (a fence of a
+    // pending submission must not be destroyed: VUID-vkDestroyFence-fence-01120).
     const float aspect = static_cast<float>(extent.height) / static_cast<float>(extent.width);
+    const vk::raii::Fence initFence(device, vk::FenceCreateInfo{});
+    const IdleGuard idleGuard{device};
     {
         const vk::raii::CommandBuffer& initCmd = frames.front().computeCmd;
         const Params params{.dt = 0.0f, .time = 0.0f, .count = count, .aspect = aspect};
@@ -844,10 +862,9 @@ try {
         initCmd.pushConstants<Params>(*computeLayout, vk::ShaderStageFlagBits::eCompute, 0, params);
         initCmd.dispatch(groups, 1, 1);
         initCmd.end();
-        const vk::raii::Fence fence(device, vk::FenceCreateInfo{});
         const vk::CommandBufferSubmitInfo cmdInfo{.commandBuffer = *initCmd};
-        computeQueue.submit2(vk::SubmitInfo2{.commandBufferInfoCount = 1, .pCommandBufferInfos = &cmdInfo}, *fence);
-        if (device.waitForFences(*fence, vk::True, std::numeric_limits<uint64_t>::max()) != vk::Result::eSuccess) {
+        computeQueue.submit2(vk::SubmitInfo2{.commandBufferInfoCount = 1, .pCommandBufferInfos = &cmdInfo}, *initFence);
+        if (device.waitForFences(*initFence, vk::True, std::numeric_limits<uint64_t>::max()) != vk::Result::eSuccess) {
             throw std::runtime_error("waitForFences failed");
         }
         init.reset();
@@ -933,8 +950,10 @@ try {
         // enough). Signal computed = n when the step is done; the signal makes
         // the writes available, the graphics queue's wait makes them visible to
         // its vertex input (semaphores carry memory dependencies, no barrier
-        // needed on either side). Both at ALL_COMMANDS: the start timestamp is
-        // inside the wait's scope, so it measures the work, not the waiting.
+        // needed on either side). Both at ALL_COMMANDS: the start timestamp
+        // (TOP_OF_PIPE) is inside the wait's scope, so the interval measures the
+        // work, not the waiting. A wait at a later stage would let TOP_OF_PIPE
+        // pass early and the interval would include the wait.
         const vk::SemaphoreSubmitInfo wait{.semaphore = *rendered, .value = n > 2 ? n - 2 : 0, .stageMask = S::eAllCommands};
         const vk::SemaphoreSubmitInfo signal{.semaphore = *computed, .value = n, .stageMask = S::eAllCommands};
         const vk::CommandBufferSubmitInfo cmdInfo{.commandBuffer = *cmd};
@@ -1049,12 +1068,18 @@ try {
 
         // #region submit-graphics
         // Waits: the swapchain image (binary, as in step 10) and state n
-        // (computed >= n; ALL_COMMANDS so the start timestamp measures the work,
-        // see submit-compute). Signals: renderFinished for the present and
-        // rendered = n, which the CPU (wait-slot) and compute step n + 2 wait for.
+        // (computed >= n). Both at ALL_COMMANDS, so the start timestamp comes
+        // after both waits and the graphics interval measures the work, not the
+        // waiting (see submit-compute). Step 10 waits for the image at
+        // COLOR_ATTACHMENT_OUTPUT only, which lets the vertex work start before
+        // the image is there - but then this interval would include the wait for
+        // the image. The layout transition (src COLOR_ATTACHMENT_OUTPUT) still
+        // chains to the wait: ALL_COMMANDS includes that stage. Signals:
+        // renderFinished for the present and rendered = n, which the CPU
+        // (wait-slot) and compute step n + 2 wait for.
         const vk::Semaphore finished = *renderFinished.at(imageIndex);
         const std::array waits{
-            vk::SemaphoreSubmitInfo{.semaphore = *frame.imageAvailable, .stageMask = S::eColorAttachmentOutput},
+            vk::SemaphoreSubmitInfo{.semaphore = *frame.imageAvailable, .stageMask = S::eAllCommands},
             vk::SemaphoreSubmitInfo{.semaphore = *computed, .value = n, .stageMask = S::eAllCommands},
         };
         const std::array signals{
@@ -1091,9 +1116,7 @@ try {
         return true;
     };
 
-    // The pipeline starts one step ahead: step 1 before frame 1. From here on
-    // the guard waits for both queues before RAII destroys anything.
-    const IdleGuard idleGuard{device};
+    // The pipeline starts one step ahead: step 1 before frame 1.
     submitCompute(1);
     std::println("Rendering. Close the window to exit.");
     const auto timeUp = [&] { return args.seconds && Seconds(Clock::now() - start).count() >= *args.seconds; };
