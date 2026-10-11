@@ -41,11 +41,16 @@ set(STEPS
     13_memory_types
     14_vertex_buffer
     15_staging
-    16_allocator)
+    16_allocator
+    17_uniforms
+    18_push_constants
+    19_buffer_device_address
+    20_bindless)
 # Steps that open a window.
 set(WINDOW_STEPS 06_window_surface 07_swapchain 08_pipeline 09_triangle
                  10_frames_in_flight 11_resize 12_timeline 14_vertex_buffer
-                 15_staging)
+                 15_staging 17_uniforms 18_push_constants
+                 19_buffer_device_address 20_bindless)
 
 foreach(step IN LISTS STEPS)
     add_executable(${step} src/${step}.cpp)

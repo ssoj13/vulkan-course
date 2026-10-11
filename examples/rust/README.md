@@ -56,9 +56,15 @@ cargo run --bin 01_instance
 | `14_vertex_buffer` | Indexed hexagon from a vertex buffer + index buffer in HOST_VISIBLE \| HOST_COHERENT memory; vertex input bindings/attributes (`shaders/mesh.slang`); `vkCmdDrawIndexed`; 2 frames in flight |
 | `15_staging` | The same mesh in DEVICE_LOCAL buffers: staging buffer + `vkCmdCopyBuffer` on the graphics queue (default), on the dedicated transfer queue with a queue family ownership transfer (`--transfer-queue`), or direct CPU writes into DEVICE_LOCAL \| HOST_VISIBLE memory (`--bar`); `--mib N` pads the vertex buffer to measure bandwidth; the upload is timed |
 | `16_allocator` | N buffers (`--count`, default 3000) with one `vkAllocateMemory` each vs. sub-allocated from 64 MiB blocks by a minimal linear allocator in the file; counts and timings; prints `maxMemoryAllocationCount`. No window |
-Steps 06-12, 14 and 15 keep their window open until you close it; steps 10-12, 14 and 15
-also take `--seconds S` to close it after S seconds. Lines that depend on timing start with
-`[timing]` (drop them to compare the Rust and C++ output). Steps 06-10, 12, 14 and 15 have a
+| `17_uniforms` | A per-frame transform (rotation + aspect matrix, tint, time) in one uniform buffer per frame in flight (persistently mapped); descriptor set layout, pool, two sets, `vkUpdateDescriptorSets`, `vkCmdBindDescriptorSets`; the std140 block layout is read from the SPIR-V (`shaders/transform.slang`) and checked against the host struct |
+| `18_push_constants` | The same 80-byte block as push constants (`vkCmdPushConstants`, default) or step 17's uniform buffers bound with push descriptors (`--push-descriptor`, `vkCmdPushDescriptorSet`, Vulkan 1.4 feature `pushDescriptor`); prints `maxPushConstantsSize` / `maxPushDescriptors` and compares the setup of the three ways |
+| `19_buffer_device_address` | 64 instances read their records through a GPU pointer: `bufferDeviceAddress`, `SHADER_DEVICE_ADDRESS` buffer, `DEVICE_ADDRESS` allocation, `vkGetBufferDeviceAddress` passed as a push constant (`Instance*` in `shaders/device_address.slang`); one instanced draw |
+| `20_bindless` | Descriptor indexing: one set with a variable-count array of storage buffers (one per instance), partially bound, update-after-bind; `NonUniformResourceIndex` in `shaders/bindless.slang`; prints the descriptor limits; streams the 64th buffer into the live set at frame 120 |
+
+Steps 06-12, 14, 15 and 17-20 keep their window open until you close it; steps 10-12, 14, 15
+and 17-20 also take `--seconds S` to close it after S seconds. Lines that depend on timing start
+with `[timing]`, lines with GPU addresses (step 19) with `[addr]` (drop both to compare the Rust
+and C++ output). Steps 06-10, 12, 14, 15 and 17-20 have a
 fixed-size window: resizing (and minimizing, which makes the swapchain out of date)
 needs swapchain recreation, which is step 11 - the others stop cleanly with a message.
 
@@ -70,6 +76,6 @@ identical.
 
 ![Step 09](../screenshots/09_triangle.png)
 
-The debug messenger in steps 02-16 reports only `[WARNING]` and `[ERROR]`.
+The debug messenger in steps 02-20 reports only `[WARNING]` and `[ERROR]`.
 A warning from a third-party implicit layer (screen recorders, overlays) is
 not about our code: implicit layers are explained in the loader lesson.

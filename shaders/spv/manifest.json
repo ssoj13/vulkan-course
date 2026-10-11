@@ -9,6 +9,28 @@
 	],
 	"shaders": [
 		{
+			"source": "bindless.slang",
+			"sourceSha256": "95a694a76c817e288e3e565c9ae26464c8f9b93cf491bd16a6c20329148b2211",
+			"outputs": [
+				{
+					"file": "bindless.spv",
+					"bytes": 2704,
+					"sha256": "d3c3f9609adf13d4dabbf63fedb954a2db48d4c640704e84a4a6de181764c440"
+				}
+			]
+		},
+		{
+			"source": "device_address.slang",
+			"sourceSha256": "8921f29ee05fa33e093388d08339ef7b6b20b3258ff10242a6a27dc3b64c3606",
+			"outputs": [
+				{
+					"file": "device_address.spv",
+					"bytes": 2556,
+					"sha256": "d57cd4658aebfa81f566d373073b3570524dba5bc5c0a832d9f86f339f3aa15a"
+				}
+			]
+		},
+		{
 			"source": "mesh.slang",
 			"sourceSha256": "202b6a8142974a6802ff3430ae739df81cd6d47ab1e3ac4356b5d749d4132d41",
 			"outputs": [
@@ -16,6 +38,17 @@
 					"file": "mesh.spv",
 					"bytes": 900,
 					"sha256": "2595bbb87ed9f5d0d37490343672894556d40b41fb3aa5cf3bc9c4670ce1cb3f"
+				}
+			]
+		},
+		{
+			"source": "transform.slang",
+			"sourceSha256": "ab5bc0027359c16ade04e5ba40643d01601e893d18921225fe614bedc2798d6c",
+			"outputs": [
+				{
+					"file": "transform.spv",
+					"bytes": 2604,
+					"sha256": "1ff46a412802a806bcbd6735db3639062bb71fee2eb06cda2a46899631e1c12c"
 				}
 			]
 		},

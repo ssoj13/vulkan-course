@@ -53,12 +53,18 @@ as `SHADER_DIR` by CMake), the same file the Rust examples embed. It is compiled
 | 14 | `src/14_vertex_buffer.cpp` | indexed hexagon from vertex + index buffers in HOST_VISIBLE \| HOST_COHERENT memory; vertex input state; `drawIndexed`; 2 frames in flight |
 | 15 | `src/15_staging.cpp` | DEVICE_LOCAL mesh via staging buffer + `copyBuffer` on the graphics queue, or the transfer queue with a queue family ownership transfer (`--transfer-queue`), or direct BAR writes (`--bar`); `--mib N`; timed upload |
 | 16 | `src/16_allocator.cpp` | N buffers with one `vkAllocateMemory` each vs. VMA (`vmaCreateBuffer`, 64 MiB preferred blocks); counts, VMA statistics, timings; no window |
+| 17 | `src/17_uniforms.cpp` | per-frame transform in one persistently mapped uniform buffer per frame in flight; set layout, pool, sets, `updateDescriptorSets`, `bindDescriptorSets`; std140 layout read from the SPIR-V and checked against the host struct |
+| 18 | `src/18_push_constants.cpp` | the same block as push constants (`pushConstants`) or via push descriptors (`--push-descriptor`, `pushDescriptorSet`, Vulkan 1.4 `pushDescriptor`); limits and a setup comparison |
+| 19 | `src/19_buffer_device_address.cpp` | 64 instances read through a GPU pointer (`bufferDeviceAddress`, `getBufferAddress`) passed as a push constant; one instanced draw |
+| 20 | `src/20_bindless.cpp` | descriptor indexing: variable-count, partially bound, update-after-bind array of storage buffers indexed with `NonUniformResourceIndex`; descriptor limits; a buffer streamed into the live set at frame 120 |
+
 Lessons embed code by `// #region <name>` ... `// #endregion` markers; the names
 match the Rust examples.
 
-Steps 06-12, 14 and 15 keep their window open until you close it; steps 10-12, 14 and 15
-also take `--seconds S`. Lines that depend on timing start with `[timing]` (drop them to
-compare with the Rust output). Steps 06-10, 12, 14 and 15 have a fixed-size window: resizing
+Steps 06-12, 14, 15 and 17-20 keep their window open until you close it; steps 10-12, 14, 15
+and 17-20 also take `--seconds S`. Lines that depend on timing start with `[timing]`, lines
+with GPU addresses (step 19) with `[addr]` (drop both to compare with the Rust output). Steps
+06-10, 12, 14, 15 and 17-20 have a fixed-size window: resizing
 (and minimizing, which makes the swapchain out of date) needs swapchain recreation, which is
 step 11 - the others stop cleanly with a message. In step 16 the lines about the allocator's
 internals start with `[lib]`: VMA here, a minimal linear allocator in the Rust version (whose
