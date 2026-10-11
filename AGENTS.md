@@ -525,6 +525,39 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
   VkImageMemoryBarrier2-image-03320).
 - [x] 22/24 D24_UNORM_S8_UINT branch (DEPTH_STENCIL_ATTACHMENT_OPTIMAL, both aspects, pStencilAttachment): tested
   2026-10-11 by temporarily putting it first in the candidate list (both languages, reverted): runs, sync validation clean.
+- [x] Module 10 EN lessons (2026-10-11): module `images` ("Images") in course.json/course.ru.json; RU pages are
+  placeholders («Русская версия урока готовится.»). Regions shown once: 21 all except frame-resources
+  (textures-and-samplers, + Snippet textured.slang, ObjectGraph build with image/device-memory/image-view/sampler/
+  descriptor objects), 22 all except frame-resources (depth, + Snippet cube.slang), 23 all (mipmaps), 24 all (msaa).
+  Not shown: 21 and 22 frame-resources (= step 17's Frame). 29 terms added (scratchpad m10lesson/addterms10.py) + RU
+  overlay: texture, vk-sampler, image-tiling, format-features, buffer-to-image-copy, combined-image-sampler,
+  texture-filtering, address-mode, anisotropic-filtering, srgb-format, texture-unit, depth-buffer, depth-format,
+  depth-test, clip-space, perspective-projection, reversed-z, early-z, mipmap, lod, vk-cmd-blit-image,
+  trilinear-filtering, texture-aliasing, msaa, sample-count, msaa-resolve, transient-attachment, sample-shading,
+  supersampling; objects.json sampler got `term`. Older EN lessons link here instead of "module 10" (bindless,
+  descriptor-sets x2, memory-types, staging-uploads, graphics-pipeline, image-views). Outputs quoted from Rust release
+  runs 2026-10-11 (scratchpad m10lesson/, `--seconds 2`, validation on; C++ identical without [timing] for all 16
+  configurations: 21 default/--nearest/--address mirror|clamp|border/--nearest --address clamp, 22 default/--no-depth,
+  23 default/--no-mips/--anisotropy, 24 --samples 1/2/4/8 + default; stderr only the bandicam warning). Measured for
+  the lesson: 23 three alternating 3 s runs each: default 2646-2881 fps, --no-mips 2773-2847, --anisotropy 2722-2817
+  (no measurable cost). Real facts used: image memoryTypeBits 0b11 (no HOST_VISIBLE type for an optimal image),
+  mip chain 1399808 bytes vs 1398100 texel bytes; BC7_SRGB_BLOCK has BLIT_SRC but not BLIT_DST (vulkaninfo
+  --show-formats); spec: linear tiling guaranteed only for 2D/1 mip/1 layer/1 sample/TRANSFER usage; blits need a
+  graphics queue (VUID-vkCmdBlitImage2-commandBuffer-cmdpool). Depth precision numbers are computed from the formula,
+  not measured. The sync-validation negative tests of 22/24 are described from the State notes (full message not
+  logged); a 2026-10-11 rerun with VK_KHRONOS_VALIDATION_VALIDATE_SYNC=true printed only bandicam but showed no fps drop,
+  so it did not prove the setting was active. No visual claim is verified (no screenshots).
+- [x] Module 10: independent review of the EN lessons done; fixes applied 2026-10-11 (checked in vkspec 1.4.365):
+  textures (maxLod 0 makes the rate irrelevant), depth (discard forces the depth write, often the test, late), mipmaps
+  (bias clamp = clamp(mipLodBias + shader Bias, ±maxSamplerLodBias) per the limit's definition; BC "cannot be blit
+  targets"; chains from CPU/offline tool/compute; blit VUIDs 00233 + 00234; implicit LOD also in compute/mesh/task via
+  VK_KHR_compute_shader_derivatives; spec: "the derivative and LOD values are undefined" for quad-divergent
+  image/sampler unless quadDivergentImplicitLod), msaa ("may never need backing memory"; hazard message from project
+  notes; framebufferColorSampleCounts = float/fixed-point formats, integer -> framebufferIntegerColorSampleCounts);
+  terms: texture-aliasing def, clip-space lost the wrong "NDC" alias, RU mipmap def reworded.
+- [x] Module 10 RU lessons (2026-10-11): ru/images/{textures-and-samplers, depth, mipmaps, msaa} authored (same regions,
+  outputs, VUIDs, measurements, ObjectGraph build and quiz facts as EN, with the review fixes).
+- [ ] Module 10: independent review of the RU lessons (language + facts vs EN).
 - [ ] Proposal: a step 16b using gpu-allocator through `[patch.crates-io]` once a gpu-allocator release (or its main)
   builds against ash master (`push_next` -> `push`); 0.28.0 does not. Needs a Cargo.toml change: coordinate with the
   owner of examples/rust/Cargo.toml. Also update the Cargo.toml comment (lines 18-21) to mention the [patch] result.

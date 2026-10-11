@@ -88,8 +88,8 @@ shader is step 17's transform with a full matrix, and the fragment shader does o
 <Snippet src="shaders/textured.slang" />
 
 `Sampler2D` is Slang's name for an image view and a sampler in one descriptor; `.Sample(uv)` is an *implicit-LOD*
-sample: the GPU works out from neighboring pixels how fast `uv` changes and filters accordingly. That rate matters for
-mipmaps; with one level here it only decides between the two filters, as the sampler section shows.
+sample: the GPU works out from neighboring pixels how fast `uv` changes and filters accordingly. That rate is what picks a
+mip level; here the sampler's `maxLod = 0` makes it irrelevant, as the sampler section shows.
 
 ## 2. Can this format do it?
 

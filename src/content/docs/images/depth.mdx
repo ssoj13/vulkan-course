@@ -287,8 +287,9 @@ Rendering. Close the window to exit.
 - **Early-Z.** In the spec's logical order the fragment shader runs before the depth test. But "a fragment shader may
   not be executed if ... any other fragment operation discards the fragment, and the shader does not write to any
   storage resources" (spec, "Fragment Shading"), so hardware typically tests depth *before* shading when the result
-  cannot depend on the shader, and skips the shader for hidden fragments. A shader that writes depth itself, or
-  discards fragments, typically forces the test to run after it (the `LATE_FRAGMENT_TESTS` stage). Drawing opaque
+  cannot depend on the shader, and skips the shader for hidden fragments. A shader that writes depth itself typically
+  forces the test to run after it (the `LATE_FRAGMENT_TESTS` stage). One that discards fragments typically forces at
+  least the depth *write* to wait until the shader has decided, and on many GPUs the test with it. Drawing opaque
   objects roughly front to back helps early rejection; drawing a depth-only prepass first is the extreme form of that.
 - **Hierarchical depth and compression.** Desktop GPUs typically keep coarse per-tile minimum/maximum depth to reject
   whole blocks of fragments at once, and store depth compressed (a tile of a planar triangle compresses to its plane

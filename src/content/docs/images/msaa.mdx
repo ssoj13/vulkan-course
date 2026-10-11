@@ -69,7 +69,9 @@ Usable for color + depth: 1, 2, 4, 8
 Sample count: 4 (--samples): MSAA color + depth, resolved into the swapchain image
 ```
 
-The framebuffer limits speak for all formats at once. A specific format, usage and tiling has its own answer,
+The framebuffer limits speak for whole classes of formats at once: `framebufferColorSampleCounts` covers color
+attachments with floating- or fixed-point formats, such as the swapchain's `B8G8R8A8_SRGB`; integer color formats
+have their own limit, `framebufferIntegerColorSampleCounts`. A specific format, usage and tiling has its own answer,
 `sampleCounts` from `vkGetPhysicalDeviceImageFormatProperties2`, which the image creation below checks as well
 (creating an image with a count outside it violates `VUID-VkImageCreateInfo-samples-02258`).
 
@@ -111,7 +113,7 @@ single-sampled; it only receives the resolve. What the four runs allocated:
 
 Exactly 800 x 600 x 4 bytes x N for each, all in memory type 1. At 4K and 8x, the same two attachments would take
 about 530 MB; this is why high sample counts are rare at high resolutions, and why tile-based GPUs, where the samples
-need no memory at all, use MSAA so freely.
+may never need backing memory, use MSAA so freely.
 
 ## 3. The pipeline's sample count
 
@@ -155,7 +157,7 @@ step 22's write-after-write barrier at the start of the frame. The depth barrier
 for the previous frame's last accesses in `COLOR_ATTACHMENT_OUTPUT`: its `DONT_CARE` store, a write that must be made
 available (source access `COLOR_ATTACHMENT_WRITE`), and the resolve's read of the samples, which only needs the
 execution dependency. As in step 22, removing the source scope was tested and synchronization validation reported the
-same `WRITE_AFTER_WRITE` hazard on the shared image.
+same `WRITE_AFTER_WRITE` hazard on the shared image (as recorded in the project notes; the full message was not kept).
 
 ## Four runs
 

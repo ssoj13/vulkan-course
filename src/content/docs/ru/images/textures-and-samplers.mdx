@@ -3,4 +3,478 @@ title: Текстуры и сэмплеры
 description: 'Как пиксели с CPU становятся текстурой, которую сэмплирует шейдер: VkImage против VkBuffer, optimal tiling, возможности формата, staging-копирование в изображение с двумя переходами layout, image view, сэмплер (фильтры, режимы адресации, анизотропия) и почему цветовые текстуры хранят в _SRGB.'
 ---
 
-Русская версия урока готовится.
+import MindMap from 'course-kit/components/MindMap.astro';
+import Quiz from 'course-kit/components/Quiz.astro';
+import Snippet from 'course-kit/components/Snippet.astro';
+import Step from '../../../../components/Step.astro';
+import ObjectGraph from '../../../../components/ObjectGraph.astro';
+
+До сих пор каждый цвет на экране приходил из вершины или из константы. Настоящий материал читает текстуру: карту,
+нарисованную в Mari или запечённую в Substance, и берёт из неё значение по UV в каждом пикселе. В Vulkan за одной
+строкой шейдера `albedo.Sample(uv)` стоит больше объектов, чем за любой отрисовкой до сих пор: изображение, его память,
+копирование, два перехода layout, view, сэмплер и новый вид дескриптора. Почему текстура — не просто буфер с
+пикселями, и что добавляет каждый из этих объектов?
+
+## Место в курсе
+
+Первый урок модуля **«Изображения»**. Он собран почти целиком из уже знакомых деталей:
+[staging-загрузка](lesson:staging-uploads) из модуля 8, [барьеры и layout](lesson:barriers-and-layouts) из модуля 7,
+[image view](lesson:image-views) из модуля о презентации и [наборы дескрипторов](lesson:descriptor-sets) из модуля 9.
+Цепочка урока:
+
+`CPU pixels → staging VkBuffer → vkCmdCopyBufferToImage2 → VkImage (OPTIMAL tiling, SHADER_READ_ONLY_OPTIMAL) → VkImageView + VkSampler → COMBINED_IMAGE_SAMPLER descriptor → Sampler2D.Sample(uv) → texture unit`
+
+[Текстура](term:texture) — это [изображение](term:vk-image), которое шейдеры читают через [сэмплер](term:vk-sampler).
+Изображение хранится с [optimal tiling](term:image-tiling), поэтому тексели попадают в него
+[копированием из буфера](term:buffer-to-image-copy), а перед этим программа сверяется с
+[возможностями формата](term:format-features). Сэмплер отвечает за [фильтрацию](term:texture-filtering),
+[режимы адресации](term:address-mode) и [анизотропию](term:anisotropic-filtering); дескриптор
+[combined image sampler](term:combined-image-sampler) передаёт шейдеру и view, и сэмплер, а цветовые данные лежат в
+[формате _SRGB](term:srgb-format). Внизу всю фильтрацию делают [текстурные блоки](term:texture-unit) GPU. Дальше в
+модуле: [буфер глубины](lesson:depth) (изображение, в которое GPU пишет), [mip-уровни](lesson:mipmaps) (изображение
+из многих уровней) и [MSAA](lesson:msaa) (изображение с несколькими сэмплами на пиксель).
+
+## Изображение — не буфер с пикселями
+
+[`VkBuffer`](term:vk-buffer) — это просто байты подряд. GPU читает их по адресам, которые вычислил шейдер, и смысл у
+байтов ровно тот, который придал им шейдер. [`VkImage`](term:vk-image) — это блок текселей вместе с описанием, которое
+понимает само железо:
+
+| | `VkBuffer` | `VkImage` |
+|---|---|---|
+| Форма | длина в байтах | ширина, высота, глубина, mip-уровни, слои массива |
+| Элемент | нет (решает шейдер) | **формат**: `R8G8B8A8_SRGB` = 4 байта, цвет в кодировке sRGB |
+| Порядок в памяти | линейный, CPU может его отобразить (map) | обычно **optimal tiling**: порядок, известный только драйверу |
+| Состояние | нет | **layout** у каждого subresource, меняется барьерами |
+| Шейдер читает через | адрес или дескриптор буфера | image view, обычно вместе с сэмплером |
+
+Именно формат позволяет фиксированной логике GPU работать за шейдер: раскодировать 8-битный sRGB в линейные float,
+смешать четыре соседних текселя, завернуть координаты — всё до того, как шейдер получит значение. Буфер мог бы хранить
+те же байты, но тогда шейдеру пришлось бы делать всё это самому, по одной загрузке за раз.
+
+Если думать в терминах Nuke: буфер — это сырые байты файла на диске. Изображение — нода Read, которая знает разрешение,
+каналы и цветовое пространство файла. Сэмплер — параметр filter у ноды Transform, которая этот кадр ресэмплит.
+Пиксели те же, но всю тяжёлую работу делают инструменты вокруг них.
+
+## Optimal и linear tiling
+
+С `VK_IMAGE_TILING_LINEAR` тексели лежат строка за строкой, как в scanline EXR. С `VK_IMAGE_TILING_OPTIMAL` драйвер
+раскладывает их так, как удобно железу: обычно маленькими 2D-тайлами или вдоль заполняющей кривой, чтобы соседние на
+экране тексели оказывались соседями и в памяти, а иногда ещё и сжимает. Это та же идея тайловых EXR из
+[урока об image view](lesson:image-views), только форма тайла — секрет GPU.
+
+Почему не держать текстуры линейными, чтобы CPU писал в них напрямую? Потому что linear tiling — исключение, которое
+спецификация почти не гарантирует: «Creation of images with tiling `VK_IMAGE_TILING_LINEAR` may not be supported
+unless other parameters meet all of the constraints». Ограничения такие: 2D-изображение, формат не depth/stencil, один
+mip-уровень, один слой, один сэмпл и usage только `TRANSFER_SRC` и/или `TRANSFER_DST`. Гарантированное линейное
+изображение нельзя даже сэмплировать; всё, что сверх этого, — необязательные возможности, которые устройство сообщает
+для каждого формата (`linearTilingFeatures`). А там, где сэмплировать линейное изображение можно, оно теряет
+2D-локальность, на которую рассчитаны текстурные кэши. На GPU курса вопрос закрывает ещё и память: требования к памяти
+текстуры (ниже) разрешают только типы 0 и 1, и ни один из них не `HOST_VISIBLE`. Это optimal-изображение вообще нельзя
+отобразить в адресное пространство CPU. Так что текстуры едут тем же путём, что вершины в модуле 8: пишем
+staging-буфер, копируем на GPU.
+
+## 1. Тексели
+
+<Step file="21_texture" region="texture-data" />
+
+Текстура не загружается из файла, а генерируется: 256 x 256 RGBA8, шахматная доска из цветных градиентов и тёмно-серых
+клеток, с белой рамкой в 2 текселя, чтобы было видно, где кончается одна копия текстуры. Только целочисленная
+арифметика, поэтому Rust и C++ получают одни и те же 262144 байта и печатают одинаковый отпечаток (`FNV-1a
+0xb2e278e1`). Настоящая программа раскодировала бы PNG или, лучше, загрузила бы готовый для GPU контейнер (KTX2, DDS)
+в точно такой же массив байтов; сторона Vulkan от этого не меняется.
+
+<Step file="21_texture" region="quad" />
+
+Меш — квад с UV от 0 до 2, а не от 0 до 1. Внутри [0, 1] шейдер читает саму текстуру; за его пределами то, что он
+увидит, решает режим адресации сэмплера, так что три четверти квада показывают режим адресации в работе. Вершинный
+шейдер — трансформ из шага 17 с полной матрицей, а фрагментный делает ровно одно:
+
+<Snippet src="shaders/textured.slang" />
+
+`Sampler2D` — так в Slang называется image view и сэмплер в одном дескрипторе. `.Sample(uv)` — выборка с *неявным LOD*
+(implicit LOD): GPU сам оценивает по соседним пикселям, как быстро меняется `uv`, и фильтрует соответственно. Именно эта
+скорость выбирает mip-уровень; здесь `maxLod = 0` у сэмплера делает её неважной, как покажет раздел о сэмплере.
+
+## 2. Умеет ли это формат?
+
+Не каждый формат годится для любого применения. Прежде чем создавать изображение, программа спрашивает у
+`vkGetPhysicalDeviceFormatProperties2`, что формат умеет при каждом tiling; ответ — набор
+[возможностей формата](term:format-features) (format features).
+
+<Step file="21_texture" region="format-support" />
+
+Нужны три возможности: `SAMPLED_IMAGE` (шейдеры могут его сэмплировать), `SAMPLED_IMAGE_FILTER_LINEAR` (сэмплер может
+применять к нему линейную фильтрацию) и `TRANSFER_DST` (копирование может в него писать). На GPU курса:
+
+```text
+Format support (vkGetPhysicalDeviceFormatProperties2):
+  R8G8B8A8_SRGB (optimal tiling): SAMPLED_IMAGE yes, SAMPLED_IMAGE_FILTER_LINEAR yes, TRANSFER_DST yes
+  R8G8B8A8_UNORM (optimal tiling): SAMPLED_IMAGE yes, SAMPLED_IMAGE_FILTER_LINEAR yes, TRANSFER_DST yes
+```
+
+Подходят оба. Какой из них правильный — вопрос не к GPU, а к данным.
+
+<Step file="21_texture" region="texture-format" />
+
+### sRGB или UNORM
+
+Тексели рисовали, глядя в монитор, поэтому их 8-битные значения **закодированы в sRGB**: это кривая, которая отдаёт
+больше кодов тёмным тонам, ровно то, что лежит в текстуре из Photoshop или Mari. Формат сообщает Vulkan, что именно в
+нём лежит:
+
+- `R8G8B8A8_SRGB`: при сэмплировании «the (R,G,B,A) components are first converted as if they are UNORM formats, and
+  then sRGB to linear conversion is performed on the converted (R,G,B) components» (спецификация, «Texel Decode»;
+  альфа остаётся линейной). Перевод выполняется для каждого текселя *до* фильтрации, так что смешивание текселей и вся
+  математика шейдера идут в линейном свете, а swapchain `_SRGB` один раз кодирует результат при записи.
+- `R8G8B8A8_UNORM`: шейдер получает `value / 255`, никакого перевода. Правильно для данных, которые никогда не были
+  цветом на экране: карты нормалей, roughness, маски, displacement.
+
+`_UNORM` для цветовой текстуры ломает две вещи. Закодированные значения считаются линейными, а swapchain `_SRGB` потом
+кодирует их **второй раз**, и картинка выходит слишком светлой и блёклой. Кроме того, фильтрация смешивает нелинейные
+значения, так что каждый переход между светлым и тёмным текселем смешивается с неправильными весами. Это та же ошибка,
+что прочитать sRGB-плейт в Nuke как linear и потом смотреть его через sRGB viewer LUT. Форматы различаются только
+переводом, байты загружаются одни и те же.
+
+## 3. Изображение и его память
+
+<Step file="21_texture" region="create-image" />
+
+Create info — это строка таблицы выше: 2D, 256 x 256 x 1, один mip-уровень, один слой, один сэмпл, tiling `OPTIMAL` и
+usage `TRANSFER_DST | SAMPLED`. Usage перечисляет всё, для чего изображение когда-либо понадобится, заранее, чтобы
+драйвер мог выбрать раскладку. `initialLayout` — `UNDEFINED`: у optimal-изображения в начале нет определённого
+содержимого. (Второй вариант core Vulkan, `PREINITIALIZED`, «specifies that a linear image's memory is in a defined
+layout and can be populated by data» (спецификация): он для линейных изображений, которые заполняет хост, а не для
+текстур вроде этой.)
+
+<Step file="21_texture" region="image-memory" />
+
+Изображения просят память ровно так же, как буферы ([типы памяти](lesson:memory-types)), но отвечают по-своему:
+
+```text
+Memory requirements: size 262144, alignment 1024, memoryTypeBits 0b11 -> memory type 1 (DEVICE_LOCAL)
+```
+
+- **size**: здесь 262144 = 256 x 256 x 4, но этого никто не обещает; выравнивание и tiling могут сделать размер больше
+  (в уроке о mip-уровнях будет такой случай).
+- **alignment 1024**: буферы на этом GPU просили от 4 до 64 байт ([типы памяти](lesson:memory-types)). Optimal-изображение
+  просит 1 КиБ — это заодно [bufferImageGranularity](term:buffer-image-granularity) устройства, та «страница», которую
+  буфер и optimal-изображение в одной аллокации не должны делить.
+- **memoryTypeBits 0b11**: только типы 0 и 1. Буферам было разрешено `0b111011`; этому изображению недоступны
+  `HOST_VISIBLE`-типы 3 и 4 и BAR-тип 5. Тип 1, `DEVICE_LOCAL` в куче 0, — первый с нужным флагом.
+
+## 4. Загрузка: копирование в скрытую раскладку
+
+Загрузка — это [staging-путь шага 15](lesson:staging-uploads) с двумя отличиями: копирование должно понимать строки и
+форматы текселей, а изображение в каждый момент должно быть в нужном [layout](term:image-layout). Один command buffer
+записывает три команды.
+
+<Step file="21_texture" region="to-transfer-dst" />
+
+**Барьер 1: `UNDEFINED -> TRANSFER_DST_OPTIMAL`.** Копирование может писать в изображение только в layout
+`TRANSFER_DST_OPTIMAL` (или `GENERAL`): `VUID-VkCopyBufferToImageInfo2-dstImageLayout-01396`. Старый layout
+`UNDEFINED` значит «текущее содержимое можно выбросить» — у свежего изображения его и нет. Ничто раньше в этом command
+buffer изображение не трогает, поэтому первая область синхронизации пуста (`NONE`); вторая — запись копирования,
+которая не должна начаться, пока не выполнен [переход layout](term:layout-transition).
+
+<Step file="21_texture" region="copy" />
+
+**Копирование.** [`vkCmdCopyBufferToImage2`](term:buffer-to-image-copy) принимает регионы: каждый связывает часть буфера
+с частью одного subresource (аспект, mip-уровень, слои). Два поля описывают сторону буфера как изображение:
+`bufferRowLength` и `bufferImageHeight` «specify in texels a subregion of a larger two- or three-dimensional image in
+buffer memory ... If either of these values is zero, that aspect of the buffer memory is considered to be tightly
+packed according to the `imageExtent`» (спецификация). Здесь нули: строки идут вплотную друг за другом, как их записала
+`texture_pixels`. Ненулевая длина строки позволяет скопировать окно 256 в ширину из атласа шириной 1024, лежащего в
+буфере, — так нода Crop берёт регион из большого плейта. Во время копирования GPU переставляет построчный порядок буфера
+в тайловый порядок изображения; ради этой перестановки копирование и существует.
+
+<Step file="21_texture" region="to-shader-read" />
+
+**Барьер 2: `TRANSFER_DST_OPTIMAL -> SHADER_READ_ONLY_OPTIMAL`.** Layout для сэмплирования. Первая область — запись
+копирования (её делают доступной), вторая — сэмплирующие чтения фрагментного шейдера (им её делают видимой). Именно
+этот барьер, а не fence, которого программа ждёт потом, позволяет шейдеру увидеть тексели: fence лишь сообщает CPU, что
+staging-буфер можно убирать, как в [staging-загрузках](lesson:staging-uploads).
+
+```text
+Staging buffer: 262144 bytes, TRANSFER_SRC, memory type 3
+Recorded: barrier UNDEFINED -> TRANSFER_DST_OPTIMAL, vkCmdCopyBufferToImage2 (256x256, mip 0), barrier TRANSFER_DST_OPTIMAL -> SHADER_READ_ONLY_OPTIMAL
+Upload complete (fence waited); staging buffer destroyed
+[timing] texture upload 2.377 ms (staging write + record + submit + wait)
+```
+
+Строка `[timing]` от запуска к запуску разная: в запусках, процитированных в этом уроке, 1,8–2,4 мс на 256 КиБ. Время
+определяют постоянные расходы одной отправки и одного ожидания fence, а не байты.
+
+## 5. View
+
+<Step file="21_texture" region="image-view" />
+
+Дескрипторы никогда не указывают на изображения — только на [image view](term:vk-image-view). Здесь самый простой:
+2D-view mip-уровня 0, слоя 0, аспекта color, в собственном формате изображения. Остальное (типы view, swizzle,
+диапазоны) — в [уроке об image view](lesson:image-views).
+
+## 6. Сэмплер
+
+<Step file="21_texture" region="sampler" />
+
+[`VkSampler`](term:vk-sampler) не содержит никакого изображения. Это набор правил чтения *любого* изображения, и один
+сэмплер может обслуживать тысячи текстур. Его поля делятся на четыре группы.
+
+**Фильтры.** Пиксель почти никогда не попадает точно в центр текселя. С `NEAREST` сэмплер возвращает ближайший тексель
+(при увеличении — жёсткие квадратные края, как фильтр Impulse в Nuke); с `LINEAR` он смешивает 2 x 2 текселя вокруг
+точки выборки по расстоянию до них (билинейная фильтрация). Фильтров два, потому что ситуаций две
+([фильтрация текстур](term:texture-filtering)): **увеличение** (magnification), когда один тексель покрывает много
+пикселей, и **уменьшение** (minification), когда в один пиксель попадает много текселей. Спецификация выбирает между
+ними по уровню детализации λ: «If λ is less than or equal to zero, the texture is said to be magnified, and the filter
+mode within a mip level is selected by the `magFilter` in the sampler. If λ is greater than zero, the texture is said
+to be minified», и тогда действует `minFilter`.
+
+**maxLod 0 и фильтр увеличения.** Этот сэмплер ставит `minLod = maxLod = 0`, потому что уровень у изображения один.
+λ зажимается в `[minLod, maxLod]`, поэтому никогда не превышает 0: текстура всегда считается *увеличенной*, и
+используется `magFilter`, даже когда квад далеко. Спецификация описывает этот эффект в примечании о переносе фильтров
+OpenGL: «using a `maxLod` of zero would cause magnification to always be performed, and the `magFilter` to always be
+used». Здесь это безвредно — оба фильтра одинаковые. Программа, которой нужно уменьшение без mip-уровней, как в GL,
+ставит `maxLod = 0.25` (то же примечание), а в [уроке о mip-уровнях](lesson:mipmaps) у λ появится настоящая работа.
+
+**Режимы адресации.** Что прочитает `uv` вне [0, 1]; задаются по каждой оси (u, v, w). UV квада доходят до 2 как раз
+затем, чтобы их показать:
+
+| `--address` | Режим | Вне [0, 1] |
+|---|---|---|
+| `repeat` (по умолчанию) | `REPEAT` | текстура повторяется, как повторяющиеся UV в шейдере любого DCC |
+| `mirror` | `MIRRORED_REPEAT` | повторяется, каждая вторая копия отражена, так что края всегда встречаются со своим отражением |
+| `clamp` | `CLAMP_TO_EDGE` | крайние тексели растягиваются наружу |
+| `border` | `CLAMP_TO_BORDER` | постоянный цвет рамки, здесь `FLOAT_OPAQUE_BLACK` |
+
+Пятый режим, `MIRROR_CLAMP_TO_EDGE` (одна отражённая копия, дальше край), требует возможности
+`samplerMirrorClampToEdge`; она в том же списке обязательных для Vulkan 1.4, что и анизотропия, но шаг её не использует.
+
+**Анизотропия.** На поверхности, которую видно под скользящим углом, след пикселя в текстуре длинный и узкий; обычная
+фильтрация либо размывает его, либо пропускает тексели вдоль длинной оси.
+[Анизотропная фильтрация](term:anisotropic-filtering) берёт несколько выборок вдоль этой оси, до `maxAnisotropy`. Как
+именно — решает железо: «The particular scheme for anisotropic texture filtering is implementation-dependent»
+(спецификация). Нужна **включённая** возможность `samplerAnisotropy`
+(`VUID-VkSamplerCreateInfo-anisotropyEnable-01070`) и значение не больше предела устройства
+(`VUID-VkSamplerCreateInfo-anisotropyEnable-01071`). Предел `maxSamplerAnisotropy` здесь 16 — это заодно минимум,
+который таблица пределов спецификации требует от устройства с поддержкой анизотропии. Квад этого шага никогда не
+оказывается под скользящим углом, поэтому эффекта не видно; где он проявляется, покажет пол в уроке о mip-уровнях.
+
+Остальное выключено: никакого смещения LOD, никакого сравнения глубины (оно для теневых карт), нормализованные
+координаты (0..1, а не тексели).
+
+### Флаги в деле
+
+<Step file="21_texture" region="cli" />
+
+Каждый запуск печатает свою строку сэмплера (Rust и C++ печатают одно и то же, различаются только строки `[timing]`):
+
+```text
+default                       Sampler: LINEAR filters, address mode REPEAT, anisotropy 16
+--nearest                     Sampler: NEAREST filters, address mode REPEAT, anisotropy off
+--address mirror              Sampler: LINEAR filters, address mode MIRRORED_REPEAT, anisotropy 16
+--address clamp               Sampler: LINEAR filters, address mode CLAMP_TO_EDGE, anisotropy 16
+--address border              Sampler: LINEAR filters, address mode CLAMP_TO_BORDER, anisotropy 16
+--nearest --address clamp     Sampler: NEAREST filters, address mode CLAMP_TO_EDGE, anisotropy off
+```
+
+(Названия запусков слева добавлены для таблицы.) Между этими запусками меняется только сэмплер: то же изображение, тот
+же view, тот же layout дескрипторов. В этом разделении и смысл отдельного объекта-сэмплера.
+
+## 7. Ещё один binding в наборе
+
+Текстура попадает в шейдер через набор дескрипторов шага 17, в котором появляется второй binding. Но сначала надо
+включить анизотропию — это возможность устройства:
+
+<Step file="21_texture" region="device-features" />
+
+В требованиях спецификации к возможностям сказано: «If Vulkan 1.4 is supported, the following features must be
+supported», и `samplerAnisotropy` в этом списке, так что она есть у любого устройства Vulkan 1.4. Но поддерживается —
+ещё не значит включена, а невключённой возможностью пользоваться нельзя.
+
+<Step file="21_texture" region="set-layout" />
+
+Binding 1 — [`COMBINED_IMAGE_SAMPLER`](term:combined-image-sampler): один дескриптор, в котором и view, и сэмплер,
+видимый фрагментной стадии. Альтернатива — два binding, `SAMPLED_IMAGE` (`Texture2D`) и `SAMPLER` (`SamplerState`),
+которые соединяются уже в шейдере; это выгодно, когда один сэмплер обслуживает много изображений, как в таблице
+[bindless](lesson:bindless). Обе формы есть в core и обе в ходу; для одной текстуры комбинированная короче.
+
+<Step file="21_texture" region="descriptor-pool" />
+
+Пул растёт на один combined image sampler на набор: два набора — по два дескриптора каждого типа.
+
+<Step file="21_texture" region="write-sets" />
+
+Дескриптор изображения называет три вещи: сэмплер, view и **layout**, в котором изображение будет, когда шейдер его
+читает, — здесь `SHADER_READ_ONLY_OPTIMAL`, который установил второй барьер загрузки. Дескриптор layout не меняет, он
+его обещает, а слой валидации сверяет обещание с layout, которые сам отслеживает. Оба набора указывают на одну и ту же
+текстуру: пока кадры в полёте, она не меняется, так что копия на каждый кадр ей не нужна.
+
+<Step file="21_texture" region="bind-and-draw" />
+
+Каждый кадр ничего нового: привязка набора привязывает оба дескриптора.
+
+## 8. Уборка
+
+<Step file="21_texture" region="cleanup" />
+
+Как всегда, дети раньше родителей: пул дескрипторов (он освобождает свои наборы) раньше сэмплера и view, на которые
+наборы указывают, view раньше своего изображения, изображение раньше своей памяти.
+
+## Собери сам
+
+Текстура добавляет устройству три объекта, и двое из них нужны набору дескрипторов:
+
+<ObjectGraph
+	mode="build"
+	scope={['instance', 'physical-device', 'device', 'image', 'device-memory', 'image-view', 'sampler', 'descriptor-set-layout', 'descriptor-pool', 'descriptor-set']}
+	caption="Изображению нужна привязанная память, прежде чем у него появится view; сэмплер зависит только от устройства. Дескриптор combined image sampler называет по одному из каждого."
+/>
+
+## Что печатает программа
+
+Запуск по умолчанию, Rust (C++ печатает те же строки, различаются только значения `[timing]`):
+
+```text
+Texture: 256x256 RGBA8, 262144 bytes, generated on the CPU (FNV-1a 0xb2e278e1)
+Format support (vkGetPhysicalDeviceFormatProperties2):
+  R8G8B8A8_SRGB (optimal tiling): SAMPLED_IMAGE yes, SAMPLED_IMAGE_FILTER_LINEAR yes, TRANSFER_DST yes
+  R8G8B8A8_UNORM (optimal tiling): SAMPLED_IMAGE yes, SAMPLED_IMAGE_FILTER_LINEAR yes, TRANSFER_DST yes
+Texture format: R8G8B8A8_SRGB (color data is sRGB-encoded)
+VkImage: 2D, 1 mip level, OPTIMAL tiling, TRANSFER_DST | SAMPLED
+Memory requirements: size 262144, alignment 1024, memoryTypeBits 0b11 -> memory type 1 (DEVICE_LOCAL)
+Staging buffer: 262144 bytes, TRANSFER_SRC, memory type 3
+Recorded: barrier UNDEFINED -> TRANSFER_DST_OPTIMAL, vkCmdCopyBufferToImage2 (256x256, mip 0), barrier TRANSFER_DST_OPTIMAL -> SHADER_READ_ONLY_OPTIMAL
+Upload complete (fence waited); staging buffer destroyed
+[timing] texture upload 2.377 ms (staging write + record + submit + wait)
+maxSamplerAnisotropy = 16
+Sampler: LINEAR filters, address mode REPEAT, anisotropy 16
+
+SPIR-V: 1368 bytes (textured.spv), entry points vertexMain, fragmentMain
+Descriptor set layout: binding 0 = UNIFORM_BUFFER (VERTEX), binding 1 = COMBINED_IMAGE_SAMPLER (FRAGMENT)
+Graphics pipeline created
+Mesh: quad, 4 vertices, 6 indices, UVs 0..2
+Descriptor pool: maxSets 2, UNIFORM_BUFFER x 2, COMBINED_IMAGE_SAMPLER x 2; 2 sets allocated
+vkUpdateDescriptorSets: 4 writes (per set: binding 0 -> its uniform buffer, binding 1 -> texture view + sampler, SHADER_READ_ONLY_OPTIMAL)
+
+2 frames in flight; the quad turns at 0.3 rad/s
+Rendering. Close the window to exit.
+```
+
+(Сокращено: строки об устройстве и swapchain в начале — те же, что в шаге 17.) С включённой валидацией единственное
+сообщение — от implicit-слоя Bandicam, знакомое с шага 02.
+
+## Карта урока
+
+<MindMap />
+
+## Что под капотом
+
+- **Текстурные блоки.** Обычно рядом с каждым шейдерным ядром стоят текстурные блоки (texture units): железо, которое
+  принимает координату и дескриптор, вычисляет адреса текселей в тайловой раскладке, читает их через текстурный кэш,
+  раскодирует формат (включая sRGB), фильтрует и возвращает шейдеру готовое значение. Поэтому выборка с `LINEAR`
+  стоит шейдеру одну инструкцию, а не четыре загрузки плюс арифметику, и поэтому формат и сэмплер должно знать железо,
+  а не шейдер.
+- **Tiling и сжатие — дело драйвера.** Точную раскладку тайлов и то, хранится ли optimal-изображение сжатым, Vulkan не
+  раскрывает; layout существуют, чтобы драйвер на каждом переходе знал, какая раскладка нужна следующему потребителю.
+  При копировании в изображение линейные строки буфера и переставляются; поэтому копирующие движки и текстурное железо
+  читают одно и то же изображение эффективно, а CPU — нет.
+- **Дескрипторы изображений.** На GPU курса дескриптор sampled image занимает 4 байта (свойства
+  `VK_EXT_descriptor_buffer`, процитированные в [уроке о наборах дескрипторов](lesson:descriptor-sets)): обычно это
+  индекс в таблице описаний изображений и сэмплеров, которую ведёт драйвер, а не само описание.
+
+<Quiz
+	questions={[
+		{
+			q: 'Почему шаг 21 копирует тексели из буфера, а не отображает память изображения и не пишет их туда напрямую?',
+			options: [
+				{
+					text: 'Отображение памяти медленнее копирования для 256 КиБ',
+					why: 'Дело не в скорости: на этом GPU memoryTypeBits изображения (0b11) вообще не разрешают HOST_VISIBLE-типов, а даже в отображаемой памяти optimal-раскладка была бы непонятна CPU.',
+				},
+				{
+					text: 'Изображения нельзя привязать к памяти, их можно только заполнить копированием',
+					why: 'Изображения привязываются к памяти так же, как буферы (vkBindImageMemory); шаг делает это до копирования.',
+				},
+				{
+					text: 'OPTIMAL-изображение хранит тексели в раскладке драйвера, а его типы памяти здесь даже не HOST_VISIBLE',
+					why: 'Верно: копирование переставляет строки буфера в тайловую раскладку, а memoryTypeBits 0b11 оставляют только типы 0 и 1, и ни один не HOST_VISIBLE.',
+				},
+				{
+					text: 'Шейдеры могут читать только изображения, записанные самим GPU',
+					why: 'Такого правила нет; важны layout и видимость записей, кто бы их ни сделал.',
+				},
+			],
+			answer: 2,
+			ref: '#optimal-и-linear-tiling',
+		},
+		{
+			q: 'Цветовую текстуру из Mari загрузили как R8G8B8A8_UNORM и рисуют в swapchain _SRGB. Что получится?',
+			options: [
+				{
+					text: 'Ничего особенного: у UNORM и SRGB одни и те же байты, результат совпадёт',
+					why: 'Байты одинаковые, но перевод разный: SRGB при сэмплировании раскодирует их в линейные, UNORM — нет.',
+				},
+				{
+					text: 'Картинка закодирована дважды и выглядит блёклой, а фильтрация смешивает нелинейные значения',
+					why: 'Верно: при чтении раскодирования нет, при записи есть кодирование — значит, двойное кодирование; и линейная фильтрация работает по закодированным значениям.',
+				},
+				{
+					text: 'Картинка выйдет слишком тёмной',
+					why: 'Наоборот: закодированные значения принимаются за линейные, swapchain кодирует их второй раз, и они светлеют.',
+				},
+				{
+					text: 'Vulkan отвергнет дескриптор при отрисовке: формат UNORM не может хранить цвет, предназначенный для swapchain sRGB',
+					why: 'Vulkan не знает, что означают данные; оба формата здесь поддерживают сэмплирование. Выбрать правильный — задача программы.',
+				},
+			],
+			answer: 1,
+			ref: '#srgb-или-unorm',
+		},
+		{
+			q: 'У сэмплера шага 21 minFilter = magFilter = LINEAR и maxLod = 0. Какой фильтр работает, когда квад на экране крошечный?',
+			options: [
+				{
+					text: 'magFilter: λ зажат сверху нулём, поэтому текстура всегда считается увеличенной',
+					why: 'Верно: спецификация выбирает magFilter при λ ≤ 0, а её примечание о фильтрах OpenGL говорит, что maxLod 0 делает увеличение постоянным. Здесь безвредно: оба фильтра LINEAR.',
+				},
+				{
+					text: 'minFilter: квад маленький, в пиксель попадает много текселей, значит, текстура уменьшена',
+					why: 'Только если λ больше нуля; maxLod = 0 не даёт λ подняться выше 0, и текстура всегда считается увеличенной.',
+				},
+				{
+					text: 'Никакой: при maxLod 0 сэмплирование отключено и возвращает цвет рамки',
+					why: 'maxLod ограничивает уровень детализации, а не отключает выборку. Цвет рамки появляется только с CLAMP_TO_BORDER вне [0, 1].',
+				},
+				{
+					text: 'Оба: сэмплер усредняет результаты minFilter и magFilter',
+					why: 'Такого смешивания нет; λ выбирает для каждой выборки ровно один из двух фильтров.',
+				},
+			],
+			answer: 0,
+			ref: '#6-сэмплер',
+		},
+		{
+			q: 'Что делает скопированные тексели видимыми фрагментному шейдеру в шаге 21?',
+			options: [
+				{
+					text: 'Fence, которого CPU ждёт после отправки',
+					why: 'Fence сообщает хосту, что работа завершена; видимыми для последующих чтений шейдера записи копирования он не делает.',
+				},
+				{
+					text: 'imageLayout = SHADER_READ_ONLY_OPTIMAL в дескрипторе',
+					why: 'Дескриптор только обещает layout, в котором будет изображение; ни перехода, ни зависимости по памяти он не выполняет.',
+				},
+				{
+					text: 'Ничего не нужно: копирование и отрисовка в одной очереди всегда выполняются друг за другом, в порядке отправки',
+					why: 'Сам по себе порядок отправки не упорядочивает ни исполнение, ни обращения к памяти; нужен барьер.',
+				},
+				{
+					text: 'Второй барьер: от COPY/TRANSFER_WRITE к FRAGMENT_SHADER/SHADER_SAMPLED_READ с переходом layout',
+					why: 'Верно: он делает записи копирования доступными и видимыми для сэмплирующих чтений фрагментного шейдера и переводит изображение в layout для сэмплирования.',
+				},
+			],
+			answer: 3,
+			ref: '#4-загрузка-копирование-в-скрытую-раскладку',
+		},
+	]}
+/>

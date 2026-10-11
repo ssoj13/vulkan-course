@@ -3,4 +3,337 @@ title: Мультисэмплинг (MSAA)
 description: 'Гладкие края геометрии без шейдинга каждого сэмпла: какое число сэмплов поддерживает устройство, мультисэмпловые color- и depth-аттачменты (TRANSIENT_ATTACHMENT и lazily allocated память, где она есть), число сэмплов в пайплайне, resolve в конце рендеринга с resolveMode AVERAGE, цена в памяти и то, чего MSAA не исправляет.'
 ---
 
-Русская версия урока готовится.
+import MindMap from 'course-kit/components/MindMap.astro';
+import Quiz from 'course-kit/components/Quiz.astro';
+import Step from '../../../../components/Step.astro';
+
+У кубов шага 22 рваные края. Растеризатор проверяет одну точку на пиксель — его центр, так что пиксель либо целиком
+внутри треугольника, либо целиком снаружи; край, пересекающий сетку пикселей под пологим углом, становится лесенкой,
+которая ползёт, когда куб вращается. Решение в лоб — отрендерить в четыре раза большее разрешение и уменьшить. Может ли
+GPU получить большую часть этого качества, не шейдя вчетверо больше пикселей, и что для этого нужно в Vulkan?
+
+## Место в курсе
+
+Последний урок модуля **«Изображения»**. Он делает мультисэмпловым [буфер глубины](lesson:depth) шага 22, добавляет
+мультисэмпловое цветовое изображение и пользуется resolve, встроенным в [dynamic rendering](lesson:dynamic-rendering).
+Цепочка:
+
+`framebufferColorSampleCounts ∩ framebufferDepthSampleCounts → VkImage samples = N (color + depth, TRANSIENT_ATTACHMENT) → rasterizationSamples = N in the pipeline → rendering: resolveMode AVERAGE into resolveImageView (the swapchain view) → single-sample image presented`
+
+[MSAA](term:msaa) проверяет покрытие и глубину в нескольких [сэмплах](term:sample-count) (точках) пикселя, но
+запускает фрагментный шейдер один раз на пиксель и треугольник; сэмплы усредняются в один цвет при
+[resolve](term:msaa-resolve). Мультисэмпловые изображения живут только в пределах одного рендеринга — для этого и
+существуют [transient-аттачменты](term:transient-attachment) и [lazily allocated](term:lazily-allocated) память.
+[Sample shading](term:sample-shading) сдвигает MSAA в сторону [суперсэмплинга](term:supersampling), который шейдит
+каждый сэмпл. До этого: [mip-уровни](lesson:mipmaps), которые лечат алиасинг *внутри* текстур; MSAA лечит его на
+краях геометрии.
+
+## Покрытие, а не шейдинг
+
+В офлайн-рендере антиалиасинг обычно и есть суперсэмплинг: камерные (AA) сэмплы Arnold, например, трассируют и шейдят
+несколько лучей на пиксель и фильтруют результат. Каждый сэмпл — полный шейдинг. Так лечится всё сразу — края,
+текстуры, блики, — по цене, пропорциональной числу сэмплов.
+
+MSAA делит работу на части. Для каждого пикселя и треугольника:
+
+1. **Покрытие** проверяется в N точках (здесь N = 4). Со стандартным расположением (`standardSampleLocations` на GPU
+   курса true) 4x использует внутри пикселя точки (0.375, 0.125), (0.875, 0.375), (0.125, 0.625), (0.625, 0.875)
+   (спецификация, «Standard Sample Locations»): повёрнутая решётка, так что и почти горизонтальные, и почти вертикальные
+   края получают по четыре разных ступеньки.
+2. **Глубина** тоже проверяется по сэмплам, по буферу глубины, в котором на пиксель N значений.
+3. **Фрагментный шейдер выполняется один раз** (а не на каждый сэмпл), и его цвет пишется во все сэмплы, прошедшие
+   проверку.
+4. В конце N цветов каждого пикселя усредняются: это **resolve**.
+
+Внутри треугольника проходят все N сэмплов и получают один и тот же цвет: среднее равно этому цвету, ничего не
+меняется, а шейдер отработал один раз. На краю часть сэмплов несёт цвет этого треугольника, остальные — фона или
+соседа, и среднее оказывается смесью пропорционально покрытию — ровно то, что сглаживает лесенку. Стоимость шейдинга
+остаётся близкой к одному вызову на пиксель; память и пропускная способность растут с N.
+
+Чего MSAA не умеет, следует из пункта 3: всё, что меняется *внутри* одного треугольника, по-прежнему сэмплируется
+один раз на пиксель. Высокочастотная текстура — дело [mip-уровней](lesson:mipmaps); резкому блику нужен sample
+shading или другие техники.
+
+## 1. Какое число сэмплов
+
+<Step file="24_msaa" region="sample-counts" />
+
+У всех аттачментов рендеринга должно быть одно число сэмплов
+(`VUID-VkRenderingInfo-multisampledRenderToSingleSampled-06857`, если не включено расширение со смешанным числом
+сэмплов или `multisampledRenderToSingleSampled`), поэтому для цвета вместе с глубиной годятся только числа из
+пересечения двух пределов устройства. Спецификация требует в обоих хотя бы 1 и 4 (`framebufferColorSampleCounts` и
+`framebufferDepthSampleCounts`, таблица пределов), так что 4x — переносимый выбор.
+
+<Step file="24_msaa" region="choose-samples" />
+
+```text
+framebufferColorSampleCounts: 1, 2, 4, 8
+framebufferDepthSampleCounts: 1, 2, 4, 8
+Usable for color + depth: 1, 2, 4, 8
+Sample count: 4 (--samples): MSAA color + depth, resolved into the swapchain image
+```
+
+Пределы фреймбуфера говорят сразу за целые классы форматов: `framebufferColorSampleCounts` относится к цветовым
+аттачментам с форматами с плавающей или фиксированной точкой, вроде `B8G8R8A8_SRGB` у swapchain; у целочисленных
+цветовых форматов свой предел, `framebufferIntegerColorSampleCounts`. У конкретного формата, usage и tiling есть
+собственный ответ — `sampleCounts` из `vkGetPhysicalDeviceImageFormatProperties2`, и создание изображения ниже
+сверяется и с ним (изображение с числом сэмплов вне этого набора нарушает `VUID-VkImageCreateInfo-samples-02258`).
+
+## 2. Мультисэмпловые аттачменты
+
+<Step file="24_msaa" region="transient-attachment" />
+
+Мультисэмпловое изображение — обычный `VkImage` с `samples = N`: в каждом пикселе хранится N значений. Такие
+изображения живут только внутри одного рендеринга: очищаются в начале (`loadOp CLEAR`), проходят resolve и
+выбрасываются (`storeOp DONT_CARE`). Для этого в Vulkan есть отдельный бит usage, `TRANSIENT_ATTACHMENT`, который
+«specifies that implementations may support using memory allocations with the
+`VK_MEMORY_PROPERTY_LAZILY_ALLOCATED_BIT` to back an image with this usage» (спецификация). Сочетать его можно только с
+usage аттачментов (`VUID-VkImageCreateInfo-usage-00963`): изображение, содержимое которого не покидает рендеринг,
+нельзя ни сэмплировать, ни копировать.
+
+[Lazily allocated](term:lazily-allocated) память окупается на тайловых GPU (это большинство мобильных): они рендерят
+по маленькому тайлу за раз в памяти на кристалле, так что сэмплы transient-аттачмента могут оставаться на кристалле от
+очистки до resolve, и аллокация может так и не получить физических страниц. На таком GPU мультисэмпловый target 4x
+почти ничего не стоит по памяти. GPU курса рендерит в VRAM, типа lazily allocated памяти у него нет, и
+`create_attachment` откатывается на обычную `DEVICE_LOCAL`:
+
+```text
+Memory types with LAZILY_ALLOCATED on this device: 0 (tile-based GPUs have them; desktop GPUs render to VRAM)
+```
+
+Поэтому ветка кода с lazily allocated памятью на этой машине ни разу не выполнялась: она написана так, как её
+описывает спецификация, но не проверена.
+
+<Step file="24_msaa" region="msaa-images" />
+
+Два мультисэмпловых изображения: цвет в формате swapchain и глубина в формате шага 22. Изображение swapchain остаётся
+односэмпловым — оно только принимает resolve. Сколько выделили четыре запуска:
+
+| `--samples` | Цветовой аттачмент | Depth-аттачмент | Всего |
+|---|---|---|---|
+| 1 | нет (рисуем прямо в изображение swapchain) | 2048000 байт | 2,0 МБ |
+| 2 | 4096000 байт | 4096000 байт | 8,2 МБ |
+| 4 | 8192000 байт | 8192000 байт | 16,4 МБ |
+| 8 | 16384000 байт | 16384000 байт | 32,8 МБ |
+
+Ровно 800 x 600 x 4 байта x N на каждое, всё в типе памяти 1. В 4K при 8x те же два аттачмента заняли бы около
+530 МБ; поэтому большие числа сэмплов редки на больших разрешениях, и поэтому тайловые GPU, где сэмплам может так и не
+понадобиться настоящая память, пользуются MSAA так охотно.
+
+## 3. Число сэмплов в пайплайне
+
+<Step file="24_msaa" region="multisample-state" />
+
+`rasterizationSamples` должно совпадать с числом сэмплов аттачментов. `sampleShadingEnable` остаётся выключенным:
+шейдер выполняется один раз на пиксель и треугольник. С включённым [sample shading](term:sample-shading) «an
+implementation must invoke the fragment shader at least max(⌈`minSampleShading` × `rasterizationSamples`⌉, 1) times
+per fragment» (спецификация): `minSampleShading = 1` шейдит каждый сэмпл — это суперсэмплинг внутри механики MSAA,
+который лечит алиасинг шейдинга ценой до N-кратного шейдинга. Нужная для этого возможность `sampleRateShading` — в
+списке обязательных для Vulkan 1.4; шаг 24 её не включает.
+
+## 4. Resolve в конце рендеринга
+
+<Step file="24_msaa" region="resolve-attachment" />
+
+В dynamic rendering resolve — часть описания цветового аттачмента:
+
+- `imageView` — мультисэмпловое изображение, которое в начале очищается и никогда не сохраняется (`DONT_CARE`);
+- `resolveMode = AVERAGE` усредняет сэмплы каждого пикселя. Для нецелочисленного цветового формата допустимы режимы
+  `NONE`, `CUSTOM_BIT_EXT` и `AVERAGE` (`VUID-VkRenderingAttachmentInfo-imageView-06129`), так что `AVERAGE` —
+  единственный фиксированный resolve для цвета. (Целочисленные форматы не усредняются; их фиксированный вариант —
+  `SAMPLE_ZERO`, он берёт сэмпл 0: `VUID-VkRenderingAttachmentInfo-imageView-06130`.)
+- `resolveImageView` — view изображения swapchain, односэмпловый (`VUID-VkRenderingAttachmentInfo-imageView-06864`), в
+  layout `resolveImageLayout`.
+
+Resolve выполняется, когда рендеринг заканчивается, на стадии `COLOR_ATTACHMENT_OUTPUT`, которая по определению
+спецификации «includes ... render pass multisample resolve operations». Сэмплы он читает как чтения цветового
+аттачмента, а к односэмпловому изображению обращается как к цветовому аттачменту на чтение и запись, так что барьеры,
+которые и так окружают изображение swapchain (в layout аттачмента, потом в `PRESENT_SRC`), покрывают и его.
+Depth-аттачмент resolve не проходит: после рендеринга его никто не читает.
+
+Старый вариант, `vkCmdResolveImage2` после рендеринга, тоже работает, но требует, чтобы мультисэмпловое изображение
+было *сохранено*, а это сводит на нет смысл transient-аттачмента: сэмплы пришлось бы записать в память и прочитать
+обратно.
+
+## 5. Барьеры для общих мультисэмпловых изображений
+
+<Step file="24_msaa" region="msaa-barriers" />
+
+Мультисэмпловые изображения цвета и глубины общие для обоих кадров в полёте, как изображение глубины в шаге 22, поэтому
+каждое в начале кадра получает барьер «запись после записи» из шага 22. Барьер глубины — тот же, что в шаге 22. Барьер
+цвета ждёт последних обращений прошлого кадра на стадии `COLOR_ATTACHMENT_OUTPUT`: его store `DONT_CARE` — это запись,
+которую надо сделать доступной (исходный доступ `COLOR_ATTACHMENT_WRITE`), а чтению сэмплов при resolve хватает
+зависимости исполнения. Как и в шаге 22, вариант с удалённой исходной областью проверяли, и синхронизационная
+валидация сообщала о том же конфликте `WRITE_AFTER_WRITE` на общем изображении (так записано в заметках проекта; полный
+текст сообщения не сохранился).
+
+## Четыре запуска
+
+<Step file="24_msaa" region="cli" />
+
+Строки, которые меняются с `--samples` (Rust и C++ печатают одно и то же):
+
+```text
+--samples 1:
+  Sample count: 1 (--samples 1): no MSAA, rendering straight into the swapchain image
+  Depth attachment: D32_SFLOAT x1, 2048000 bytes, memory type 1 (DEVICE_LOCAL; no LAZILY_ALLOCATED type allowed, fallback)
+  Graphics pipeline created (rasterizationSamples 1, color B8G8R8A8_SRGB + depth D32_SFLOAT)
+--samples 2:
+  Depth attachment: D32_SFLOAT x2, 4096000 bytes, memory type 1 (DEVICE_LOCAL; no LAZILY_ALLOCATED type allowed, fallback)
+  Color attachment: B8G8R8A8_SRGB x2, 4096000 bytes, memory type 1 (DEVICE_LOCAL; no LAZILY_ALLOCATED type allowed, fallback)
+--samples 4:
+  Depth attachment: D32_SFLOAT x4, 8192000 bytes, memory type 1 (DEVICE_LOCAL; no LAZILY_ALLOCATED type allowed, fallback)
+  Color attachment: B8G8R8A8_SRGB x4, 8192000 bytes, memory type 1 (DEVICE_LOCAL; no LAZILY_ALLOCATED type allowed, fallback)
+--samples 8:
+  Depth attachment: D32_SFLOAT x8, 16384000 bytes, memory type 1 (DEVICE_LOCAL; no LAZILY_ALLOCATED type allowed, fallback)
+  Color attachment: B8G8R8A8_SRGB x8, 16384000 bytes, memory type 1 (DEVICE_LOCAL; no LAZILY_ALLOCATED type allowed, fallback)
+```
+
+(Подписи запусков и отступы добавлены; каждый запуск печатает полный вывод ниже со своими числами.) Частота кадров в
+этих одиночных 2-секундных запусках (от 2060 до 2604 fps, причём 8x — не самый медленный) никакой тенденции при такой
+нагрузке не показывает, так что урок ничего не утверждает о цене MSAA на GPU курса: два куба в 800 x 600 его не
+нагружают. Качество краёв тоже не зафиксировано (скриншоты шага 24 не делались): с 1 сэмплом лесенки — полные
+ступеньки, с 4 сэмплами пиксель на краю может принять 5 оттенков между двумя сторонами (от 0 до 4 покрытых сэмплов).
+
+## Что печатает программа
+
+Запуск по умолчанию (4 сэмпла), Rust (C++ печатает те же строки, различаются только значения `[timing]`):
+
+```text
+framebufferColorSampleCounts: 1, 2, 4, 8
+framebufferDepthSampleCounts: 1, 2, 4, 8
+Usable for color + depth: 1, 2, 4, 8
+Sample count: 4 (--samples): MSAA color + depth, resolved into the swapchain image
+Depth format candidates (optimal tiling, DEPTH_STENCIL_ATTACHMENT):
+  D32_SFLOAT: yes
+  D24_UNORM_S8_UINT: yes
+  D16_UNORM: yes
+Depth format: D32_SFLOAT, attachment layout DEPTH_ATTACHMENT_OPTIMAL
+Depth attachment: D32_SFLOAT x4, 8192000 bytes, memory type 1 (DEVICE_LOCAL; no LAZILY_ALLOCATED type allowed, fallback)
+Color attachment: B8G8R8A8_SRGB x4, 8192000 bytes, memory type 1 (DEVICE_LOCAL; no LAZILY_ALLOCATED type allowed, fallback)
+Memory types with LAZILY_ALLOCATED on this device: 0 (tile-based GPUs have them; desktop GPUs render to VRAM)
+
+SPIR-V: 1764 bytes (cube.spv), entry points vertexMain, fragmentMain
+Graphics pipeline created (rasterizationSamples 4, color B8G8R8A8_SRGB + depth D32_SFLOAT)
+Mesh: cube, 24 vertices, 36 indices, drawn as 2 instances
+Uniform buffers: 2 x 128 bytes (2 matrices), one descriptor set each
+
+2 frames in flight, multisampled images shared by both
+Rendering. Close the window to exit.
+```
+
+(Сокращено: строки об устройстве и swapchain в начале — те же, что в шаге 22.)
+
+## Карта урока
+
+<MindMap />
+
+## Что под капотом
+
+- **Сэмплы обычно хранятся сжатыми.** Внутри треугольника все N сэмплов пикселя одного цвета; десктопные GPU обычно
+  пользуются этим и сжимают цвет: хранят одно значение и маленькую маску, пока край не разделит пиксель. Поэтому
+  трафик памяти у MSAA обычно намного меньше N-кратного, хотя аллокация — полные N раз (таблица выше): память должна
+  быть на худший случай.
+- **Resolve на тайловых GPU** происходит, когда тайл выписывается в память: сэмплы усредняются на кристалле, и в память
+  уходит только односэмпловый результат. С `TRANSIENT_ATTACHMENT`, lazily allocated памятью и `DONT_CARE`
+  мультисэмпловое изображение может вообще ни разу не оказаться в памяти.
+- **Глубина по сэмплам.** Depth test выполняется для каждого сэмпла, и железо обычно интерполирует глубину в каждой
+  точке сэмпла по плоскости треугольника, так что сглаживаются не только силуэты, но и линии пересечения поверхностей
+  (кубы шага 22).
+
+<Quiz
+	questions={[
+		{
+			q: 'Сколько раз выполняется фрагментный шейдер для пикселя в середине треугольника при MSAA 4x с выключенным sample shading?',
+			options: [
+				{
+					text: 'Четыре раза, по разу на сэмпл',
+					why: 'Это суперсэмплинг (или sample shading с minSampleShading 1); MSAA шейдит один раз и пишет цвет в покрытые сэмплы.',
+				},
+				{
+					text: 'Ни разу: resolve в конце рендеринга вычисляет цвет по соседним пикселям',
+					why: 'Resolve лишь усредняет сохранённые сэмплы; цвета даёт фрагментный шейдер.',
+				},
+				{
+					text: 'Дважды: один раз ради цвета и ещё раз ради значения глубины каждого из четырёх сэмплов',
+					why: 'Глубину интерполирует и проверяет по сэмплам фиксированная логика; шейдер выполняется один раз.',
+				},
+				{
+					text: 'Один раз; его цвет уходит во все четыре покрытых сэмпла',
+					why: 'Верно: покрытие и глубина — по сэмплам, шейдинг — на пиксель и треугольник.',
+				},
+			],
+			answer: 3,
+			ref: '#покрытие-а-не-шейдинг',
+		},
+		{
+			q: 'Шаг 24 даёт своим мультисэмпловым изображениям usage TRANSIENT_ATTACHMENT. Что это меняет на GPU курса?',
+			options: [
+				{
+					text: 'Изображения не занимают памяти, потому что сэмплы остаются на кристалле',
+					why: 'Это случай тайловых GPU с LAZILY_ALLOCATED памятью; у GPU курса такого типа памяти нет.',
+				},
+				{
+					text: 'На практике ничего: типа LAZILY_ALLOCATED нет, и они получают обычную DEVICE_LOCAL память полного размера',
+					why: 'Верно: запуск печатает 0 типов lazily allocated и 8192000 байт на аттачмент 4x в типе памяти 1.',
+				},
+				{
+					text: 'Изображения больше нельзя очищать, только делать им resolve',
+					why: 'Transient-аттачменты очищаются, как любые аттачменты; исключены только usage, не относящиеся к аттачментам.',
+				},
+				{
+					text: 'Изображения можно сэмплировать в шейдерах после того, как завершится resolve',
+					why: 'Наоборот: TRANSIENT_ATTACHMENT сочетается только с usage аттачментов, так что сэмплировать их нельзя.',
+				},
+			],
+			answer: 1,
+			ref: '#2-мультисэмпловые-аттачменты',
+		},
+		{
+			q: 'Почему шаг 24 делает resolve через resolveImageView рендеринга, а не вызывает потом vkCmdResolveImage2?',
+			options: [
+				{
+					text: 'vkCmdResolveImage2 нет в Vulkan 1.4',
+					why: 'Он есть (в core с 1.3, из VK_KHR_copy_commands2); просто здесь это менее эффективный путь.',
+				},
+				{
+					text: 'Отдельному resolve нужны сэмплы, сначала сохранённые в память, а transient-аттачмент с DONT_CARE этого избегает',
+					why: 'Верно: resolve в конце рендеринга позволяет выбросить сэмплы — ради этого и существуют transient-аттачменты и lazily allocated память.',
+				},
+				{
+					text: 'vkCmdResolveImage2 умеет только depth/stencil, так что цветовому аттачменту остаётся собственный resolve рендеринга',
+					why: 'vkCmdResolveImage2 делает resolve цветовых изображений; особый случай — как раз глубина.',
+				},
+				{
+					text: 'Dynamic rendering запрещает vkCmdResolveImage2 после рендеринга',
+					why: 'Вне рендеринга он разрешён; он лишь дороже здесь, потому что сэмплы сначала надо сохранить.',
+				},
+			],
+			answer: 1,
+			ref: '#4-resolve-в-конце-рендеринга',
+		},
+		{
+			q: 'Текстура на кубе даёт алиасинг при MSAA 8x. Почему MSAA не помогает?',
+			options: [
+				{
+					text: 'Текстуру сэмплирует один вызов шейдера, раз на пиксель; MSAA добавляет сэмплы только для покрытия и глубины',
+					why: 'Верно: алиасинг текстуры лечат mip-уровни (или sample shading), а не дополнительные сэмплы покрытия.',
+				},
+				{
+					text: '8x — слишком много сэмплов, с 4x было бы глаже',
+					why: 'Больше сэмплов покрытия не делает выборку текстуры ни хуже, ни лучше: шейдер всё равно выполняется раз на пиксель.',
+				},
+				{
+					text: 'Resolve AVERAGE сглаживает только края геометрии, а для текстурированных поверхностей нужен свой режим resolve вроде CUSTOM_BIT_EXT',
+					why: 'Внутри треугольника resolve усредняет одинаковые цвета; алиасинг уже сидит в этом одном цвете.',
+				},
+				{
+					text: 'MSAA работает только с форматами глубины со stencil',
+					why: 'MSAA работает с любым поддерживаемым форматом глубины, здесь D32_SFLOAT.',
+				},
+			],
+			answer: 0,
+			ref: '#покрытие-а-не-шейдинг',
+		},
+	]}
+/>

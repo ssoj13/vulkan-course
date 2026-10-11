@@ -88,10 +88,11 @@ Format support (vkGetPhysicalDeviceFormatProperties2):
 `SAMPLED_IMAGE_FILTER_LINEAR` on the source (`VUID-VkBlitImageInfo2-filter-02001`). Formats without them get their
 levels another way. Block-compressed formats typically cannot be blit *targets*: on the course GPU, `BC7_SRGB_BLOCK`
 lists `BLIT_SRC` but not `BLIT_DST` (vulkaninfo `--show-formats`), since writing would mean encoding blocks. Integer
-formats have no linear filtering (none does on the course GPU). Their chains come from the CPU or an offline tool. Two more
-restrictions: blits need a queue with graphics capability (`VUID-vkCmdBlitImage2-commandBuffer-cmdpool`), so a
-dedicated transfer queue cannot build mips, and neither image may be multisampled
-(`VUID-VkBlitImageInfo2-srcImage-00233`): multisampled images are averaged by a *resolve* instead, in the
+formats have no linear filtering (none does on the course GPU). Their chains come from the CPU, an offline tool or a
+compute shader. Two more restrictions: blits need a queue with graphics capability
+(`VUID-vkCmdBlitImage2-commandBuffer-cmdpool`), so a dedicated transfer queue cannot build mips, and neither image may
+be multisampled (`VUID-VkBlitImageInfo2-srcImage-00233`, `VUID-VkBlitImageInfo2-dstImage-00234`): multisampled images
+are averaged by a *resolve* instead, in the
 [MSAA lesson](lesson:msaa).
 
 ## 3. The image
@@ -165,8 +166,9 @@ chain invisible to shaders even though the image has it.
 The [level of detail](term:lod) λ is computed per pixel from how fast the texture coordinates change between
 neighboring pixels: the implicit derivatives over a 2 x 2 quad of fragment shader invocations, scaled to texels. In the
 spec's terms (without anisotropy), `λ_base = log2(ρ_max)`, where ρ_max is the larger of the two scale factors (texels
-per pixel along x and y); then `λ' = λ_base + mipLodBias` (plus a shader bias, clamped by `maxSamplerLodBias`), and λ
-is λ' clamped to `[minLod, maxLod]`. λ = 0 means one texel per pixel, λ = 3 means 8 texels per pixel, so level 3.
+per pixel along x and y); then `λ' = λ_base + clamp(mipLodBias + shader bias, -maxSamplerLodBias, maxSamplerLodBias)`
+(the shader bias is the optional `Bias` operand of the sample instruction, 0 here), and λ is λ' clamped to
+`[minLod, maxLod]`. λ = 0 means one texel per pixel, λ = 3 means 8 texels per pixel, so level 3.
 
 Then the level is picked from λ, limited to the levels of the view:
 
@@ -215,7 +217,7 @@ samples show up in profiles.
 ## Generated or prepared?
 
 Step 23 generates the chain at load time because it keeps the example self-contained. Shipped assets usually carry
-their mips: KTX2 and DDS store all levels (often in block-compressed formats, which cannot be blitted anyway), so
+their mips: KTX2 and DDS store all levels (often in block-compressed formats, which typically cannot be blit targets anyway), so
 loading is one copy region per level, and the filtering is done once, offline, with a better kernel. Generating on the
 GPU remains the tool for images made at run time: render targets that are sampled later, procedural or streamed
 textures.
@@ -263,9 +265,10 @@ Rendering. Close the window to exit.
 
 - **Derivatives come from quads.** Fragment shaders typically run in 2 x 2 pixel quads so that the hardware can take
   differences between neighbors; pixels outside the triangle still run as *helper invocations* to supply them. That is
-  why `.Sample()` with implicit LOD exists only in fragment shaders (compute shaders pass the LOD or gradients
-  explicitly), and why the spec leaves derivatives undefined when the image or sampler is not uniform across a quad
-  (unless `quadDivergentImplicitLod` is supported).
+  why `.Sample()` with implicit LOD is a fragment shader operation by default: compute shaders get it only through
+  `VK_KHR_compute_shader_derivatives`, which groups their invocations into quads (mesh and task shaders too, where the
+  device reports `meshAndTaskShaderDerivatives`), and otherwise pass the LOD or gradients explicitly. It is also why "the derivative and LOD values are undefined" (spec) when the image or sampler
+  of an implicit-LOD instruction is not uniform across a quad, unless the device reports `quadDivergentImplicitLod`.
 - **Texture units and caches.** Trilinear filtering reads 8 texels from two levels; because the chosen level has
   texels about the size of a pixel, neighboring pixels read neighboring texels, and the texture cache typically hits.
   Without mips, far pixels jump across level 0 and each fetch tends to touch a new cache line: mipmaps make sampling
