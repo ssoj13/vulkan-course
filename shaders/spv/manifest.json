@@ -20,6 +20,17 @@
 			]
 		},
 		{
+			"source": "cube.slang",
+			"sourceSha256": "c5cbb6ed2a8bfc764e8308303bb03032a225e4eba1717e12c5b9cc0fbd831e1d",
+			"outputs": [
+				{
+					"file": "cube.spv",
+					"bytes": 1764,
+					"sha256": "d1cbecafd2eca85799d8aecffa23cdf3a2f7246927abae207497723e13039088"
+				}
+			]
+		},
+		{
 			"source": "device_address.slang",
 			"sourceSha256": "8921f29ee05fa33e093388d08339ef7b6b20b3258ff10242a6a27dc3b64c3606",
 			"outputs": [
@@ -38,6 +49,17 @@
 					"file": "mesh.spv",
 					"bytes": 900,
 					"sha256": "2595bbb87ed9f5d0d37490343672894556d40b41fb3aa5cf3bc9c4670ce1cb3f"
+				}
+			]
+		},
+		{
+			"source": "textured.slang",
+			"sourceSha256": "f4ac29f1d41f56e5d92eb947bec7247c2c480a78c1777fd77a2c96cd8e5ff522",
+			"outputs": [
+				{
+					"file": "textured.spv",
+					"bytes": 1368,
+					"sha256": "65fe35b0287c123f790ced565b27c892322bdfc4b1a458252ba92994896243ab"
 				}
 			]
 		},

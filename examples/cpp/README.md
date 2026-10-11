@@ -57,6 +57,10 @@ as `SHADER_DIR` by CMake), the same file the Rust examples embed. It is compiled
 | 18 | `src/18_push_constants.cpp` | the same block as push constants (`pushConstants`) or via push descriptors (`--push-descriptor`, `pushDescriptorSet`, Vulkan 1.4 `pushDescriptor`); limits and a setup comparison |
 | 19 | `src/19_buffer_device_address.cpp` | 64 instances read through a GPU pointer (`bufferDeviceAddress`, `getBufferAddress`) passed as a push constant; one instanced draw |
 | 20 | `src/20_bindless.cpp` | descriptor indexing: variable-count, partially bound, update-after-bind array of storage buffers indexed with `NonUniformResourceIndex`; descriptor limits; a buffer streamed into the live set at frame 120 |
+| 21 | `src/21_texture.cpp` | procedural RGBA8 texture, `getFormatProperties2`, OPTIMAL `R8G8B8A8_SRGB` image, staging upload with `copyBufferToImage2` between two layout transitions, `ImageView`, `Sampler` (`--nearest`, `--address MODE`, anisotropy 16), combined image sampler descriptor |
+| 22 | `src/22_depth.cpp` | two intersecting cubes, perspective projection into Vulkan clip space, depth format choice, shared depth image with a per-frame WAW barrier, depth state, `pDepthAttachment`; `--no-depth` |
+| 23 | `src/23_mipmaps.cpp` | receding checkerboard floor; 10-level mip chain generated with `blitImage2` and per-level barriers; trilinear sampler; `--no-mips`, `--anisotropy` |
+| 24 | `src/24_msaa.cpp` | MSAA: sample count from the framebuffer limits (`--samples 1\|2\|4\|8`), transient multisampled color + depth (lazily allocated memory if offered), resolve into the swapchain image (`resolveMode` AVERAGE) |
 
 Lessons embed code by `// #region <name>` ... `// #endregion` markers; the names
 match the Rust examples.

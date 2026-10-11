@@ -31,8 +31,10 @@ type Cap = keyof typeof CAP;
  */
 const REQUIRED: Record<string, Cap[]> = {
 	'bindless.spv': ['Shader', 'RuntimeDescriptorArray', 'ShaderNonUniform', 'StorageBufferArrayNonUniformIndexing'],
+	'cube.spv': ['Shader'],
 	'device_address.spv': ['Shader', 'PhysicalStorageBufferAddresses'],
 	'mesh.spv': ['Shader'],
+	'textured.spv': ['Shader'],
 	'transform.spv': ['Shader'],
 	'triangle.spv': ['Shader'],
 };
