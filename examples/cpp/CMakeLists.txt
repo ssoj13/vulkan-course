@@ -31,9 +31,13 @@ set(STEPS
     06_window_surface
     07_swapchain
     08_pipeline
-    09_triangle)
+    09_triangle
+    10_frames_in_flight
+    11_resize
+    12_timeline)
 # Steps that open a window.
-set(WINDOW_STEPS 06_window_surface 07_swapchain 08_pipeline 09_triangle)
+set(WINDOW_STEPS 06_window_surface 07_swapchain 08_pipeline 09_triangle
+                 10_frames_in_flight 11_resize 12_timeline)
 
 foreach(step IN LISTS STEPS)
     add_executable(${step} src/${step}.cpp)

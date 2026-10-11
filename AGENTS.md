@@ -29,6 +29,10 @@ code (Rust and C++) → what the driver and the GPU actually do.
   f4c2ca3e4f6b998d5254ad101a32f024d87cdec2 (Vulkan-Headers 1.4.352): the last crates.io release 0.38 (2024) stops at
   1.3.281. Switch to ash 0.39 when it is released. C++: vk::ApiVersion14.
 - Research notes: `notes/research-vulkan-ecosystem.md` (versions, references, sources).
+- Builds share the machine with other sessions (2026-10-11: parallel builds exhausted memory and disk). Run every
+  cargo command (examples/rust, tools/vk-probe) and the MSVC C++ build through the machine-wide lock, at most 6 jobs:
+  `$env:CARGO_BUILD_JOBS=6; python C:/projects/projects.rust.cg/cglibs/.buildlock/buildlock.py cargo ...`.
+  Running built binaries needs no lock. Keep target/ dirs small; never touch repos under cglibs/ without asking.
 
 ## Languages
 
