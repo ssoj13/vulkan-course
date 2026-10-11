@@ -1,5 +1,9 @@
 # Vulkan textbook - C++ examples
 
+**Quick start** (in this folder): `cmake --preset msvc-release`, `cmake --build --preset msvc-release --target 01_instance`,
+`.\build\msvc-release\01_instance.exe`. Requirements, validation tips and the step -> lesson table:
+[Build the examples](../../README.md#build-the-examples) in the repository README.
+
 Companion code for the lessons. One self-contained program per step; each step
 repeats the setup of the previous ones, so a single file shows the whole program.
 Style: Vulkan-Hpp RAII (`vk::raii::*`) with designated initializers

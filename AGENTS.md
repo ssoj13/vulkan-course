@@ -529,6 +529,14 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
   `src/components/Shots.astro` (PNG on purpose: captions quote measured pixels; verified the built PNGs are
   pixel-identical). 17's binary predates later comment-only changes; the image is unaffected. 15, 18,
   21_texture_nearest and 24 full frames are captured but not embedded.
+- Source links (2026-10-11): `Step` renders its own Starlight Tabs (same `syncKey` "code-lang" as course-kit CodeTabs)
+  with `SourceLine` under each tab: GitHub link to the region's lines (`#L<a>-L<b>`, repo from course-kit `REPO` =
+  astro.config `repo`) + run command (`src/lib/source.ts`: `stepSources`, `regionLines`, `CPP_PRESET`). Lessons import
+  the course's `src/components/Snippet.astro` (engine Snippet + whole-file link), not the engine one. `regionLines`
+  copies the engine's marker regex; tests/source.test.ts proves it matches `extractRegion` for every shown region
+  (TODO: expose line numbers from course-kit lib/regions.ts and drop the copy). Texts: `srcLines/srcFile/srcRun` in
+  src/i18n.ts. README.md "Build the examples" has the step -> lesson table (generated from course.json + `<Step file>`
+  usages; regenerate when steps are added).
 
 ## TODO
 

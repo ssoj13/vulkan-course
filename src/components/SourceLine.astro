@@ -1,0 +1,56 @@
+---
+/**
+ * The small line under lesson code (Step, Snippet): a link to the code on GitHub (the region's lines, or the whole
+ * file) and, for an example step, the command that runs it.
+ */
+import { REPO, langOf } from 'course-kit/lib/course.ts';
+import { courseText } from '../i18n';
+import { blobUrl, type Lines } from '../lib/source';
+import { tfmt } from '../lib/text';
+
+interface Props {
+	/** Path from the repository root. */
+	path: string;
+	/** The shown region's lines; without them the link goes to the whole file. */
+	lines?: Lines;
+	/** Working directory and command that run the step. */
+	run?: { dir: string; cmd: string };
+}
+
+const { path, lines, run } = Astro.props;
+const lang = langOf(Astro.url.pathname);
+const t = courseText(lang);
+const label = lines ? tfmt(lang, t.srcLines, { from: lines.from, to: lines.to }) : t.srcFile;
+---
+
+<p class="source-line">
+	<a href={blobUrl(REPO, path, lines)} target="_blank" rel="noopener">{label} ↗</a>
+	{
+		run && (
+			<span>
+				{` · ${tfmt(lang, t.srcRun, { dir: run.dir })} `}
+				<code>{run.cmd}</code>
+			</span>
+		)
+	}
+</p>
+
+<style>
+	.source-line {
+		margin-top: 0.375rem;
+		font-size: var(--sl-text-xs);
+		line-height: 1.5;
+		color: var(--sl-color-gray-3);
+	}
+	.source-line a {
+		color: inherit;
+		text-decoration-color: var(--sl-color-gray-4);
+	}
+	.source-line a:hover {
+		color: var(--sl-color-text-accent);
+	}
+	.source-line code {
+		font-size: inherit;
+		overflow-wrap: anywhere;
+	}
+</style>

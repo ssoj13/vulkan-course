@@ -3,8 +3,17 @@
  * One step of the companion programs in both languages: `<Step file="01_instance" region="create-instance" />`
  * shows examples/rust/src/bin/<file>.rs and examples/cpp/src/<file>.cpp at the same #region as tabs.
  * Both examples use the same region names (see the README of each example project), so one name addresses both.
+ * Under each tab: the region's lines on GitHub and the command that runs the step (SourceLine).
+ * The tabs mirror course-kit's CodeTabs (same `syncKey`, so the language choice is shared with it), which has no
+ * place for a per-tab footer.
  */
-import CodeTabs from 'course-kit/components/CodeTabs.astro';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { Code, TabItem, Tabs } from '@astrojs/starlight/components';
+import { loadSnippet } from 'course-kit/lib/snippets.ts';
+import { root } from 'virtual:course-kit/server';
+import { regionLines, stepSources } from '../lib/source';
+import SourceLine from './SourceLine.astro';
 
 interface Props {
 	file: string;
@@ -12,11 +21,26 @@ interface Props {
 }
 
 const { file, region } = Astro.props;
+const src = stepSources(file);
+const tabs = [
+	{ label: 'Rust (ash)', s: src.rust },
+	{ label: 'C++ (Vulkan-Hpp)', s: src.cpp },
+].map(({ label, s }) => ({
+	label,
+	s,
+	// loadSnippet fails the build for a missing region before regionLines could.
+	snip: loadSnippet(`${s.path}#${region}`),
+	lines: regionLines(readFileSync(join(root, s.path), 'utf8'), region, s.path),
+}));
 ---
 
-<CodeTabs
-	items={{
-		'Rust (ash)': `examples/rust/src/bin/${file}.rs#${region}`,
-		'C++ (Vulkan-Hpp)': `examples/cpp/src/${file}.cpp#${region}`,
-	}}
-/>
+<Tabs syncKey="code-lang">
+	{
+		tabs.map(({ label, s, snip, lines }) => (
+			<TabItem label={label}>
+				<Code code={snip.code} lang={snip.lang} title={snip.file} />
+				<SourceLine path={s.path} lines={lines} run={{ dir: s.dir, cmd: s.run }} />
+			</TabItem>
+		))
+	}
+</Tabs>

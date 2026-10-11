@@ -1,5 +1,8 @@
 # Vulkan examples (Rust, ash)
 
+**Quick start** (in this folder): `cargo run --release --bin 01_instance`. Requirements, validation tips and the
+step -> lesson table: [Build the examples](../../README.md#build-the-examples) in the repository README.
+
 Companion code for the Vulkan textbook. Each lesson step is one self-contained
 binary in `src/bin/`: it repeats the previous steps, so you can read a single
 file top to bottom. Code embedded in the lessons is marked with

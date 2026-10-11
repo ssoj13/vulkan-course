@@ -1,0 +1,24 @@
+---
+/**
+ * course-kit's Snippet (one code block cut from a real file: `<Snippet src="shaders/mesh.slang" />`, optionally
+ * `path#region`) plus a link to that file on GitHub (SourceLine) under it.
+ */
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import KitSnippet from 'course-kit/components/Snippet.astro';
+import { root } from 'virtual:course-kit/server';
+import { regionLines } from '../lib/source';
+import SourceLine from './SourceLine.astro';
+
+interface Props {
+	src: string;
+	title?: string;
+	mark?: string | string[];
+}
+
+const { src, title, mark } = Astro.props;
+const [path, region] = src.split('#') as [string, string | undefined];
+---
+
+<KitSnippet src={src} title={title} mark={mark} />
+<SourceLine path={path} lines={region ? regionLines(readFileSync(join(root, path), 'utf8'), region, path) : undefined} />

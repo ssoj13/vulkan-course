@@ -6,6 +6,91 @@ Vulkan objects, a create/destroy exercise that answers with the real validation 
 
 Read it at **https://ssoj13.github.io/vulkan-course/**.
 
+## Build the examples
+
+Every lesson step is one self-contained program in both languages: `examples/rust/src/bin/<step>.rs` and
+`examples/cpp/src/<step>.cpp`. Under each code block on the site there is a link to its lines on GitHub and the
+command that runs the step.
+
+### Requirements
+
+- A GPU and driver with **Vulkan 1.4** (the programs refuse older devices).
+- **Vulkan SDK 1.4.341** or newer from [LunarG](https://vulkan.lunarg.com), with `VULKAN_SDK` set (the installer sets
+  it). Every step from 02 on enables `VK_LAYER_KHRONOS_validation`, which comes with the SDK. The C++ build also takes
+  the headers and `vulkan-1.lib` from it.
+- Rust: stable **1.85+** (edition 2024; no `rust-toolchain` file is pinned). `ash` comes from git at a fixed commit
+  (Vulkan 1.4 bindings), so the first build needs network access.
+- C++: **CMake 3.25+**, **Ninja**, **MSVC** (Visual Studio 2022 17.7+), run from a Developer PowerShell (`cl.exe` on
+  `PATH`); **[vcpkg](https://vcpkg.io)** with `VCPKG_ROOT` set: the presets use
+  `$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake`, and manifest mode (`examples/cpp/vcpkg.json`) builds GLFW and VMA on
+  the first configure.
+- Shaders are committed as SPIR-V (`shaders/spv/`), so no shader compiler is needed unless you edit a `.slang` file
+  (then `bun run sync:shaders`).
+
+### Run a step
+
+```powershell
+git clone https://github.com/ssoj13/vulkan-course
+cd vulkan-course
+
+# Rust
+cd examples/rust
+cargo run --release --bin 22_depth
+
+# C++ (configure once, then build and run any step)
+cd ../cpp
+cmake --preset msvc-release
+cmake --build --preset msvc-release --target 22_depth
+.\build\msvc-release\22_depth.exe
+```
+
+`msvc-debug` builds into `build/msvc-debug`. Window steps accept options such as `--seconds N`; see the step's lesson
+and the README in each example folder.
+
+### Validation tips
+
+The validation layer is always on; its messages go to the console through the debug messenger. Two deeper checks are
+switched on with environment variables before running a step:
+
+```powershell
+$env:VK_KHRONOS_VALIDATION_VALIDATE_SYNC = 'true'   # synchronization validation (hazards, missing barriers)
+$env:VK_KHRONOS_VALIDATION_GPUAV_ENABLE = 'true'    # GPU-assisted validation (out-of-bounds shader access)
+```
+
+Vulkan Configurator (`vkconfig`, in the SDK) can set the same options without environment variables.
+
+### Steps and their lessons
+
+| Step | Lessons that show its code |
+| --- | --- |
+| `01_instance` | [The loader and VkInstance](https://ssoj13.github.io/vulkan-course/instance/loader-and-instance/) |
+| `02_validation` | [Validation layers and the debug messenger](https://ssoj13.github.io/vulkan-course/instance/validation/) |
+| `03_physical_devices` | [Physical devices: properties, features, limits](https://ssoj13.github.io/vulkan-course/devices/physical-devices/) |
+| `04_queue_families` | [Queue families: the GPU's engines](https://ssoj13.github.io/vulkan-course/devices/queue-families/) |
+| `05_logical_device` | [Logical device and queues](https://ssoj13.github.io/vulkan-course/devices/logical-device/) |
+| `06_window_surface` | [A window and its surface](https://ssoj13.github.io/vulkan-course/presentation/window-and-surface/) |
+| `07_swapchain` | [The swapchain and present modes](https://ssoj13.github.io/vulkan-course/presentation/swapchain/), [Images and image views](https://ssoj13.github.io/vulkan-course/presentation/image-views/) |
+| `08_pipeline` | [Shaders, Slang and SPIR-V](https://ssoj13.github.io/vulkan-course/pipeline/shaders-and-spirv/), [The graphics pipeline object](https://ssoj13.github.io/vulkan-course/pipeline/graphics-pipeline/), [The pipeline layout](https://ssoj13.github.io/vulkan-course/pipeline/pipeline-layout/), [Dynamic rendering](https://ssoj13.github.io/vulkan-course/pipeline/dynamic-rendering/) |
+| `09_triangle` | [Dynamic rendering](https://ssoj13.github.io/vulkan-course/pipeline/dynamic-rendering/), [Command pools and command buffers](https://ssoj13.github.io/vulkan-course/commands/command-buffers/), [The first triangle](https://ssoj13.github.io/vulkan-course/commands/first-triangle/) |
+| `10_frames_in_flight` | [Fences and semaphores](https://ssoj13.github.io/vulkan-course/sync/fences-and-semaphores/), [Frames in flight](https://ssoj13.github.io/vulkan-course/sync/frames-in-flight/) |
+| `11_resize` | [Swapchain recreation](https://ssoj13.github.io/vulkan-course/sync/swapchain-recreation/) |
+| `12_timeline` | [Pipeline barriers and image layouts](https://ssoj13.github.io/vulkan-course/sync/barriers-and-layouts/), [Timeline semaphores](https://ssoj13.github.io/vulkan-course/sync/timeline-semaphores/), [Swapchain recreation](https://ssoj13.github.io/vulkan-course/sync/swapchain-recreation/) |
+| `13_memory_types` | [Memory heaps and memory types](https://ssoj13.github.io/vulkan-course/memory/memory-types/) |
+| `14_vertex_buffer` | [Vertex and index buffers](https://ssoj13.github.io/vulkan-course/memory/vertex-and-index-buffers/) |
+| `15_staging` | [Staging uploads](https://ssoj13.github.io/vulkan-course/memory/staging-uploads/) |
+| `16_allocator` | [Allocators and sub-allocation](https://ssoj13.github.io/vulkan-course/memory/allocators/) |
+| `17_uniforms` | [Uniform buffers](https://ssoj13.github.io/vulkan-course/descriptors/uniform-buffers/), [Descriptor sets](https://ssoj13.github.io/vulkan-course/descriptors/descriptor-sets/) |
+| `18_push_constants` | [Push constants and push descriptors](https://ssoj13.github.io/vulkan-course/descriptors/push-constants/) |
+| `19_buffer_device_address` | [Buffer device address](https://ssoj13.github.io/vulkan-course/descriptors/buffer-device-address/) |
+| `20_bindless` | [Bindless descriptors](https://ssoj13.github.io/vulkan-course/descriptors/bindless/) |
+| `21_texture` | [Textures and samplers](https://ssoj13.github.io/vulkan-course/images/textures-and-samplers/) |
+| `22_depth` | [Depth buffers](https://ssoj13.github.io/vulkan-course/images/depth/) |
+| `23_mipmaps` | [Mipmaps](https://ssoj13.github.io/vulkan-course/images/mipmaps/) |
+| `24_msaa` | [Multisample anti-aliasing (MSAA)](https://ssoj13.github.io/vulkan-course/images/msaa/) |
+| `25_compute` | [Compute pipelines](https://ssoj13.github.io/vulkan-course/compute/compute-pipelines/) |
+| `26_particles` | [Particles](https://ssoj13.github.io/vulkan-course/compute/particles/) |
+| `27_async_compute` | [Async compute](https://ssoj13.github.io/vulkan-course/compute/async-compute/) |
+
 ## Repository
 
 | Path | What |

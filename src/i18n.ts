@@ -1,6 +1,6 @@
 /**
- * Interface texts of this course's own widgets (ObjectGraph and its simulator), per language. The engine's texts live
- * in course-kit (i18n.mjs); this table only adds what the Vulkan widgets show. Placeholders `{name}` are filled with
+ * Interface texts of this course's own widgets (ObjectGraph and its simulator, the source line under Step/Snippet code),
+ * per language. The engine's texts live in course-kit (i18n.mjs); this table only adds what the Vulkan widgets show. Placeholders `{name}` are filled with
  * the engine's `fmt`. tests/i18n.test.ts checks that every language has the same keys and placeholders.
  */
 import type { SimMsg } from './lib/objects';
@@ -48,6 +48,10 @@ const EN = {
 	simStillAlive: 'Still alive: {objs}. Destroy them first.',
 	simReleased: 'Released with it: {objs}.',
 	simDangling: 'Now dangling (any use is invalid): {objs}.',
+	// Source line under lesson code (Step, Snippet)
+	srcLines: 'lines {from}–{to} on GitHub',
+	srcFile: 'whole file on GitHub',
+	srcRun: 'run in {dir}:',
 };
 
 export type CourseText = typeof EN;
@@ -92,6 +96,9 @@ const RU: CourseText = {
 	simStillAlive: 'Ещё живы: {objs}. Сначала уничтожьте их.',
 	simReleased: 'Освобождены вместе с ним: {objs}.',
 	simDangling: 'Теперь висячие (любое использование — ошибка): {objs}.',
+	srcLines: 'строки {from}–{to} на GitHub',
+	srcFile: 'весь файл на GitHub',
+	srcRun: 'запуск в {dir}:',
 };
 
 export const COURSE_TEXT: Readonly<Record<string, CourseText>> = { en: EN, ru: RU };
