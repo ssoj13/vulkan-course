@@ -1,5 +1,4 @@
-# Keep LF everywhere (sources, notebooks, shell snippets) regardless of the contributor's autocrlf.
+# One line-ending convention in the repo (agents on Windows write CRLF); the working copy may differ, the index is LF.
 * text=auto eol=lf
 *.png binary
-*.webp binary
-*.svg text eol=lf
+*.spv binary
