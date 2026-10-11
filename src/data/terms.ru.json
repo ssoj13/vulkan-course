@@ -232,7 +232,7 @@
     "vk-descriptor-set-layout": {
       "label": "VkDescriptorSetLayout",
       "aka": ["descriptor set layout", "layout набора дескрипторов"],
-      "def": "Форма группы ресурсов шейдера: номера binding, типы ресурсов и стадии, которые их видят."
+      "def": "Форма группы ресурсов шейдера: номера binding, типы ресурсов и стадии, которые их видят. Pipeline layout перечисляет layout наборов, а каждый набор дескрипторов выделяется с одним из них."
     },
     "vk-pipeline-layout": {
       "label": "VkPipelineLayout",
@@ -477,6 +477,141 @@
       "label": "bufferImageGranularity",
       "aka": ["Buffer-Image Granularity"],
       "def": "Лимит устройства: линейные ресурсы (буферы, линейные изображения) и изображения с optimal tiling, лежащие рядом в одном VkDeviceMemory, не должны делить «страницу» такого размера в байтах (1024 у GPU курса)."
+    },
+    "uniform-buffer": {
+      "label": "Uniform-буфер",
+      "aka": ["uniform buffer", "UNIFORM_BUFFER", "UBO", "ConstantBuffer", "cbuffer"],
+      "def": "Буфер, который шейдеры читают как блок констант — одинаковых для всех вызовов одной отрисовки; шейдер находит его через дескриптор UNIFORM_BUFFER, а раскладка по умолчанию — std140."
+    },
+    "persistent-mapping": {
+      "label": "Постоянное отображение",
+      "aka": ["persistent mapping", "persistently mapped"],
+      "def": "Память HOST_VISIBLE отображается один раз, и указатель живёт всё время работы программы, вместо того чтобы отображать и снимать отображение при каждой записи; vkFreeMemory снимает его неявно."
+    },
+    "std140": {
+      "label": "Раскладка std140",
+      "aka": ["std140", "extended alignment", "_std140"],
+      "def": "Правило раскладки блока, которое uniform-буферы используют по умолчанию: векторы выровнены по своему размеру (float3 — как float4), массивы и структуры — по 16 байт с округлением размера до 16."
+    },
+    "std430": {
+      "label": "Раскладка std430",
+      "aka": ["std430", "base alignment", "_std430"],
+      "def": "Раскладка блоков push-констант и storage-буферов: как std140, но без округления массивов и структур до 16 байт, поэтому у float[2] шаг 4."
+    },
+    "scalar-block-layout": {
+      "label": "Скалярная раскладка блока",
+      "aka": ["scalar block layout", "scalarBlockLayout", "scalar layout", "-fvk-use-scalar-layout"],
+      "def": "Раскладка блока, в которой каждый член выровнен только по размеру своего компонента (float3 — по 4 байта), как в структуре C; требует возможности scalarBlockLayout, которую поддерживает каждое устройство Vulkan 1.4."
+    },
+    "matrix-layout": {
+      "label": "Раскладка матрицы",
+      "aka": ["matrix layout", "RowMajor", "ColMajor", "MatrixStride", "column-major", "row-major"],
+      "def": "Как матрица лежит в памяти: декорация RowMajor или ColMajor в SPIR-V говорит, хранятся строки или столбцы, а MatrixStride — сколько байт между соседними; column-major по умолчанию в Slang выглядит в SPIR-V как RowMajor."
+    },
+    "spirv-reflection": {
+      "label": "Рефлексия SPIR-V",
+      "aka": ["SPIR-V reflection", "reflection", "SPIRV-Reflect", "-reflection-json"],
+      "def": "Чтение интерфейса шейдера (наборы, binding, члены блоков, смещения) обратно из его SPIR-V, чтобы проверить или сгенерировать сторону хоста, а не верить, что они совпадают."
+    },
+    "descriptor": {
+      "label": "Дескриптор",
+      "aka": ["descriptor", "VkDescriptorType", "VkWriteDescriptorSet", "VkDescriptorBufferInfo"],
+      "def": "Небольшая запись в формате драйвера, которая говорит шейдеру, где лежит ресурс и как его читать: для буфера — адрес, смещение и диапазон, для текстуры — image view и сэмплер."
+    },
+    "descriptor-binding": {
+      "label": "Binding дескрипторов",
+      "aka": ["descriptor binding", "binding", "VkDescriptorSetLayoutBinding", "[[vk::binding]]"],
+      "def": "Один пронумерованный слот в layout набора: тип дескриптора, количество (массив, если больше 1) и стадии шейдеров, которым он доступен; шейдер называет его номерами set и binding."
+    },
+    "vk-descriptor-pool": {
+      "label": "VkDescriptorPool",
+      "aka": ["descriptor pool", "пул дескрипторов", "vkCreateDescriptorPool", "VK_ERROR_OUT_OF_POOL_MEMORY", "vkResetDescriptorPool"],
+      "def": "Арена, из которой выделяются наборы дескрипторов; её размер задаётся заранее — maxSets и число дескрипторов каждого типа; сброс или уничтожение пула освобождает все его наборы сразу."
+    },
+    "vk-descriptor-set": {
+      "label": "VkDescriptorSet",
+      "aka": ["descriptor set", "набор дескрипторов", "vkAllocateDescriptorSets", "vkUpdateDescriptorSets", "vkCmdBindDescriptorSets"],
+      "def": "Экземпляр layout набора, выделенный из пула: его дескрипторы записывает vkUpdateDescriptorSets, а при записи команд он привязывается к номеру set."
+    },
+    "pipeline-layout-compatibility": {
+      "label": "Совместимость pipeline layout",
+      "aka": ["pipeline layout compatibility", "compatible for set N", "disturbed"],
+      "def": "Правило спецификации о том, когда привязанные наборы переживают смену пайплайна: два pipeline layout совместимы для set N, если layout наборов 0..N и диапазоны push-констант определены одинаково."
+    },
+    "set-frequency": {
+      "label": "Наборы по частоте изменений",
+      "aka": ["sets grouped by update frequency", "per-frame set", "per-material set", "per-object set"],
+      "def": "Соглашение о дизайне, которое рекомендует и примечание спецификации: сначала наборы, меняющиеся реже всего (set 0 — на кадр, дальше — на материал, на объект), чтобы при смене пайплайна младшие наборы оставались привязанными."
+    },
+    "push-constant": {
+      "label": "Push-константы",
+      "aka": ["push constants", "vkCmdPushConstants", "VkPushConstantRange", "[[vk::push_constant]]", "maxPushConstantsSize"],
+      "def": "Небольшой блок байт, который vkCmdPushConstants записывает прямо в командный буфер; объявлен диапазоном в pipeline layout: 128 байт в Vulkan 1.0, не меньше 256 в Vulkan 1.4."
+    },
+    "push-descriptor": {
+      "label": "Push-дескрипторы",
+      "aka": ["push descriptors", "vkCmdPushDescriptorSet", "PUSH_DESCRIPTOR", "pushDescriptor", "VK_KHR_push_descriptor"],
+      "def": "Дескрипторы, которые vkCmdPushDescriptorSet записывает в командный буфер вместо выделенного набора; в ядре Vulkan 1.4 за возможностью pushDescriptor, не больше одного такого набора на pipeline layout."
+    },
+    "buffer-device-address": {
+      "label": "Адрес буфера на GPU",
+      "aka": ["buffer device address", "bufferDeviceAddress", "vkGetBufferDeviceAddress", "VkDeviceAddress", "SHADER_DEVICE_ADDRESS", "BDA"],
+      "def": "64-битный виртуальный адрес буфера на GPU, полученный vkGetBufferDeviceAddress; шейдер разыменовывает его как указатель. Нужны возможность, usage SHADER_DEVICE_ADDRESS и память, выделенная с DEVICE_ADDRESS."
+    },
+    "physical-storage-buffer": {
+      "label": "PhysicalStorageBuffer",
+      "aka": ["PhysicalStorageBuffer64", "PhysicalStorageBufferAddresses", "OpPtrAccessChain"],
+      "def": "Класс памяти SPIR-V для памяти, к которой обращаются по 64-битному адресу, а не через дескриптор (модель адресации PhysicalStorageBuffer64); загрузки через него указывают выравнивание и не знают границ."
+    },
+    "gpu-av": {
+      "label": "GPU-assisted validation",
+      "aka": ["GPU-AV", "VK_KHRONOS_VALIDATION_GPUAV_ENABLE"],
+      "def": "Режим слоя валидации Khronos, который встраивает проверки в шейдеры и проверяет их обращения к памяти и дескрипторам прямо на GPU; медленный и сам подстраивает возможности устройства под себя."
+    },
+    "storage-buffer": {
+      "label": "Storage-буфер",
+      "aka": ["storage buffer", "STORAGE_BUFFER", "SSBO", "StructuredBuffer", "RWStructuredBuffer"],
+      "def": "Буфер, который шейдеры читают и могут писать через дескриптор STORAGE_BUFFER; раскладка std430, диапазон не меньше 2^27 байт — буферный ресурс общего назначения."
+    },
+    "descriptor-indexing": {
+      "label": "Descriptor indexing",
+      "aka": ["VK_EXT_descriptor_indexing", "runtimeDescriptorArray", "VkDescriptorSetLayoutBindingFlagsCreateInfo"],
+      "def": "Возможности Vulkan 1.2 для больших массивов дескрипторов, индексируемых в шейдере: массивы без размера, неоднородная индексация и флаги привязок — частично заполненных, переменной длины и обновляемых после привязки."
+    },
+    "bindless": {
+      "label": "Bindless",
+      "aka": ["bindless descriptors", "descriptor table"],
+      "def": "Устройство рендерера на основе descriptor indexing: один набор с дескрипторами всех ресурсов, привязанный один раз; каждая отрисовка или экземпляр передаёт только индекс в нём."
+    },
+    "variable-descriptor-count": {
+      "label": "Переменное число дескрипторов",
+      "aka": ["variable descriptor count", "VARIABLE_DESCRIPTOR_COUNT", "VkDescriptorSetVariableDescriptorCountAllocateInfo"],
+      "def": "Флаг привязки: descriptorCount в layout — только верхняя граница, а настоящую длину каждый набор получает при выделении; разрешён только у привязки с наибольшим номером."
+    },
+    "partially-bound": {
+      "label": "Частично заполненная привязка",
+      "aka": ["partially bound", "PARTIALLY_BOUND", "descriptorBindingPartiallyBound", "dynamically used"],
+      "def": "Флаг привязки: дескрипторы, к которым ни один вызов шейдера на деле не обращается (не используются динамически), можно не записывать; без него должен быть допустим каждый статически используемый дескриптор."
+    },
+    "update-after-bind": {
+      "label": "Обновление после привязки",
+      "aka": ["update after bind", "UPDATE_AFTER_BIND", "UPDATE_UNUSED_WHILE_PENDING", "UPDATE_AFTER_BIND_POOL"],
+      "def": "Флаги привязки, ослабляющие правило «набор нельзя менять»: UPDATE_AFTER_BIND — между привязкой и отправкой (GPU увидит новые дескрипторы), UPDATE_UNUSED_WHILE_PENDING — для элементов, которые ожидающий выполнения командный буфер не использует."
+    },
+    "dynamically-uniform": {
+      "label": "Динамически однородное значение",
+      "aka": ["dynamically uniform", "invocation group"],
+      "def": "Значение, одинаковое для всех вызовов группы вызовов, а для вершинного шейдера это все вызовы одной команды отрисовки; номер экземпляра таким не является."
+    },
+    "non-uniform-indexing": {
+      "label": "Неоднородная индексация",
+      "aka": ["non-uniform indexing", "NonUniform", "NonUniformResourceIndex", "nonuniformEXT", "StorageBufferArrayNonUniformIndexing"],
+      "def": "Индексация массива дескрипторов значением, которое различается между вызовами шейдера: нужны возможность и capability SPIR-V, а декорация NonUniform — на самом операнде обращения."
+    },
+    "subgroup": {
+      "label": "Подгруппа",
+      "aka": ["subgroup", "warp", "wave", "wavefront", "subgroupSize", "варп"],
+      "def": "Вызовы шейдера, которые GPU выполняет вместе, в ногу, на одном шейдерном ядре: 32 на GPU курса (warp у NVIDIA, wave у AMD); общие для всей подгруппы значения железо может держать в скалярных регистрах."
     }
   },
   "edges": {
@@ -604,6 +739,33 @@
     "queue-family-ownership-transfer|related|queue-family": "переносит ресурс между",
     "sub-allocation|built-on|vk-device-memory": "нарезает",
     "vma|uses|sub-allocation": "реализует",
-    "buffer-image-granularity|related|sub-allocation": "правило зазоров при"
+    "buffer-image-granularity|related|sub-allocation": "правило зазоров при",
+    "uniform-buffer|uses|std140": "раскладка",
+    "persistent-mapping|built-on|vk-device-memory": "отображает",
+    "persistent-mapping|uses|host-visible": "требует",
+    "std430|related|std140": "ослабляет",
+    "scalar-block-layout|related|std430": "ослабляет ещё сильнее",
+    "matrix-layout|related|spirv": "декорации в",
+    "matrix-layout|related|std140": "часть правил",
+    "spirv-reflection|built-on|spirv": "читает",
+    "descriptor|uses|vk-buffer": "указывает на",
+    "vk-descriptor-pool|built-on|vk-device": "создаётся из",
+    "vk-descriptor-set|built-on|vk-descriptor-pool": "выделяется из",
+    "vk-descriptor-set|uses|vk-descriptor-set-layout": "форму задаёт",
+    "pipeline-layout-compatibility|related|vk-pipeline-layout": "правило для пары",
+    "set-frequency|uses|pipeline-layout-compatibility": "опирается на",
+    "push-constant|built-on|vk-command-buffer": "хранятся в",
+    "vk-pipeline-layout|uses|push-constant": "объявляет диапазоны",
+    "push-descriptor|built-on|vk-command-buffer": "записываются в",
+    "push-descriptor|uses|vk-descriptor-set-layout": "layout с PUSH_DESCRIPTOR",
+    "buffer-device-address|built-on|vk-buffer": "адрес",
+    "buffer-device-address|uses|push-constant": "передаётся в",
+    "physical-storage-buffer|uses|buffer-device-address": "разыменовывает",
+    "storage-buffer|uses|std430": "раскладка",
+    "descriptor-indexing|built-on|vk-descriptor-set": "расширяет",
+    "bindless|uses|storage-buffer": "массивы",
+    "non-uniform-indexing|related|dynamically-uniform": "противоположность",
+    "dynamically-uniform|related|subgroup": "важно из-за",
+    "subgroup|built-on|shader-core": "выполняется на"
   }
 }

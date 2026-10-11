@@ -1,0 +1,452 @@
+---
+title: Bindless descriptors
+description: 'One set with a big descriptor array, bound once and indexed in the shader: descriptor indexing features, the four binding flags with their exact spec definitions, updating a set while frames use it, and non-uniform indexing - including a compiler bug the course works around.'
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import MindMap from 'course-kit/components/MindMap.astro';
+import Quiz from 'course-kit/components/Quiz.astro';
+import Snippet from 'course-kit/components/Snippet.astro';
+import Step from '../../../components/Step.astro';
+
+A scene has thousands of objects, each with its own data and textures. With the sets of the
+[descriptor sets lesson](lesson:descriptor-sets), drawing them means "bind this object's set, draw, bind the next one,
+draw" thousands of times per frame. What if one set held the descriptors of **everything**, bound once, and every shader
+invocation picked its own element by index? That is what renderers call "bindless". What does the API have to allow for
+it (huge sets, half-empty sets, sets that change while frames are using them), and what must the shader say when
+neighboring invocations pick different elements?
+
+## Where this fits
+
+The last lesson of the **descriptors** module. Layers: device features (descriptor indexing), set layout and pool flags
+(API), the update rules in time (host vs. pending command buffers), and the shader rules of uniformity, down to how a
+GPU executes one instruction for a whole subgroup. The chain:
+
+`descriptor indexing features → set layout: binding 0 = STORAGE_BUFFER x 4096 + binding flags (VARIABLE_DESCRIPTOR_COUNT | PARTIALLY_BOUND | UPDATE_AFTER_BIND | UPDATE_UNUSED_WHILE_PENDING) → UPDATE_AFTER_BIND pool → one set of 256 → writes 0..62, later 63 → bind once → one draw → objects[NonUniformResourceIndex(instance)] → NonUniform decoration + StorageBufferArrayNonUniformIndexing capability`
+
+[Bindless](term:bindless) is a design built on [descriptor indexing](term:descriptor-indexing): one
+[descriptor set](term:vk-descriptor-set) with a large array of descriptors, here of [storage buffers](term:storage-buffer).
+Its pieces: a [variable descriptor count](term:variable-descriptor-count), [partially bound](term:partially-bound) arrays,
+[update after bind](term:update-after-bind), and in the shader [non-uniform indexing](term:non-uniform-indexing), which
+exists because an index that is not [dynamically uniform](term:dynamically-uniform) may differ inside one
+[subgroup](term:subgroup). Before: [descriptor sets](lesson:descriptor-sets), [push constants](lesson:push-constants),
+[buffer device address](lesson:buffer-device-address) (the other way to reach many buffers). After: textures in such
+arrays (module 10), and compute.
+
+## One table instead of a thousand bindings
+
+UDIM textures are a familiar version of the idea: instead of assigning one texture per patch, a mesh gets one material
+that reads a whole family of tiles, and the UV coordinate picks the tile. Bindless does that for every resource: the
+renderer keeps one table of all buffers and textures, binds it once, and each draw or each instance carries only an
+**index** into it.
+
+Step 20 draws step 19's 64 hexagons again, but now every instance's 32-byte record lives in its **own** buffer, as if
+each object owned its data. One set holds an array of storage buffer descriptors; instance `i` reads `objects[i]`:
+
+<Snippet src="shaders/bindless.slang" />
+
+`StructuredBuffer<Instance> objects[]` is an array of [storage buffers](term:storage-buffer) without a size (SPIR-V
+`OpTypeRuntimeArray`, capability `RuntimeDescriptorArray`). A storage buffer is the general-purpose buffer resource:
+std430 layout, big (`maxStorageBufferRange` is at least 2^27 bytes), and writable by shaders when not declared read-only.
+Here it is only read, one record per buffer.
+
+<Step file="20_bindless" region="sizes" />
+
+Three sizes, and the lesson is mostly about why there are three: the layout's capacity (4096), the length of the one set
+actually allocated (256), and how many elements are written (63 at start, 64 from frame 120).
+
+## The features
+
+<Step file="20_bindless" region="device-features" />
+
+All of these are Vulkan 1.2 features (they came from `VK_EXT_descriptor_indexing`):
+
+| Feature | What it allows |
+|---|---|
+| `runtimeDescriptorArray` | the shader's `objects[]` without a size: "descriptors must not be declared in runtime arrays" without it |
+| `shaderStorageBufferArrayNonUniformIndexing` | indexing an array of storage buffers "by non-uniform integer expressions", and declaring the matching SPIR-V capability |
+| `descriptorBindingPartiallyBound` | the `PARTIALLY_BOUND` binding flag |
+| `descriptorBindingVariableDescriptorCount` | the `VARIABLE_DESCRIPTOR_COUNT` binding flag |
+| `descriptorBindingStorageBufferUpdateAfterBind` | `UPDATE_AFTER_BIND` on a storage buffer binding (`VUID-VkDescriptorSetLayoutBindingFlagsCreateInfo-descriptorBindingStorageBufferUpdateAfterBind-03008`) |
+| `descriptorBindingUpdateUnusedWhilePending` | the `UPDATE_UNUSED_WHILE_PENDING` binding flag |
+
+Unlike push descriptors and buffer device address, descriptor indexing is **not** in the list of features every
+Vulkan 1.4 device must support. It is required by the Vulkan Roadmap 2022 profile, which "is intended to be supported
+by newer mid-to-high-end devices shipping in 2022 or shortly thereafter", and the course GPU supports all of it. A
+program that targets older or smaller devices checks these features before relying on them.
+
+## Two families of limits
+
+<Step file="20_bindless" region="limits" />
+
+```text
+Descriptor limits for storage buffers:
+  maxPerStageDescriptorStorageBuffers                = 1048576 (sets without UPDATE_AFTER_BIND)
+  maxDescriptorSetStorageBuffers                     = 1048576
+  maxPerStageDescriptorUpdateAfterBindStorageBuffers = 1048576 (UPDATE_AFTER_BIND sets)
+  maxDescriptorSetUpdateAfterBindStorageBuffers      = 1048576
+  maxPerStageUpdateAfterBindResources                = 4294967295 (all resource types)
+  maxUpdateAfterBindDescriptorsInAllPools            = 4294967295
+  shaderStorageBufferArrayNonUniformIndexingNative   = true
+This program: layout capacity 4096, one set of 256, 64 buffers written
+```
+
+The classic limits count descriptors in layouts **without** `UPDATE_AFTER_BIND_POOL`, and the spec's minimum for
+`maxPerStageDescriptorStorageBuffers` is only 4 (30 under Roadmap 2022). Layouts **with** that flag count against a
+separate family of `...UpdateAfterBind...` limits, whose required minimum is 500000 on devices that support the
+feature. On the NVIDIA GPU of the course both families are 1048576, but on other hardware the classic numbers are far
+smaller, which is one practical reason bindless layouts use update-after-bind even when they never update after
+binding. The program checks its 4096 against the smallest of the three limits that apply, and the pool's 256 against
+`maxUpdateAfterBindDescriptorsInAllPools` (for that one the spec gives no valid-usage rule, only "pool creation may
+fail" beyond it, so the check is ours).
+
+<Aside type="note" title="Validation changes the numbers">
+Under GPU-assisted validation the same line printed `maxUpdateAfterBindDescriptorsInAllPools = 4194304`: GPU-AV lowers
+the limit for its own bookkeeping and says so ("Setting VkPhysicalDeviceVulkan12Properties::maxUpdateAfterBindDescriptorsInAllPools
+to 4194304"). Limits read under a layer are the layer's limits.
+</Aside>
+
+## The set layout: four binding flags
+
+<Step file="20_bindless" region="set-layout" />
+
+The flags go into a `VkDescriptorSetLayoutBindingFlagsCreateInfo` chained to the layout's create info, one entry per
+binding. Each one relaxes a rule of the [descriptor sets lesson](lesson:descriptor-sets), and the spec's definitions are
+precise enough to quote:
+
+- **`VARIABLE_DESCRIPTOR_COUNT`**: "this is a variable-sized descriptor binding whose size will be specified when a
+  descriptor set is allocated using this layout. The value of descriptorCount is treated as an upper bound on the size
+  of the binding." Only the binding with the highest number may have it
+  (`VUID-VkDescriptorSetLayoutBindingFlagsCreateInfo-pBindingFlags-03004`), and the full upper bound still counts
+  against the limits.
+- **`PARTIALLY_BOUND`**: "descriptors in this binding that are not dynamically used need not contain valid descriptors
+  at the time the descriptors are consumed. A descriptor is dynamically used if any shader invocation executes an
+  instruction that performs any memory access using the descriptor." Without it, every descriptor the shader
+  *statically* uses must be valid, and for an array indexed at run time that means every element.
+- **`UPDATE_AFTER_BIND`**: "if descriptors in this binding are updated between when the descriptor set is bound in a
+  command buffer and when that command buffer is submitted to a queue, then the submission will use the most recently
+  set descriptors for this binding and the updates do not invalidate the command buffer." A layout with such a binding
+  needs `UPDATE_AFTER_BIND_POOL` (`VUID-VkDescriptorSetLayoutCreateInfo-flags-03000`), and its sets come from pools
+  created with `UPDATE_AFTER_BIND`.
+- **`UPDATE_UNUSED_WHILE_PENDING`**: "descriptors in this binding can be updated after a command buffer has bound this
+  descriptor set, or while a command buffer that uses this descriptor set is pending execution, as long as the
+  descriptors that are updated are not used by those command buffers." With `PARTIALLY_BOUND` too, "not used" means
+  not *dynamically* used; without it, not *statically* used.
+
+Read the last two side by side: `UPDATE_AFTER_BIND` covers the window between **bind and submit**, and the GPU then sees
+the new descriptors; `UPDATE_UNUSED_WHILE_PENDING` covers **pending** command buffers, for elements they do not use. The
+spec spells out the difference in a note: the latter "is a weaker requirement since it is only about descriptors that
+are not used, whereas `VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT` requires the implementation to observe updates to
+descriptors that are used."
+
+## The pool and the one set
+
+<Step file="20_bindless" region="pool-and-set" />
+
+The pool is created with `UPDATE_AFTER_BIND` and sized for what is allocated, 256 storage buffer descriptors, not for
+the layout's 4096. The real length of the set is passed at allocation in
+`VkDescriptorSetVariableDescriptorCountAllocateInfo`. One layout can thus serve sets of different sizes, and the pool
+does not have to reserve the worst case for each.
+
+## Filling the array
+
+<Step file="20_bindless" region="object-buffers" />
+
+64 buffers of 32 bytes, one record each. 64 separate allocations would be wasteful in a real renderer (see
+[allocators](lesson:allocators)); they stand for objects whose data is created and destroyed independently.
+
+<Step file="20_bindless" region="write-descriptors" />
+
+One `VkWriteDescriptorSet` can fill a run of consecutive array elements: `dstArrayElement` is the first, and the number
+of buffer infos is the count. The range is `VK_WHOLE_SIZE`, the whole buffer.
+
+<Step file="20_bindless" region="initial-writes" />
+
+Elements 0..62 are written before the first frame; elements 63..255 stay undefined. That is legal only because of
+`PARTIALLY_BOUND`, and only as long as no invocation actually accesses them: the draw reads indices 0..62 for the first
+120 frames.
+
+### What "must not be dynamically used" means in practice
+
+The course tried the other side once, as a negative test (2026-10-11, a temporary edit, reverted): draw one instance
+more than the number of written elements, so that an invocation reads the unwritten element 63. That run did not
+produce a wrong picture or a validation message; it lost the device:
+
+```text
+device_wait_idle failed: The logical device has been lost. See <https://registry.khronos.org/vulkan/specs/latest/html/vkspec.html#devsandqueues-lost-device>
+Error: ERROR_DEVICE_LOST
+```
+
+and the program's last line was `[timing] 2 frames in 4.4 s, 0 fps`. That run had GPU-assisted validation enabled,
+and GPU-AV printed nothing about the access before the loss. Take this as one observation on one machine, not as the
+behavior to expect: reading an undefined descriptor is undefined behavior, and on another driver it may return garbage,
+zeros, or work by accident. Nor does it show that GPU-AV can never catch such a read; in this run it did not.
+
+## Streaming an element into a live set
+
+<Step file="20_bindless" region="stream-in" />
+
+At frame 120 the program writes element 63, while the set is bound in the other frame slot's command buffer, which may
+still be pending on the GPU. Two flags make that legal, for two different command buffers:
+
+- the **other** slot's command buffer is pending and draws 63 instances, so it never uses element 63:
+  `UPDATE_UNUSED_WHILE_PENDING` allows the update ("not used by those command buffers");
+- **this** slot's command buffer is re-recorded after the write and draws 64 instances, so its draw reads the new
+  element. It is not pending (its fence was waited), so it sees the descriptor like any update before recording.
+
+This is why one set suffices instead of one per frame in flight: the data in each buffer never changes, and the
+descriptors only change in elements nobody is using.
+
+<Aside type="caution" title="The trap: validation stays silent without the right flag">
+`VUID-vkUpdateDescriptorSets-None-03047` forbids updating a set used by a pending command buffer for bindings "created
+without the `VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT` or `VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT`
+bits set". Either flag satisfies the rule. When step 20 was tried with `UPDATE_AFTER_BIND` alone, the update at frame
+120 produced no validation message at all. Yet by the definitions above, only `UPDATE_UNUSED_WHILE_PENDING` covers an
+update while a command buffer is **pending**; `UPDATE_AFTER_BIND` speaks of the time between binding and submitting.
+Step 20 sets the flag because of the definitions, not because of a message. Silence from the validation layer is not
+proof of correctness.
+</Aside>
+
+## One bind, one draw
+
+<Step file="20_bindless" region="bind-and-draw" />
+
+The set is bound once per command buffer, the push constants carry time and aspect, and one draw covers every instance.
+A renderer with ten thousand objects keeps this shape: per-object data is an index (an instance number, a push
+constant, or a field read from another buffer), never a rebind.
+
+## Non-uniform indexing
+
+Here is the shader's subtle part. In a vertex shader, the invocations of one draw form what Vulkan calls the
+**invocation group** ("any shader invocations executed as the result of a single command such as ... `vkCmdDraw` form
+a command scope instance", which for shaders without workgroups is the invocation group). A value is
+[dynamically uniform](term:dynamically-uniform) if it is the same for every invocation of that group. `instance` is
+not: one draw runs instances 0..63, and vertices of different instances may run side by side in the same
+[subgroup](term:subgroup) (a warp of 32 lanes on this GPU).
+
+For an array of storage buffers, the spec lists two levels of permission: a dynamically uniform index needs
+`shaderStorageBufferArrayDynamicIndexing`, a **non-uniform** one needs `shaderStorageBufferArrayNonUniformIndexing` and
+the SPIR-V capability `StorageBufferArrayNonUniformIndexing`. And the access itself must be marked:
+
+- `VUID-RuntimeSpirv-StorageBufferArrayNonUniformIndexing-10136`: if the capability is not declared, "the storage
+  buffer through which that memory is accessed must be dynamically uniform within the invocation group or subgroup";
+- `VUID-RuntimeSpirv-subgroupSize-10149`: if the resource is not uniform within the invocation group nor within the
+  subgroup, "the operand corresponding to that resource (e.g. the pointer or sampled image operand) must be decorated
+  with NonUniform".
+
+The second rule is precise about **where** the decoration goes: on the operand of the instruction that accesses memory,
+the pointer the load uses, not merely on the index. In Slang the marker is `NonUniformResourceIndex(index)` (GLSL:
+`nonuniformEXT`), and the compiler is supposed to carry it to every pointer derived from it.
+
+### Why it works on NVIDIA and breaks elsewhere
+
+The course GPU reports `shaderStorageBufferArrayNonUniformIndexingNative = true`. The spec defines the opposite case:
+"If this is `VK_FALSE`, then a single dynamic instance of an instruction that non-uniformly indexes an array of storage
+buffers may execute multiple times in order to access all the descriptors." In other words, hardware that is not native
+handles one descriptor per pass: the compiler builds a loop that, each time, picks one lane's index, serves every lane
+with that same index, and repeats until all lanes are served. The NonUniform decoration is what tells the compiler to
+build that loop. Without it, such a compiler assumes the index is the same for all lanes and may use one lane's
+descriptor for the whole subgroup: every hexagon in a warp would read the same record. GPUs that keep descriptors in
+scalar (per-subgroup) registers, AMD's being the well-known example, work that way; NVIDIA's are native, so a missing
+decoration costs nothing visible there. That is exactly why such bugs survive on one vendor and show up on another, and
+why the course cannot prove the decoration correct by running it on its own GPU.
+
+### A compiler bug, and what the course does about it
+
+When step 20 was written, the SPIR-V that Slang 2026.1 (the SDK 1.4.341.1 version) produced for `bindless.slang` had two
+problems, found by reading the disassembly against the two rules above:
+
+1. **No capability.** slangc did not declare `StorageBufferArrayNonUniformIndexing`, so by VUID 10136 the non-uniform
+   index was undefined behavior. It ran correctly only because NVIDIA is native. Slang 2026.1 has no capability name
+   for it (`slangc -h capability` lists only `spvShaderNonUniform`), so `bindless.slang` states it in inline SPIR-V:
+   `spirv_asm { OpCapability StorageBufferArrayNonUniformIndexing; }`, which slangc moves into the module's capability
+   list.
+2. **The decoration on the wrong pointer.** slangc decorated the access chain that selects the descriptor, but the load
+   reads through a second access chain derived from it (into element 0 of the buffer), and that one was undecorated.
+   VUID 10149 asks for the decoration on the pointer the load uses, and some compilers (Mesa's, for one) do not follow
+   chains back to find it. With `-O2`, Slang dropped the decoration entirely.
+
+The upstream fix (shader-slang/slang#10525, merged in 2026-06) was tested with Slang 2026.19: it declares the capability
+by itself, but its loads still go through undecorated derived chains. So the course fixes the output, not the source:
+`bun run sync:shaders` runs a small pass (`decorateNonUniform` in `scripts/sync-shaders.ts`) that adds `NonUniform` to
+every access chain, copy and load whose pointer derives from a NonUniform one, the pattern glslang emits, and the tests
+pin each shader's exact capability list and fail if a derived pointer misses the decoration. The result in the
+committed SPIR-V:
+
+```text
+OpCapability StorageBufferArrayNonUniformIndexing
+OpCapability RuntimeDescriptorArray
+OpCapability ShaderNonUniform
+OpDecorate %129 NonUniform
+OpDecorate %130 NonUniform
+OpDecorate %131 NonUniform
+%129 = OpAccessChain %_ptr_StorageBuffer_StructuredBuffer %objects %23
+%130 = OpAccessChain %_ptr_StorageBuffer_Instance_std430 %129 %int_0 %int_0
+%131 = OpLoad %Instance_std430 %130
+```
+
+`%129` selects the descriptor, `%130` is the pointer into it that the load uses, `%131` is the load: all three
+decorated. The lesson for your own renderer: for non-uniform resource access, read the SPIR-V once; the shading
+language marker is a request to the compiler, and the rule is about what lands in the module.
+
+## What the program prints
+
+Step 20 (Rust, release, `--seconds 4`; the C++ build prints the same lines except `[timing]`):
+
+```text
+Window: 800x600 pixels
+Found 1 GPU(s)
+GPU 0: NVIDIA GeForce RTX 3080 Ti
+
+Picked: NVIDIA GeForce RTX 3080 Ti
+Graphics + present family: 0
+Descriptor limits for storage buffers:
+  maxPerStageDescriptorStorageBuffers                = 1048576 (sets without UPDATE_AFTER_BIND)
+  maxDescriptorSetStorageBuffers                     = 1048576
+  maxPerStageDescriptorUpdateAfterBindStorageBuffers = 1048576 (UPDATE_AFTER_BIND sets)
+  maxDescriptorSetUpdateAfterBindStorageBuffers      = 1048576
+  maxPerStageUpdateAfterBindResources                = 4294967295 (all resource types)
+  maxUpdateAfterBindDescriptorsInAllPools            = 4294967295
+  shaderStorageBufferArrayNonUniformIndexingNative   = true
+This program: layout capacity 4096, one set of 256, 64 buffers written
+VkDevice created with VK_KHR_swapchain + runtimeDescriptorArray, shaderStorageBufferArrayNonUniformIndexing,
+  descriptorBindingPartiallyBound, descriptorBindingVariableDescriptorCount,
+  descriptorBindingStorageBufferUpdateAfterBind, descriptorBindingUpdateUnusedWhilePending
+Swapchain: 800x600 B8G8R8A8_SRGB, MAILBOX, 3 images
+
+SPIR-V: 2736 bytes (bindless.spv), entry points vertexMain, fragmentMain
+Descriptor set layout (UPDATE_AFTER_BIND_POOL): binding 0 = STORAGE_BUFFER x up to 4096, stage VERTEX
+  binding flags: VARIABLE_DESCRIPTOR_COUNT | PARTIALLY_BOUND | UPDATE_AFTER_BIND | UPDATE_UNUSED_WHILE_PENDING
+Pipeline layout: 1 set layout (set 0), push constants 8 bytes (time + aspect)
+Graphics pipeline created (vertexMain reads objects[NonUniformResourceIndex(instance)])
+
+Mesh: regular hexagon, 7 vertices, 18 indices (step 14's buffers, memory type 3)
+Object buffers: 64 x 32 bytes (one Instance each), STORAGE_BUFFER, memory type 3 (HOST_VISIBLE | HOST_COHERENT)
+Descriptor pool (UPDATE_AFTER_BIND): maxSets 1, STORAGE_BUFFER x 256
+Allocated 1 set with variable descriptor count 256
+vkUpdateDescriptorSets: elements 0..62 -> object buffers 0..62 (63 descriptors in one write); 193 elements unwritten
+
+2 frames in flight; each frame binds the one set and draws 18 indices x 63 instances (64 from frame 120)
+Rendering. Close the window to exit.
+Frame 120: element 63 written while the set is bound by a command buffer that may be pending; instances 63 -> 64
+Window closed
+[timing] 9906 frames in 4.0 s, 2473 fps
+```
+
+Validation with synchronization validation on reports nothing but the `VK_LAYER_bandicam_helper` warning, and GPU-AV
+only its own setup warnings.
+
+## The map of this lesson
+
+<MindMap />
+
+## Underneath
+
+- **A descriptor array is a table in memory.** Typically the set's descriptors lie consecutively in the driver's
+  descriptor memory, so `objects[i]` is "base of the set + i times the descriptor size": the shader loads a descriptor
+  first, then loads through it. That is why a non-uniform index can cost extra on hardware that wants one descriptor per
+  subgroup, and nothing on hardware that loads a descriptor per lane.
+- **Update after bind** means the driver may not copy descriptors into the command buffer at record time or snapshot
+  them at bind; it must read them from the set's memory late enough to see updates made before submission. The
+  separate, larger limits for such sets reflect that this memory works differently on some hardware.
+- **Beyond sets.** `VK_EXT_descriptor_buffer` and its successor `VK_EXT_descriptor_heap` (both listed by the course
+  GPU's driver) let the application place descriptors in buffers or heaps itself, the natural end point of bindless.
+  The concepts of this lesson (arrays, indices, uniformity, the lifetime of a descriptor while the GPU reads it) carry
+  over unchanged.
+
+<Quiz
+	questions={[
+		{
+			q: 'The set layout says descriptorCount 4096, the set is allocated with a variable count of 256, and 63 elements are written. Which flag makes the 193 unwritten elements of the set legal?',
+			options: [
+				{
+					text: 'VARIABLE_DESCRIPTOR_COUNT, because it lets the set be shorter than 4096',
+					why: 'It sets the length (256), but says nothing about elements inside that length that were never written.',
+				},
+				{
+					text: 'PARTIALLY_BOUND: elements that are not dynamically used need not be valid',
+					why: 'Right: without it, every statically used descriptor must be valid, which for a runtime-indexed array is every element.',
+				},
+				{
+					text: 'UPDATE_AFTER_BIND, because it allows the remaining elements to be written at any later time',
+					why: 'It allows updates between bind and submit; it does not make unwritten elements acceptable.',
+				},
+				{
+					text: 'None; unwritten descriptors are always fine',
+					why: 'Without PARTIALLY_BOUND every statically used descriptor must have been written before the set is consumed.',
+				},
+			],
+			answer: 1,
+			ref: '#the-set-layout-four-binding-flags',
+		},
+		{
+			q: 'At frame 120 step 20 writes element 63 while the other slot\'s command buffer, which uses the set, may be pending. Which flag\'s definition covers that?',
+			options: [
+				{
+					text: 'UPDATE_AFTER_BIND, since the validation layer accepts the write with that flag alone and reports nothing',
+					why: 'Validation does accept it (VUID 03047 is satisfied by either flag), but the definition of UPDATE_AFTER_BIND covers only bind to submit.',
+				},
+				{
+					text: 'UPDATE_UNUSED_WHILE_PENDING, because the pending command buffer does not use element 63',
+					why: 'Right: it allows updates while a command buffer is pending, for descriptors that command buffer does not use.',
+				},
+				{
+					text: 'PARTIALLY_BOUND, since element 63 was unwritten before',
+					why: 'PARTIALLY_BOUND is about consuming unwritten elements, not about when they may be updated.',
+				},
+				{
+					text: 'No flag is needed; host updates never affect the GPU',
+					why: 'Updates write descriptor memory the GPU reads; without a flag they are forbidden while pending.',
+				},
+			],
+			answer: 1,
+			ref: '#streaming-an-element-into-a-live-set',
+		},
+		{
+			q: 'The shader indexes objects[instance]. Why must the access be marked non-uniform, even though the program runs correctly on the course GPU without that?',
+			options: [
+				{
+					text: 'Because instance differs within one draw, and hardware that is not native may otherwise use one lane\'s descriptor for the whole subgroup',
+					why: 'Right: the index is not dynamically uniform; the NonUniform decoration tells non-native compilers to handle each distinct index.',
+				},
+				{
+					text: 'Because NonUniform makes the shader faster on NVIDIA',
+					why: 'On native hardware it changes nothing measurable; it is about correctness elsewhere.',
+				},
+				{
+					text: 'Because instance numbers can exceed the array size',
+					why: 'Bounds are a different issue; uniformity is about whether lanes agree on the index.',
+				},
+				{
+					text: 'Because storage buffers can only be indexed with constants',
+					why: 'Dynamic and non-uniform indexing are allowed with the corresponding features.',
+				},
+			],
+			answer: 0,
+			ref: '#why-it-works-on-nvidia-and-breaks-elsewhere',
+		},
+		{
+			q: 'Where must the NonUniform decoration be, according to VUID-RuntimeSpirv-subgroupSize-10149?',
+			options: [
+				{
+					text: 'On the index variable only',
+					why: 'The rule names the operand of the memory access, e.g. the pointer the load uses; that is what Slang 2026.1 got wrong.',
+				},
+				{
+					text: 'On the OpVariable of the descriptor array',
+					why: 'The array itself is uniform; only the selected element differs per invocation.',
+				},
+				{
+					text: 'Nowhere, if the capability StorageBufferArrayNonUniformIndexing is declared',
+					why: 'The capability allows non-uniform indexing; the decoration is still required on the access.',
+				},
+				{
+					text: 'On the operand of the access, the pointer the load uses',
+					why: 'Right: the operand corresponding to the resource must be decorated, so derived access chains need it too.',
+				},
+			],
+			answer: 3,
+			ref: '#non-uniform-indexing',
+		},
+	]}
+/>

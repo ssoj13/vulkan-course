@@ -1,0 +1,340 @@
+---
+title: Push constants and push descriptors
+description: 'Two lighter roads for per-frame data: bytes recorded straight into the command buffer (push constants, 256 bytes guaranteed in Vulkan 1.4), or a descriptor recorded there (push descriptors, core in 1.4) - compared with descriptor sets.'
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import MindMap from 'course-kit/components/MindMap.astro';
+import Quiz from 'course-kit/components/Quiz.astro';
+import Step from '../../../components/Step.astro';
+
+Step 17 needed a set layout, a pool, two sets, two buffers, two persistent mappings and an update call, all for 80 bytes
+per frame. That machinery pays off for textures and for big data, but for a matrix it is a lot. Is there a shorter
+road? Vulkan has two: record the **bytes** themselves into the command buffer, or record the **descriptor** there
+instead of in a set. What does each one cost, what does it save, and where are its limits?
+
+## Where this fits
+
+The third lesson of the **descriptors** module. Same data as the [uniform buffer lesson](lesson:uniform-buffers), same
+shader file, same hexagon; only the road from the CPU to the shader changes. The chains:
+
+`push constants: host struct → vkCmdPushConstants (bytes copied into the command buffer at record time) → push constant range in the pipeline layout → [[vk::push_constant]] block (std430)`
+
+`push descriptors: uniform buffer per frame → vkCmdPushDescriptorSet (descriptor copied into the command buffer) → set layout with PUSH_DESCRIPTOR → set 0, binding 0 in the shader`
+
+[Push constants](term:push-constant) are a small block of bytes stored in the command buffer itself, declared by a push
+constant range of the [pipeline layout](term:vk-pipeline-layout). [Push descriptors](term:push-descriptor) are
+[descriptors](term:descriptor) stored in the command buffer instead of a [descriptor set](term:vk-descriptor-set), for a
+[set layout](term:vk-descriptor-set-layout) created with `PUSH_DESCRIPTOR`. Before: [descriptor sets](lesson:descriptor-sets).
+After: [buffer device address](lesson:buffer-device-address), which pushes an 8-byte pointer instead of a descriptor.
+
+## Three ways to hand a shader the same 80 bytes
+
+Back to the Houdini asset. Its parameters can be set in three ways: link them to a separate parameter node that many
+assets read (a uniform buffer behind a descriptor set), point the asset at a different parameter node right in the
+network (a push descriptor), or type the values straight into the asset (push constants). The values are the same; what
+differs is where they are stored and how much setup each route needs.
+
+Step 18 can take two of the roads; the third, descriptor sets, is step 17:
+
+<Step file="18_push_constants" region="cli" />
+
+Push constants are the default; `--push-descriptor` selects push descriptors.
+
+## How much fits
+
+<Step file="18_push_constants" region="limits" />
+
+```text
+Limits: maxPushConstantsSize = 256 bytes (at least 128 everywhere), maxPushDescriptors = 32
+```
+
+- `maxPushConstantsSize` is the size of the whole push constant block, all stages together. Vulkan 1.0 guarantees 128
+  bytes, which is why so much older advice says "128 is the portable budget". **Vulkan 1.4 raised the minimum to 256**
+  (the spec's table of required limits lists "128 (Vulkan Core)" and "256 (Vulkan 1.4)"); the course GPU reports
+  exactly 256. A program that requires a 1.4 device, as this course does, can count on 256; 128 matters only for
+  devices below 1.4. The program's own line says "at least 128 everywhere", which stays true for any Vulkan device.
+- `maxPushDescriptors` is how many descriptors one push-descriptor set layout may hold: at least 32, and 32 here.
+
+Two `float4x4` are 128 bytes, so a model matrix and a model-view-projection matrix fit even the old minimum; four
+matrices fit 256. Everything bigger goes into buffers.
+
+## Road 1: push constants
+
+### The pipeline layout declares the range
+
+<Step file="18_push_constants" region="push-constant-range" />
+
+No set layout at all: the pipeline layout has one `VkPushConstantRange` (stage VERTEX, offset 0, size 80). A range must
+fit in the limit (`VUID-VkPushConstantRange-size-00298`), and one stage may appear in at most one range
+(`VUID-VkPipelineLayoutCreateInfo-pPushConstantRanges-00292`): a vertex and a fragment shader can split the block
+into two ranges, or share one range listed for both stages.
+
+On the shader side, `[[vk::push_constant]] ConstantBuffer<FrameUniforms> pushed` is a block in the `PushConstant`
+storage class, and Slang lays it out with **std430** (the SPIR-V struct is `FrameUniforms_std430`). For `FrameUniforms`
+that gives the same offsets as std140 (0, 64, 76), which is why one host struct serves both steps; the table in the
+[uniform buffer lesson](lesson:uniform-buffers#layout-rules-where-every-byte-lies) shows structs where the two differ.
+
+### Pushing the bytes
+
+<Step file="18_push_constants" region="push-constants" />
+
+`vkCmdPushConstants` copies the 80 bytes **into the command buffer, at record time**. That is the whole trick: there is
+no buffer, so there is nothing for the GPU to read later that the CPU could overwrite too early. Look at what this step
+no longer has:
+
+<Step file="18_push_constants" region="frame-resources" />
+
+On the push constant path the frame slot holds no buffer at all. No fence protects the matrix, because every command
+buffer carries its own copy. The rules that remain are about the recording:
+
+- "When a command buffer begins recording, all push constant values are undefined": push before the first draw that
+  reads them, in every command buffer.
+- offset and size are multiples of 4 (`VUID-vkCmdPushConstants-offset-00368`, `VUID-vkCmdPushConstants-size-00369`),
+  and every pushed byte must lie in a range of the layout for every stage named
+  (`VUID-vkCmdPushConstants-offset-01795`);
+- pushes are incremental: a later push of bytes 64..80 changes only those, and a draw sees the values pushed before it.
+  So per-object values work naturally: push, draw, push, draw.
+- "Binding a pipeline with a layout that is not compatible with the push constant layout does not disturb the push
+  constant values", but at draw time the bound pipeline's layout must be compatible with the layouts used to push them.
+
+The spec's own characterization: "Push constants represent a high speed path to modify constant data in pipelines that
+is expected to outperform memory-backed resource updates."
+
+## Road 2: push descriptors
+
+Push constants carry bytes; for a buffer or a texture you still need a descriptor. A push descriptor is the middle
+road: the resource stays in memory, but its descriptor is recorded into the command buffer, without a pool or a set.
+
+### A core feature that must be enabled
+
+<Step file="18_push_constants" region="device-features" />
+
+Push descriptors were the extension `VK_KHR_push_descriptor` and became core in Vulkan 1.4, as the `pushDescriptor`
+feature of `VkPhysicalDeviceVulkan14Features`. Every 1.4 device must support it (it is in the spec's list of features
+required for 1.4), but a supported feature is still off until the program enables it:
+
+> `VUID-vkCmdPushDescriptorSet-None-10356`: If the VK_KHR_push_descriptor extension is not enabled, pushDescriptor must
+> be enabled
+
+Step 18 enables it only on the `--push-descriptor` path; push constants are Vulkan 1.0 and need nothing. The output
+shows the difference: "VkDevice created with VK_KHR_swapchain + feature pushDescriptor".
+
+### The set layout gets a flag
+
+<Step file="18_push_constants" region="push-descriptor-layout" />
+
+Step 17's set layout plus `PUSH_DESCRIPTOR`. Sets of such a layout are never allocated; there is no pool. Two rules come
+with the flag:
+
+- at most one push-descriptor set per pipeline layout
+  (`VUID-VkPipelineLayoutCreateInfo-pSetLayouts-00293`), and the set number used with `vkCmdPushDescriptorSet` must be
+  that one (`VUID-vkCmdPushDescriptorSet-set-00365`);
+- the layout holds at most `maxPushDescriptors` descriptors (`VUID-VkDescriptorSetLayoutCreateInfo-flags-00281`).
+
+### Pushing the descriptor
+
+<Step file="18_push_constants" region="push-descriptor" />
+
+The same `VkWriteDescriptorSet` as step 17's update, "except the `dstSet` member is ignored", passed to
+`vkCmdPushDescriptorSet` with the pipeline layout and the set number. The spec: "Push descriptors are a small bank of
+descriptors whose storage is internally managed by the command buffer rather than being written into a descriptor set
+and later bound to a command buffer."
+
+What is copied is the **descriptor**, not the data. The 80 bytes still live in the slot's uniform buffer, written
+through a persistent mapping after the fence wait, exactly as in step 17. So the push-descriptor path keeps the
+per-slot buffers and the fence discipline, and drops the pool, the sets and the update call. Like push constants, push
+descriptors are undefined at the start of recording, and a push replaces the previous one for the draws after it.
+
+The spec also notes that "Push descriptors do not use dynamic offsets. Instead, the corresponding non-dynamic descriptor
+types can be used and the offset member of `VkDescriptorBufferInfo` can be changed each time the descriptor is written":
+one big buffer with a slot per frame or per object, and a new offset pushed for each.
+
+## The three roads side by side
+
+Step 18 prints the comparison itself:
+
+<Step file="18_push_constants" region="compare" />
+
+```text
+Setup for the per-frame FrameUniforms:
+  descriptor sets (step 17): set layout + pool + 2 sets + 2 uniform buffers + vkUpdateDescriptorSets; per frame: write buffer, bind set
+  push descriptors:          set layout (PUSH_DESCRIPTOR) + 2 uniform buffers; per frame: write buffer, vkCmdPushDescriptorSet
+  push constants:            a push constant range in the pipeline layout; per frame: vkCmdPushConstants (80 bytes)
+```
+
+| | Descriptor sets | Push descriptors | Push constants |
+|---|---|---|---|
+| Where the data lives | a buffer | a buffer | the command buffer |
+| Where the descriptor lives | a set from a pool | the command buffer | (none) |
+| Objects to create | set layout, pool, sets, buffers | set layout, buffers | a range in the pipeline layout |
+| Size limit | `maxUniformBufferRange` (65536 here) per buffer | the same per buffer; `maxPushDescriptors` (32) descriptors | `maxPushConstantsSize` (256) bytes in total |
+| Can hold textures | yes | yes | no (bytes only) |
+| Lifetime rule for the CPU | buffer and set must not change while pending | buffer must not change while pending | none: copied at record time |
+| Reused across command buffers | yes, bind the same set | no, pushed in each one | no, pushed in each one |
+| Vulkan version | 1.0 | 1.4 core (feature `pushDescriptor`) | 1.0 |
+
+How to choose, in short: per-draw values that fit go into push constants; a handful of per-draw resources (a target
+texture for a post-process pass, a temporary buffer) into push descriptors; data shared by many draws and bound for a
+long time, or large tables of resources, into sets ([bindless](lesson:bindless) takes that to its limit).
+
+<Aside type="note" title="What we did not measure">
+All three roads draw this hexagon at the same speed on the course machine (2400-2800 frames per second in these runs,
+limited by everything else in the frame); one draw per frame cannot show the cost of descriptor handling. The
+"high speed path" of push constants is the spec's expectation, not a measurement of this course.
+</Aside>
+
+## What the program prints
+
+Step 18 with push constants (Rust, release, `--seconds 2`; the C++ build prints the same lines except `[timing]`):
+
+```text
+Window: 800x600 pixels
+Path: push constants (--push-descriptor selects push descriptors)
+Found 1 GPU(s)
+GPU 0: NVIDIA GeForce RTX 3080 Ti
+
+Picked: NVIDIA GeForce RTX 3080 Ti
+Graphics + present family: 0
+Limits: maxPushConstantsSize = 256 bytes (at least 128 everywhere), maxPushDescriptors = 32
+VkDevice created with VK_KHR_swapchain
+Swapchain: 800x600 B8G8R8A8_SRGB, MAILBOX, 3 images
+
+SPIR-V: 2604 bytes (transform.spv), entry points vertexPush, fragmentMain
+Push constant range: stage VERTEX, offset 0, size 80
+Pipeline layout: no set layouts, 1 push constant range
+Graphics pipeline created (vertexPush reads the push constants)
+
+Mesh: regular hexagon, 7 vertices, 18 indices (step 14's buffers, memory type 3)
+```
+
+(shortened: then the comparison above and step 17's last lines; `[timing] 4826 frames in 2.0 s, 2406 fps`.)
+
+With `--push-descriptor`, the lines that differ:
+
+```text
+Path: push descriptors (--push-descriptor)
+VkDevice created with VK_KHR_swapchain + feature pushDescriptor
+SPIR-V: 2604 bytes (transform.spv), entry points vertexUniform, fragmentMain
+Descriptor set layout: binding 0 = UNIFORM_BUFFER x 1, stage VERTEX, flags PUSH_DESCRIPTOR
+Pipeline layout: 1 set layout (set 0), no push constants
+Graphics pipeline created (vertexUniform reads set 0, binding 0)
+Uniform buffers: 2 x 80 bytes, UNIFORM_BUFFER, memory type 3 (HOST_VISIBLE | HOST_COHERENT), persistently mapped
+```
+
+Both paths run clean under validation with synchronization validation on (only the known `VK_LAYER_bandicam_helper`
+warning).
+
+## The map of this lesson
+
+<MindMap />
+
+## Underneath
+
+- **Push constants** are typically loaded into registers or a small on-chip constant area when the draw starts: the
+  driver copies the bytes out of the command buffer into the hardware's command stream. That is why they are fast and
+  why the space is small. A driver whose hardware has less room than the block may place part of it in memory behind
+  your back; the API hides the difference.
+- **Push descriptors** become descriptor bytes written by the driver into memory it manages per command buffer (the
+  "small bank" of the spec), and the binding points the shader at them, just like a set. The saving is on the
+  application side: no pool to size, no set lifetime to track.
+- **Why only one push-descriptor set per layout?** The spec states the rule without a reason. It does say that "there
+  is a separate set of push descriptor bindings for each pipeline type", one bank per bind point; a single set number
+  per layout keeps that bank one fixed slot in the layout, which is the likely motivation (our reading, not the spec's).
+
+<Quiz
+	questions={[
+		{
+			q: 'Step 18\'s push constant path has no per-slot uniform buffer and no fence-guarded write for the matrix. Why is that safe with two frames in flight?',
+			options: [
+				{
+					text: 'vkCmdPushConstants copies the bytes into the command buffer at record time',
+					why: 'Right: each command buffer carries its own copy, so the CPU can change its struct right after the call.',
+				},
+				{
+					text: 'Push constants live in HOST_COHERENT memory that the GPU reads at submit',
+					why: 'There is no memory object at all; the values are part of the recorded commands.',
+				},
+				{
+					text: 'Because the vertex shader finishes before the next frame begins on the CPU, so nothing can overlap',
+					why: 'With two frames in flight it does overlap; that is the point of frames in flight.',
+				},
+				{
+					text: 'It is not safe; the program relies on luck',
+					why: 'The spec guarantees it: the pValues are consumed by the call itself.',
+				},
+			],
+			answer: 0,
+			ref: '#pushing-the-bytes',
+		},
+		{
+			q: 'A program requires a Vulkan 1.4 device. How many bytes of push constants can it count on without checking?',
+			options: [
+				{
+					text: '128, the portable budget',
+					why: '128 is the Vulkan 1.0 minimum. Vulkan 1.4 raised the required minimum.',
+				},
+				{
+					text: '256, the minimum Vulkan 1.4 requires',
+					why: 'Right: the required limits table lists 256 for Vulkan 1.4; the course GPU reports exactly that.',
+				},
+				{
+					text: '65536, like maxUniformBufferRange',
+					why: 'That is the limit of one uniform buffer descriptor, not of the push constant block.',
+				},
+				{
+					text: 'None: maxPushConstantsSize can be 0 on desktop GPUs, so programs must always check it before use',
+					why: 'Every Vulkan device has at least 128 bytes; 1.4 devices at least 256.',
+				},
+			],
+			answer: 1,
+			ref: '#how-much-fits',
+		},
+		{
+			q: 'Step 18 creates a 1.4 device without enabling pushDescriptor and calls vkCmdPushDescriptorSet. What happens?',
+			options: [
+				{
+					text: 'Nothing wrong: push descriptors are core in 1.4, so they are always on',
+					why: 'Core means every 1.4 device supports the feature, not that it is enabled. It must be enabled at device creation.',
+				},
+				{
+					text: 'vkCreateDevice fails',
+					why: 'Device creation succeeds; the error is in the later use.',
+				},
+				{
+					text: 'It violates VUID-vkCmdPushDescriptorSet-None-10356: the feature must be enabled',
+					why: 'Right: without the extension, the pushDescriptor feature must be enabled to call it.',
+				},
+				{
+					text: 'The call silently falls back to an ordinary descriptor set allocated from a hidden pool that the driver manages',
+					why: 'Vulkan has no such fallback; using an API without its feature is invalid usage.',
+				},
+			],
+			answer: 2,
+			ref: '#a-core-feature-that-must-be-enabled',
+		},
+		{
+			q: 'On the --push-descriptor path, what is recorded into the command buffer, and what still needs the per-slot fence?',
+			options: [
+				{
+					text: 'The 80 bytes are recorded; nothing needs the fence',
+					why: 'That describes push constants. A push descriptor records only the reference to the buffer.',
+				},
+				{
+					text: 'The descriptor set is recorded; the pool needs the fence',
+					why: 'There is no set and no pool on this path; the descriptor is in the command buffer.',
+				},
+				{
+					text: 'Nothing is recorded; the driver reads the buffer at submit time',
+					why: 'vkCmdPushDescriptorSet records the descriptor into the command buffer.',
+				},
+				{
+					text: 'The descriptor is recorded; the uniform buffer it points at still needs the fence',
+					why: 'Right: the data stays in the slot\'s buffer, written after the fence wait as in step 17.',
+				},
+			],
+			answer: 3,
+			ref: '#pushing-the-descriptor',
+		},
+	]}
+/>

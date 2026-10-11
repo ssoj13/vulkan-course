@@ -297,7 +297,7 @@ What the numbers say, and what they do not:
   176-byte round trip is the slowest.
 - **For small data the BAR wins by a factor of 30 or more**: 0.02 ms against 0.8-1.7 ms. The 176-byte "copy" is all
   latency (record, submit, the GPU picks it up, the fence wakes the CPU), not bandwidth. This is why per-frame data,
-  such as the uniforms of the next module, belongs in the BAR heap when it fits.
+  such as the [uniforms of the next module](lesson:uniform-buffers), belongs in the BAR heap when it fits.
 - **We did not find why** the BAR writes run at 4-5 GB/s when the link carries 11-13 GB/s for the copy engines; the
   write-combining path of the CPU is the usual suspect. Treat the ratio as this machine's, not a law.
 - **Synchronization validation slows the frames, not the host writes**: with `VK_KHRONOS_VALIDATION_VALIDATE_SYNC=true`

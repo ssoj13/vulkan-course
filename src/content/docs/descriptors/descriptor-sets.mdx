@@ -1,0 +1,332 @@
+---
+title: Descriptor sets
+description: 'How "set 0, binding 0" in a shader becomes a real buffer: set layout, pool, set, update, bind - the hierarchy under the pipeline layout, when a set may change, and why sets are grouped by how often they change.'
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import MindMap from 'course-kit/components/MindMap.astro';
+import Quiz from 'course-kit/components/Quiz.astro';
+import Step from '../../../components/Step.astro';
+import ObjectGraph from '../../../components/ObjectGraph.astro';
+
+The shader of the [previous lesson](lesson:uniform-buffers) reads "set 0, binding 0". The program has a `VkBuffer`
+handle. Nothing in either of them mentions the other. What connects the two, and why does Vulkan need four new objects
+and calls (a layout, a pool, a set, an update) to hand one buffer to one shader?
+
+## Where this fits
+
+The second lesson of the **descriptors** module, and the one that fills the pipeline layout that the
+[pipeline module](lesson:pipeline-layout) left empty. Layers: the API objects (set layout, pool, set), the command that
+binds them, and underneath, the descriptor memory a driver keeps for the GPU. The chain:
+
+`VkDescriptorSetLayout (the shape) → VkPipelineLayout (lists set layouts by set number) → VkDescriptorPool (an arena) → VkDescriptorSet (allocated with a layout) → vkUpdateDescriptorSets (writes "this buffer, this range" into binding 0) → vkCmdBindDescriptorSets (set 0 for the draws that follow)`
+
+A [descriptor](term:descriptor) is a small record that tells a shader where a resource is and how to read it. Descriptors
+sit in the [bindings](term:descriptor-binding) of a [descriptor set](term:vk-descriptor-set), which is allocated from a
+[descriptor pool](term:vk-descriptor-pool) with a [descriptor set layout](term:vk-descriptor-set-layout); the
+[pipeline layout](term:vk-pipeline-layout) lists the set layouts, and the rules of
+[pipeline layout compatibility](term:pipeline-layout-compatibility) decide when a bound set survives a pipeline switch.
+How sets are split up is a design choice, [grouping by update frequency](term:set-frequency). Before:
+[the pipeline layout](lesson:pipeline-layout), [uniform buffers](lesson:uniform-buffers). After:
+[push constants and push descriptors](lesson:push-constants), which skip most of these objects, and
+[bindless](lesson:bindless), which keeps one set for everything.
+
+## A descriptor is a reference, not the data
+
+A material in a DCC does not contain its textures. It contains *references* to them: a file path, a color space, a
+filter. The renderer resolves those references when it shades. A descriptor is that reference for the GPU: for a
+uniform buffer it says "buffer X, starting at offset O, R bytes long"; for a texture it will say "this [image view](lesson:image-views), read
+with this sampler" (textures are module 10). Its bytes are in a format only the driver and the
+GPU know, a few dozen bytes per descriptor; the API never shows them.
+
+The four layers, outermost first, are the hierarchy of the pipeline layout lesson filled with content:
+
+| Layer | Object or call | In step 17 | Analogy |
+|---|---|---|---|
+| pipeline layout | `VkPipelineLayout` | set 0 = the uniform layout | the full signature of a function |
+| set layout | `VkDescriptorSetLayout` | binding 0: 1 x `UNIFORM_BUFFER`, vertex stage | one parameter group's declaration |
+| set | `VkDescriptorSet` | one per frame slot | one filled-in instance of that group |
+| descriptor | written by `vkUpdateDescriptorSets` | uniform buffer i, offset 0, range 80 | one argument value |
+
+The layout is the class; a set is an instance of it. A pipeline is compiled against layouts only; sets with real
+resources are bound while recording, and the same pipeline can draw with any set of a matching layout.
+
+## 1. The set layout: the shape
+
+<Step file="17_uniforms" region="set-layout" />
+
+A set layout is a list of bindings. Each `VkDescriptorSetLayoutBinding` has:
+
+- `binding`: the number the shader uses (`[[vk::binding(0, 0)]]`, the second number being the set);
+- `descriptorType`: what kind of resource, here `UNIFORM_BUFFER`. Others are `STORAGE_BUFFER` ([bindless](lesson:bindless)),
+  `SAMPLED_IMAGE`, `SAMPLER`, `COMBINED_IMAGE_SAMPLER`, `STORAGE_IMAGE` (images, module 10), and a few more;
+- `descriptorCount`: how many descriptors, i.e. an array. 1 here; 4096 in the bindless lesson;
+- `stageFlags`: which shader stages may read it. Listing only the vertex stage is not decoration: a driver may set up
+  descriptors per stage, and a stage that is not listed must not use the binding.
+
+## 2. The pipeline layout lists set layouts by number
+
+<Step file="17_uniforms" region="pipeline-layout" />
+
+The position in `pSetLayouts` is the set number: index 0 is set 0. The pipeline is created with this layout, and the
+shader's declaration must be covered by it: a resource the shader uses at set 0, binding 0 must exist in the layout with
+a matching type (`VUID-VkGraphicsPipelineCreateInfo-layout-07988`).
+
+**Compatibility.** Two pipeline layouts are "compatible for set N" when they were "created with identically defined
+descriptor set layouts for sets zero through N" and "identical push constant ranges" (spec, "Pipeline Layout
+Compatibility"). When you bind a new pipeline, every set bound earlier with a layout compatible for that set number stays
+valid; binding a set N with a layout that is not compatible disturbs the sets above it. That rule is the reason for the
+section [grouping sets by how often they change](#grouping-sets-by-how-often-they-change) below.
+
+## 3. The pool: an arena for sets
+
+<Step file="17_uniforms" region="descriptor-pool" />
+
+Descriptor sets are not created one by one from the device; they are allocated from a pool, like command buffers from
+a command pool. The pool is sized up front with two numbers:
+
+- `maxSets`: how many sets may be allocated from it in total (2);
+- `pPoolSizes`: how many descriptors of each type all those sets may hold together (2 uniform buffer descriptors).
+
+When a pool runs out, `vkAllocateDescriptorSets` fails, and if the reason is the pool, not device memory, the spec says
+"`VK_ERROR_OUT_OF_POOL_MEMORY` must be returned". A renderer then allocates a new pool; it is not a fatal error.
+
+Without the `FREE_DESCRIPTOR_SET` flag, only allocation and `vkResetDescriptorPool` are allowed, not freeing single
+sets, which lets the driver manage the pool as a simple bump allocator. Resetting "recycles all of the resources from
+all of the descriptor sets allocated from the descriptor pool", once the GPU is done with all of them
+(`VUID-vkResetDescriptorPool-descriptorPool-00313`). A common pattern in engines is a pool per frame in flight, reset
+when that slot's fence has signaled; step 17 needs neither: its two sets live as long as the program.
+
+## 4. Allocating the sets
+
+<Step file="17_uniforms" region="allocate-sets" />
+
+One layout per set to allocate: two sets, both with set 0's shape. In C++, `vk::raii::DescriptorSet` would call
+`vkFreeDescriptorSets` in its destructor, which is not allowed for a pool without `eFreeDescriptorSet`; so the program
+keeps plain handles (`release()`) and lets the pool take the sets with it.
+
+A fresh set is empty in a precise sense: "When a descriptor set is allocated, the initial state is largely uninitialized
+and all descriptors are undefined". It may be bound in that state, but every descriptor a shader statically uses must
+be written before the set is consumed (the [bindless lesson](lesson:bindless) relaxes "statically" to "dynamically").
+
+## 5. Writing the descriptors
+
+<Step file="17_uniforms" region="write-sets" />
+
+`vkUpdateDescriptorSets` takes an array of writes (and an array of copies between sets, unused here). Each
+`VkWriteDescriptorSet` names a set, a binding, a first array element, a descriptor type and the resources, for buffers
+as `VkDescriptorBufferInfo` (buffer, offset, range). Two writes in one call fill the two sets.
+
+The update is a **host** operation: the driver writes the descriptor bytes immediately, not when a command buffer runs.
+That is why it needs its own rules about time. A set may not be updated while a command buffer that uses it is pending,
+unless the binding has one of the bindless flags:
+
+> `VUID-vkUpdateDescriptorSets-None-03047`: The dstSet member of each element of pDescriptorWrites or pDescriptorCopies
+> for bindings which were created without the VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT or
+> VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT bits set must not be used by any command that was recorded to a
+> command buffer which is in the pending state
+
+Step 17 writes the sets once, before the first frame, and never again: the sets always point at the same two buffers.
+What changes every frame is the buffers' **contents**, and those are guarded by the fences of the previous lesson. That
+split, descriptors fixed and data changing, is the normal case.
+
+## 6. Binding the set and drawing
+
+<Step file="17_uniforms" region="bind-and-draw" />
+
+`vkCmdBindDescriptorSets` records "use these sets, starting at set number `firstSet`, for the graphics bind point,
+interpreted through this pipeline layout". Graphics and compute have separate bind points, so a compute dispatch does
+not disturb the sets of a draw. The last argument is the list of dynamic offsets, empty here.
+
+When does the GPU read the descriptors? The spec defines a window rather than an instant: without `UPDATE_AFTER_BIND`,
+the contents "may be consumed ... during host execution of the command, or during shader execution of the resulting
+draws and dispatches, or any time in between. Thus, the contents of a descriptor set binding must not be altered
+(overwritten by an update command, or freed) between the first point in time that it may be consumed, and when the
+command completes executing on the queue." So from the moment of the bind call until the GPU has finished, the set is
+frozen. Step 17 binds the slot's own set, whose fence was waited before recording, so the window is never violated.
+
+<Aside type="note" title="Two tracks of time">
+The descriptor names the buffer; the buffer holds the matrix. Freezing the set does not freeze the buffer: the CPU
+may write a different matrix into a buffer while the set that points at it is bound, as long as no pending GPU work is
+reading that buffer. In step 17 both are per slot, and one fence wait covers both.
+</Aside>
+
+## 7. Cleanup
+
+<Step file="17_uniforms" region="cleanup" />
+
+`vkDestroyDescriptorPool` frees all sets allocated from it. The set layout can be destroyed once nothing will be created
+from it any more; it outlives the pool here only because the code destroys objects in reverse order of creation.
+
+## Build it yourself
+
+The new objects all hang off the device; a set has two parents, the pool it comes from and the layout that shapes it:
+
+<ObjectGraph
+	mode="build"
+	scope={['instance', 'physical-device', 'device', 'descriptor-set-layout', 'pipeline-layout', 'descriptor-pool', 'descriptor-set']}
+	caption="A descriptor set needs a pool and a layout. The pipeline layout needs the set layout too, so one layout feeds both the pipeline and the sets."
+/>
+
+## Grouping sets by how often they change
+
+Step 17 has one set. A real renderer draws thousands of objects with dozens of materials, and the data falls into
+groups that change at different rates: the camera and lights once per frame, a material's textures and parameters per
+material, an object's transform per object. The usual way to lay out sets follows that, and the spec itself recommends
+it in a note under "Pipeline Layout Compatibility":
+
+> Place the least frequently changing descriptor sets near the start of the pipeline layout, and place the descriptor
+> sets representing the most frequently changing resources near the end. When pipelines are switched, only the
+> descriptor set bindings that have been invalidated will need to be updated and the remainder of the descriptor set
+> bindings will remain in place.
+
+<Aside type="caution" title="Convention, not a rule of the API">
+The numbering below is a widespread **convention** (engines, tutorials and vendor guides use variants of it), not
+something Vulkan requires. Vulkan only defines compatibility; what you put in which set is your design.
+</Aside>
+
+| Set | Typical content | Bound |
+|---|---|---|
+| 0 | per frame: camera matrices, lights, time | once per frame |
+| 1 | per pass or per material: textures, material parameters | when the material changes |
+| 2 | per object: transform, skinning data | per object (or replaced by push constants / an index) |
+
+Because all pipelines share set layouts 0..N where they agree, switching from one material's pipeline to another
+keeps set 0 bound: compatibility for set 0 only needs the same set 0 layout and the same push constant ranges. How many
+sets can be bound at once is `maxBoundDescriptorSets`: at least 4 in Vulkan 1.0, at least 7 in Vulkan 1.4, 32 on the
+course GPU. Modern engines often shrink the per-object level to nothing: per-object values go into
+[push constants](lesson:push-constants), and per-object resources are reached by an index into one big set
+([bindless](lesson:bindless)).
+
+## What the program prints
+
+The descriptor part of step 17's output (the whole output is in the [previous lesson](lesson:uniform-buffers#what-the-program-prints)):
+
+```text
+Descriptor set layout: binding 0 = UNIFORM_BUFFER x 1, stage VERTEX
+Pipeline layout: 1 set layout (set 0), no push constants
+Graphics pipeline created (vertexUniform reads set 0, binding 0)
+...
+Descriptor pool: maxSets 2, UNIFORM_BUFFER x 2
+Allocated 2 descriptor sets
+vkUpdateDescriptorSets: slot 0's set, binding 0 -> uniform buffer 0 (offset 0, range 80)
+vkUpdateDescriptorSets: slot 1's set, binding 0 -> uniform buffer 1 (offset 0, range 80)
+
+2 frames in flight, each with its own uniform buffer and descriptor set
+```
+
+(shortened: the lines in between are the uniform buffers of the previous lesson.)
+
+## The map of this lesson
+
+<MindMap />
+
+## Underneath
+
+- **Descriptors are memory.** Typically a driver keeps descriptors in GPU-visible memory, its own descriptor heap. A
+  pool is a reservation in it, a set is a range of it, and `vkUpdateDescriptorSets` makes the CPU write the
+  hardware-format bytes of each descriptor into that range. Binding a set then amounts to telling the GPU the base
+  address of that range for set N. This is why updates are host operations and why a pending GPU read forbids them.
+- **The layout fixes the addressing.** Because "set N" must work the same for every pipeline compatible for set N, a
+  driver compiles each shader to find set N's descriptors in a way that depends only on the set layouts 0..N (the spec
+  says so in an implementor's note). The application never sees descriptor offsets; it only promises the shapes.
+- **Newer extensions expose that memory directly.** `VK_EXT_descriptor_buffer` let applications write descriptors into
+  buffers themselves, and `VK_EXT_descriptor_heap` (ratified, listed by the course GPU's driver 616.64) replaces it. This
+  course stays with the core descriptor sets; the model of this lesson is what those extensions make explicit.
+
+<Quiz
+	questions={[
+		{
+			q: 'Which object fixes "binding 0 holds one uniform buffer, visible to the vertex stage", and which holds the actual buffer?',
+			options: [
+				{
+					text: 'The pipeline layout holds both',
+					why: 'The pipeline layout only lists set layouts and push constant ranges; it never holds a resource.',
+				},
+				{
+					text: 'The pool fixes the shape; the set layout holds the buffer',
+					why: 'A pool only reserves room for sets and descriptors; the set layout is a declaration with no resources.',
+				},
+				{
+					text: 'The descriptor set layout fixes the shape; a descriptor set allocated with it holds the buffer',
+					why: 'Right: the layout is the declaration, a set is an instance of it, filled by vkUpdateDescriptorSets.',
+				},
+				{
+					text: 'The shader module: [[vk::binding(0, 0)]] declares the shape and the driver finds the buffer from it',
+					why: 'The shader declares what it uses, but Vulkan needs the shape as an API object to build the pipeline and to allocate sets.',
+				},
+			],
+			answer: 2,
+			ref: '#a-descriptor-is-a-reference-not-the-data',
+		},
+		{
+			q: 'Step 17 binds a set, then (in a modified version) calls vkUpdateDescriptorSets on that same set before the command buffer is submitted. No bindless flags are set. What does the spec say?',
+			options: [
+				{
+					text: 'It is fine: without bindless flags the descriptors are read only when the command buffer is submitted',
+					why: 'Without UPDATE_AFTER_BIND they may be consumed as early as the bind call itself, so they must not change after it.',
+				},
+				{
+					text: 'Not allowed: from the bind until the GPU finishes, the set must not change',
+					why: 'Right: the contents may be consumed from the bind call until the command completes, so they must stay as they were.',
+				},
+				{
+					text: 'The update is queued and applied after the GPU finishes',
+					why: 'An update is a host operation done immediately; nothing queues it.',
+				},
+				{
+					text: 'It is fine as long as the buffer the set points at is not changed',
+					why: 'The rule is about the descriptors, whatever the buffer contents do.',
+				},
+			],
+			answer: 1,
+			ref: '#6-binding-the-set-and-drawing',
+		},
+		{
+			q: 'A renderer puts camera data in set 0 and material textures in set 1. When it switches to another material\'s pipeline, why can set 0 stay bound?',
+			options: [
+				{
+					text: 'Because binding a pipeline never affects bound descriptor sets',
+					why: 'It does, if the new layout is not compatible for those set numbers.',
+				},
+				{
+					text: 'Because set 0 is special and is never disturbed',
+					why: 'No set number is special; the same rule applies to every set number.',
+				},
+				{
+					text: 'Because the camera data is in a uniform buffer',
+					why: 'The descriptor type has nothing to do with it; the rule is about layout compatibility.',
+				},
+				{
+					text: 'Both layouts have the same set 0 layout and push constant ranges, so they are compatible for set 0',
+					why: 'Right: compatibility for set N needs identically defined set layouts 0..N and identical push constant ranges.',
+				},
+			],
+			answer: 3,
+			ref: '#2-the-pipeline-layout-lists-set-layouts-by-number',
+		},
+		{
+			q: 'vkAllocateDescriptorSets returns VK_ERROR_OUT_OF_POOL_MEMORY. What does it mean?',
+			options: [
+				{
+					text: 'The pool has no room left for this set or its descriptors; allocate from another pool',
+					why: 'Right: the spec returns it when the pool, not device memory, is exhausted. Engines create a new pool.',
+				},
+				{
+					text: 'The GPU is out of VRAM',
+					why: 'That would be an out-of-device-memory error; OUT_OF_POOL_MEMORY is about the pool\'s own counts.',
+				},
+				{
+					text: 'The set layout is invalid',
+					why: 'An invalid layout is a valid-usage error caught by validation, not a result code.',
+				},
+				{
+					text: 'Sets allocated earlier must be freed with vkFreeDescriptorSets before the pool accepts new ones',
+					why: 'Without FREE_DESCRIPTOR_SET that call is not even allowed; reset the pool or use another one.',
+				},
+			],
+			answer: 0,
+			ref: '#3-the-pool-an-arena-for-sets',
+		},
+	]}
+/>

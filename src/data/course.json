@@ -86,6 +86,18 @@
         { "slug": "staging-uploads", "title": "Staging uploads", "summary": "Three ways into VRAM - a copy on the graphics queue, a copy on the transfer queue with an ownership transfer, a direct write through the BAR window - with measured costs, and why a fence does not make a copy visible." },
         { "slug": "allocators", "title": "Allocators and sub-allocation", "short": "Allocators", "summary": "Why real programs make a few big allocations and place thousands of resources inside them: the measured cost of vkAllocateMemory, alignment rules, a linear allocator in Rust and VMA in C++." }
       ]
+    },
+    {
+      "slug": "descriptors",
+      "title": "Descriptors and shader data",
+      "summary": "How shaders get data that is not a vertex: uniform buffers and their layout rules, descriptor sets, push constants and push descriptors, GPU pointers, and one bindless table for everything.",
+      "lessons": [
+        { "slug": "uniform-buffers", "title": "Uniform buffers", "summary": "Per-frame data in a uniform buffer per frame in flight, written through a persistent mapping, and the std140, std430 and scalar layout rules checked against the SPIR-V." },
+        { "slug": "descriptor-sets", "title": "Descriptor sets", "summary": "Set layout, pool, set, update, bind: how set 0, binding 0 in a shader becomes a real buffer, when a set may change, and why sets are grouped by how often they change." },
+        { "slug": "push-constants", "title": "Push constants and push descriptors", "short": "Push constants", "summary": "Bytes or a descriptor recorded straight into the command buffer: 256 bytes guaranteed in Vulkan 1.4, push descriptors in core 1.4, and the three roads compared." },
+        { "slug": "buffer-device-address", "title": "Buffer device address", "short": "Device address", "summary": "64-bit GPU pointers instead of descriptors: the feature and the flags they require, pointers in Slang, and GPU-assisted validation catching a read past the end." },
+        { "slug": "bindless", "title": "Bindless descriptors", "short": "Bindless", "summary": "One set with a big descriptor array, bound once and indexed per instance: descriptor indexing, the four binding flags, updates while frames are in flight, and non-uniform indexing." }
+      ]
     }
   ],
   "labs": [

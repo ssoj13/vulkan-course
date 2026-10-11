@@ -120,14 +120,14 @@
       "note": "The whole GPU state for a draw, compiled ahead of time: shaders, vertex format, blending, depth."
     },
     {
-      "id": "descriptor-pool", "handle": "VkDescriptorPool", "stage": "descriptors",
+      "id": "descriptor-pool", "handle": "VkDescriptorPool", "term": "vk-descriptor-pool", "stage": "descriptors",
       "how": "create", "call": "vkCreateDescriptorPool", "destroy": "vkDestroyDescriptorPool",
       "parents": [{ "id": "device", "param": "device", "vuid": "VUID-vkCreateDescriptorPool-device-parameter" }],
       "onDestroy": "free",
       "note": "Storage that descriptor sets are allocated from. Destroying it frees all its sets."
     },
     {
-      "id": "descriptor-set", "handle": "VkDescriptorSet", "stage": "descriptors",
+      "id": "descriptor-set", "handle": "VkDescriptorSet", "term": "vk-descriptor-set", "stage": "descriptors",
       "how": "allocate", "call": "vkAllocateDescriptorSets",
       "parents": [
         { "id": "descriptor-pool", "param": "pAllocateInfo->descriptorPool", "vuid": "VUID-VkDescriptorSetAllocateInfo-descriptorPool-parameter" },

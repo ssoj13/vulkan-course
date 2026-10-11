@@ -1,0 +1,314 @@
+---
+title: Buffer device address
+description: 'GPU pointers instead of descriptors: the bufferDeviceAddress feature, the usage and allocation flags it requires, an 8-byte address in a push constant, pointer indexing in Slang (PhysicalStorageBuffer64), and what a pointer without a size costs - with GPU-assisted validation catching a read past the end.'
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import MindMap from 'course-kit/components/MindMap.astro';
+import Quiz from 'course-kit/components/Quiz.astro';
+import Snippet from 'course-kit/components/Snippet.astro';
+import Step from '../../../components/Step.astro';
+
+Everything so far reached a buffer through a descriptor: a driver-owned record with the buffer, an offset and a range.
+C++ programmers reach memory with something much simpler, a pointer. Can a shader do that? Since Vulkan 1.2, yes: a
+buffer can have a 64-bit address on the GPU, the program can pass that number to a shader in any way it likes, and the
+shader dereferences it. What does it take to get such an address, and what do you give up when a pointer replaces a
+descriptor?
+
+## Where this fits
+
+The fourth lesson of the **descriptors** module, and the one that leaves descriptors behind. Layers: a device feature, a
+buffer usage and an allocation flag (API), a 64-bit number in a push constant, a pointer type in Slang and the
+`PhysicalStorageBuffer` storage class in SPIR-V, and underneath, the GPU's virtual address space. The chain:
+
+`feature bufferDeviceAddress → buffer usage SHADER_DEVICE_ADDRESS + memory allocated with DEVICE_ADDRESS → vkGetBufferDeviceAddress → u64 in a push constant → Instance* in Slang → OpPtrAccessChain + OpLoad in PhysicalStorageBuffer → instances[instance index]`
+
+A [buffer device address](term:buffer-device-address) is the 64-bit GPU virtual address of a [VkBuffer](term:vk-buffer);
+the shader reads through it in the [PhysicalStorageBuffer](term:physical-storage-buffer) storage class, with no
+[descriptor](term:descriptor) involved. It travels in [push constants](term:push-constant). Because nothing checks such
+reads, the tool that catches mistakes is [GPU-assisted validation](term:gpu-av). Before:
+[push constants](lesson:push-constants) (how the address is passed). After: [bindless](lesson:bindless), the other way to
+reach many buffers from one draw, which keeps descriptors.
+
+## 64 hexagons, one draw, one pointer
+
+Step 19 draws 64 small hexagons in an 8x8 grid with **one** indexed draw of 64 instances. Each instance reads its own
+32-byte record (position, scale, phase, color, spin) from a buffer of 64 records. In a Houdini point cloud every point
+carries its attributes, and a copy-to-points node reads them per copy; here the "points" are the records, the "copies"
+are the instances, and the shader finds record `i` at `address + i * 32`.
+
+<Step file="19_buffer_device_address" region="instance" />
+
+The record is 32 bytes with offsets 0, 8, 12, 16 and 28; the asserts pin them. Slang lays out a pointee in its
+"natural" layout, which agrees with std430 and with `repr(C)` for this struct (the SPIR-V names it `Instance_natural`
+and gives the pointer an `ArrayStride 32`).
+
+## The shader: a pointer in a push constant
+
+<Snippet src="shaders/device_address.slang" />
+
+The push constant block is 16 bytes: an `Instance*`, then `time` and `aspect`. `push.instances[instance]` is pointer
+arithmetic: the address plus `instance * 32` bytes. `SV_VulkanInstanceID` is SPIR-V `InstanceIndex`, the instance number
+of the draw (0..63 here).
+
+The SPIR-V shows what changed below the source:
+
+```text
+OpCapability PhysicalStorageBufferAddresses
+OpMemoryModel PhysicalStorageBuffer64 GLSL450
+%36 = OpPtrAccessChain %_ptr_PhysicalStorageBuffer_Instance_natural %35 %26
+%37 = OpLoad %Instance_natural %36 Aligned 4
+```
+
+The module's addressing model is `PhysicalStorageBuffer64`: pointers into buffers are 64-bit numbers.
+`OpPtrAccessChain` is the `[i]`, and the load carries an `Aligned 4` operand: a load through a physical pointer must state
+the alignment it may assume, because no descriptor tells the compiler anything about the memory behind it.
+
+The host side mirrors the push block:
+
+<Step file="19_buffer_device_address" region="push-data" />
+
+The `u64` (C++: `vk::DeviceAddress`) comes first, so it is 8-byte aligned without padding, and the whole block is
+16 bytes of initialized data.
+
+## Three switches, all required
+
+### 1. The device feature
+
+<Step file="19_buffer_device_address" region="device-features" />
+
+`bufferDeviceAddress` is a Vulkan 1.2 feature. Every Vulkan 1.3 device must support it (the spec's list of features
+required for 1.3), but as with push descriptors the program must enable it. Without it, the usage flag, the allocation
+flag and `vkGetBufferDeviceAddress` are all invalid (`VUID-vkGetBufferDeviceAddress-bufferDeviceAddress-03324`).
+
+### 2. The usage and the allocation flag
+
+<Step file="19_buffer_device_address" region="create-buffer" />
+
+Step 14's `create_buffer` with one addition: a `VkMemoryAllocateFlagsInfo` in the allocation's `pNext` chain. On a
+buffer with `SHADER_DEVICE_ADDRESS` usage the flag is not a hint:
+
+- `VUID-vkBindBufferMemory-bufferDeviceAddress-03339`: if the feature is enabled and the buffer has
+  `SHADER_DEVICE_ADDRESS` usage, the memory "must have been allocated with the VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT bit
+  set";
+- `VUID-VkMemoryAllocateInfo-flags-03331`: the flag itself needs the feature.
+
+Why should the allocation care? The flag tells the driver that this memory must have an address shaders can use, which
+lets it set up the GPU mapping accordingly; the spec does not explain more. For an allocator this means one more thing to
+track: memory blocks for address-capable buffers need the flag, so VMA, for example, has `VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT` to add it.
+
+### 3. The buffer
+
+<Step file="19_buffer_device_address" region="instance-buffer" />
+
+Usage `SHADER_DEVICE_ADDRESS` only. No `STORAGE_BUFFER` usage: that usage exists so that a storage buffer **descriptor**
+may point at the buffer, and no descriptor ever will. The memory is step 14's `HOST_VISIBLE | HOST_COHERENT` type 3,
+written once; [staging](lesson:staging-uploads) into VRAM would work the same, the address does not care where the
+memory lives.
+
+## Getting the address
+
+<Step file="19_buffer_device_address" region="get-address" />
+
+`vkGetBufferDeviceAddress` returns "an address of the start of" the buffer, and "addresses in the range
+[bufferBaseAddress, bufferBaseAddress + VkBufferCreateInfo::size) can be used to access the memory bound to this
+buffer". Zero "is reserved as a null pointer and must not be returned", which is why the program treats 0 as an error.
+
+```text
+[addr] instance buffer device address: 0x6f94000
+[addr] instances[1] at 0x6f94020 (+32), instances[63] at 0x6f947e0 (+2016)
+```
+
+Both languages got `0x6f94000` in every run on the course machine, but nothing promises it, which is why these lines
+start with `[addr]` and are excluded when the outputs of the two languages are compared. An address is a property of
+one buffer in one device: it stays valid as long as the buffer exists, and another run, another driver or another
+allocation order gives another number. Tools that record and replay a program (RenderDoc, for instance) need the same
+addresses again, and for that the spec has an opt-in: the `bufferDeviceAddressCaptureReplay` feature, with which "the
+return value will be the same address that was returned at capture time".
+
+## The draw
+
+<Step file="19_buffer_device_address" region="push-and-draw" />
+
+The address is pushed like any other value, then one draw with 64 instances. No set, no descriptor, no bind call for
+the instance data: the pipeline layout has just the 16-byte push constant range.
+
+```text
+Push constant range: stage VERTEX, offset 0, size 16 (8-byte address + time + aspect)
+Pipeline layout: no set layouts, 1 push constant range
+```
+
+Memory-model-wise, a read through a pointer is an ordinary read of the buffer's memory: the host wrote the records
+before the first submit, and the submission makes those writes visible, as for the uniform buffer.
+
+## A pointer has no size
+
+A descriptor carries a range, and the driver knows it; with the robustness features (`robustBufferAccess` and its
+successors) out-of-range accesses through a descriptor are made harmless. A raw address carries nothing: `instances[64]` is simply `address + 2048`, past the end of the buffer.
+What happens there is whatever lies at that address, or a GPU fault. Nothing in core validation can see it either: the
+validation layer checks API calls, and the address is just a number inside a push constant.
+
+The tool that does see it is **GPU-assisted validation** (GPU-AV), a mode of the same Khronos validation layer that
+instruments the shaders and checks every access while they run on the GPU. It is enabled with
+`VK_KHRONOS_VALIDATION_GPUAV_ENABLE=true` (or in vkconfig). As a negative test, the course changed step 19 temporarily
+to draw 65 instances, one more than the buffer holds, and ran it with GPU-AV (2026-10-11). The draw reported:
+
+```text
+[ERROR][VALIDATION] vkCmdDrawIndexed(): Out of bounds access: 32 bytes read at buffer device address 0x6f94800. This read corresponds to a full OpTypeStruct load. While not all members of the struct might be accessed, it is up to the source language or tooling to detect that and reflect it in the SPIR-V.
+Stage has multiple OpEntryPoint (Vertex, Fragment) and could not detect stage. 
+Command buffer (0x22e0072a0d0)
+	Draw Index 0
+Shader Module (0x3f000000003f) (internal ID 5)
+SPIR-V Instruction: %37 = OpLoad %28 %36 2 4
+(Unable to find shader source, build shader with debug info to get source information)
+The Vulkan spec states: If the PhysicalStorageBuffer64 addressing model is enabled the pointer value of a memory access instruction in the PhysicalStorageBuffer Storage Class must reference a buffer created with the VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT usage flag set (https://docs.vulkan.org/spec/latest/appendices/spirvenv.html#VUID-RuntimeSpirv-PhysicalStorageBuffer64-11819)
+```
+
+Read it closely:
+
+- `0x6f94800` is the base address `0x6f94000` plus 2048, exactly `instances[64]`, and the 32 bytes are the whole record:
+  Slang loads the struct in one `OpLoad`, the instruction `%37` of the disassembly above.
+- The rule it cites, `VUID-RuntimeSpirv-PhysicalStorageBuffer64-11819`, says a physical pointer must reference a buffer
+  with `SHADER_DEVICE_ADDRESS` usage. An address past the end references no buffer at all, so it fails that rule.
+- "Unable to find shader source": slangc emitted no debug information, and the message itself suggests to "build shader
+  with debug info to get source information".
+
+GPU-AV has a price. It is slow (its own first warning says so: "this is not recommend as it  will be very slow" next to
+core validation), and it changes the device it runs on: in these runs it forced on features such as `shaderInt64`,
+`vulkanMemoryModel` and `storageBuffer8BitAccess` and printed "Warning that validation is adjusting settings". Use it to
+hunt shader memory bugs, not as the everyday setting. Without the modification, steps 17, 19 and 20 run clean under
+GPU-AV apart from those setup warnings.
+
+## Pointers or descriptors?
+
+| | Descriptor (storage buffer) | Buffer device address |
+|---|---|---|
+| What the shader gets | a driver-defined record with buffer, offset, range | a 64-bit number |
+| Bounds known to the driver | yes, the range | no |
+| How to pass it | a set, a push descriptor | anything: push constants, inside other buffers, computed |
+| Pointers inside data | no | yes: trees, linked lists, per-object tables of pointers |
+| Requires | a set layout binding | the feature, `SHADER_DEVICE_ADDRESS`, the `DEVICE_ADDRESS` allocation flag |
+| Typical use | textures (always descriptors), most buffers | large scene data, GPU-driven rendering, ray tracing (shader binding tables and acceleration structures use addresses) |
+
+Images cannot be reached by address at all: textures and samplers always go through descriptors. The next lesson
+keeps descriptors and makes them scale.
+
+## What the program prints
+
+Step 19 (Rust, release, `--seconds 2`; the C++ build prints the same lines, and in these runs the same `[addr]` lines):
+
+```text
+Window: 800x600 pixels
+Found 1 GPU(s)
+GPU 0: NVIDIA GeForce RTX 3080 Ti
+
+Picked: NVIDIA GeForce RTX 3080 Ti
+Graphics + present family: 0
+VkDevice created with VK_KHR_swapchain + feature bufferDeviceAddress
+Swapchain: 800x600 B8G8R8A8_SRGB, MAILBOX, 3 images
+
+SPIR-V: 2556 bytes (device_address.spv), entry points vertexMain, fragmentMain
+Push constant range: stage VERTEX, offset 0, size 16 (8-byte address + time + aspect)
+Pipeline layout: no set layouts, 1 push constant range
+Graphics pipeline created (vertexMain reads instances through the pointer)
+
+Mesh: regular hexagon, 7 vertices, 18 indices (step 14's buffers, memory type 3)
+Instance struct: 32 bytes (offset 0, scale 8, phase 12, color 16, spin 28)
+Instance buffer: 64 x 32 = 2048 bytes, SHADER_DEVICE_ADDRESS, memory type 3 (HOST_VISIBLE | HOST_COHERENT), allocated with DEVICE_ADDRESS
+[addr] instance buffer device address: 0x6f94000
+[addr] instances[1] at 0x6f94020 (+32), instances[63] at 0x6f947e0 (+2016)
+
+2 frames in flight; each frame: 18 indices x 64 instances in one vkCmdDrawIndexed
+Rendering. Close the window to exit.
+Window closed
+[timing] 4972 frames in 2.0 s, 2477 fps
+```
+
+## The map of this lesson
+
+<MindMap />
+
+## Underneath
+
+- **The GPU already uses virtual addresses.** Every buffer the driver hands to the GPU sits somewhere in the GPU's
+  virtual address space, and descriptors typically contain such an address plus a size. Buffer device address exposes
+  the address part to the application; a shader load through it compiles to a plain global memory load.
+- **No range, no clamping.** A descriptor-based load can be bounds-checked by hardware or by the driver's robustness
+  code; a physical pointer load cannot, because there is nothing to check against. That is the trade the extension
+  makes explicitly, and why GPU-AV has to instrument the shader to find out.
+- **Why the allocation flag?** The spec only requires it. A likely reason is that some implementations must place or map
+  memory differently for it to be addressable from shaders; the flag lets them do that only where needed.
+
+<Quiz
+	questions={[
+		{
+			q: 'A buffer is created with SHADER_DEVICE_ADDRESS usage, and its memory is allocated without VkMemoryAllocateFlagsInfo. The feature is enabled. What is wrong?',
+			options: [
+				{
+					text: 'Nothing: the flag is a performance hint that only affects how fast the address lookups are',
+					why: 'It is a requirement: binding such a buffer to memory without DEVICE_ADDRESS is invalid usage.',
+				},
+				{
+					text: 'Binding it violates VUID-vkBindBufferMemory-bufferDeviceAddress-03339',
+					why: 'Right: with the feature enabled, a SHADER_DEVICE_ADDRESS buffer must be bound to memory allocated with DEVICE_ADDRESS.',
+				},
+				{
+					text: 'vkGetBufferDeviceAddress returns 0 for it',
+					why: '0 is never a valid address; the spec does not define a return value for invalid usage. The mistake is at the bind.',
+				},
+				{
+					text: 'The buffer also needs STORAGE_BUFFER usage',
+					why: 'STORAGE_BUFFER is for descriptors; a buffer read only through its address does not need it.',
+				},
+			],
+			answer: 1,
+			ref: '#2-the-usage-and-the-allocation-flag',
+		},
+		{
+			q: 'Both languages printed the address 0x6f94000 in every run. May a program store that number in a file and use it next time?',
+			options: [
+				{
+					text: 'Yes, addresses are fixed per GPU model',
+					why: 'Nothing fixes them; they depend on the driver, the run and the allocation order.',
+				},
+				{
+					text: 'Yes, as long as the same driver version is installed',
+					why: 'Even then nothing guarantees it; only the capture-replay feature with opaque capture addresses does.',
+				},
+				{
+					text: 'Only for buffers in DEVICE_LOCAL memory',
+					why: 'The memory type has nothing to do with it.',
+				},
+				{
+					text: 'No: an address is valid for that buffer\'s lifetime only; same numbers again need bufferDeviceAddressCaptureReplay',
+					why: 'Right: the spec promises the same address only for buffers created with a capture address, under that feature.',
+				},
+			],
+			answer: 3,
+			ref: '#getting-the-address',
+		},
+		{
+			q: 'Step 19 modified to draw 65 instances reads instances[64]. Who reports it?',
+			options: [
+				{
+					text: 'GPU-assisted validation, which instruments the shader and checks the access at run time',
+					why: 'Right: GPU-AV reported "Out of bounds access: 32 bytes read at buffer device address 0x6f94800".',
+				},
+				{
+					text: 'Core validation, at vkCmdDrawIndexed',
+					why: 'Core validation sees only the API call; the address is a number inside a push constant.',
+				},
+				{
+					text: 'The driver, which clamps the read to the end of the buffer and quietly returns zeros instead',
+					why: 'A physical pointer has no range to clamp to; robustness applies to descriptors.',
+				},
+				{
+					text: 'slangc, at compile time',
+					why: 'The index is the instance number, known only when the draw runs.',
+				},
+			],
+			answer: 0,
+			ref: '#a-pointer-has-no-size',
+		},
+	]}
+/>

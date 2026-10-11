@@ -21,8 +21,9 @@ Third lesson of the pipeline module, a short one with a long reach:
 `VkDescriptorSetLayout × N + push constant ranges → VkPipelineLayout → VkPipeline`
 
 A pipeline layout is built on the device and, optionally, on descriptor set layouts. The
-[graphics pipeline](lesson:graphics-pipeline) needs one; the descriptors module (uniform buffers, descriptor sets, push
-constants, bindless) fills it with content. Here we learn what it declares and create the empty one of step 08.
+[graphics pipeline](lesson:graphics-pipeline) needs one; the descriptors module ([uniform buffers](lesson:uniform-buffers),
+[descriptor sets](lesson:descriptor-sets), [push constants](lesson:push-constants), [bindless](lesson:bindless)) fills it
+with content. Here we learn what it declares and create the empty one of step 08.
 
 ## A signature, not the arguments
 
@@ -67,8 +68,8 @@ could tell that two pipelines take the same kind of arguments. As a separate obj
   constant ranges). A renderer uses that: bind the per-frame data (camera, lights) once in set 0, then switch materials
   and pipelines without touching it.
 
-That is why the layout is a parent of the pipeline in the object map, and why the descriptors module will start from
-this object.
+That is why the layout is a parent of the pipeline in the object map, and why the descriptors module starts from this
+object ([descriptor sets](lesson:descriptor-sets#2-the-pipeline-layout-lists-set-layouts-by-number) fills it).
 
 ## 2. Cleanup
 

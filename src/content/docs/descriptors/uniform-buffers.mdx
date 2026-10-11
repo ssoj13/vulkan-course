@@ -1,0 +1,392 @@
+---
+title: Uniform buffers
+description: 'Per-frame data for shaders: a uniform buffer per frame in flight, written through a pointer that stays mapped, and the layout rules (std140, std430, scalar) that decide where every byte lies - checked against the SPIR-V itself.'
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import MindMap from 'course-kit/components/MindMap.astro';
+import Quiz from 'course-kit/components/Quiz.astro';
+import Snippet from 'course-kit/components/Snippet.astro';
+import Step from '../../../components/Step.astro';
+
+The hexagon of the memory module never moves: its corners are fixed in the vertex buffer. A real viewport changes the
+camera every frame, and the shaders need the new matrix before they can place a single vertex. How does a value that
+the CPU computes per frame reach a shader, and how do the C++ or Rust struct on one side and the shader's struct on the
+other agree on where each of its bytes lies?
+
+## Where this fits
+
+The first lesson of the **descriptors** module: how shaders get data that is not a vertex attribute. Layers: the host
+struct and the memory it is written to (the memory module), the buffer the shader reads (this lesson), the descriptor
+that tells the shader which buffer that is (the [next lesson](lesson:descriptor-sets)), and the compiler rules
+underneath that place every member at a byte offset. The chain:
+
+`host struct (repr(C) / C++) → mapped HOST_VISIBLE memory → VkBuffer with UNIFORM_BUFFER usage → descriptor at set 0, binding 0 → ConstantBuffer<FrameUniforms> in Slang → SPIR-V block with Offset / MatrixStride decorations`
+
+A [uniform buffer](term:uniform-buffer) is a [VkBuffer](term:vk-buffer) that shaders read as a block of constants, the
+same value for every invocation of a draw. Its members lie where a layout rule puts them: [std140](term:std140) for
+uniform buffers, [std430](term:std430) for push constants and storage buffers, or the
+[scalar block layout](term:scalar-block-layout); matrices add a [matrix layout](term:matrix-layout) on top. The CPU writes
+it through [persistent mapping](term:persistent-mapping). Before: [vertex and index buffers](lesson:vertex-and-index-buffers)
+(buffers in mappable memory) and [frames in flight](lesson:frames-in-flight) (why everything per frame comes in two).
+After: [descriptor sets](lesson:descriptor-sets), then the cheaper roads of [push constants](lesson:push-constants).
+
+## Parameters, not geometry
+
+A shading network in Maya has two kinds of inputs. Per-point data arrives with the geometry: positions, normals, UVs,
+one value per vertex. Everything else is a **parameter**: the camera matrix, a light's color, the frame number, one
+value for the whole object. The viewport sets the parameters once and then draws thousands of vertices with them.
+
+Vulkan has the same split. Per-vertex data comes from vertex buffers through the vertex input stage. Per-draw data comes
+from **resources** the shader reads directly: buffers and images that the shader names by a `set` and a `binding`
+number. The simplest such resource is a uniform buffer. "Uniform" is the shader word for "the same for all invocations":
+every vertex of the draw sees the same matrix.
+
+Step 17 rotates step 14's hexagon. The CPU builds a 4x4 matrix every frame (a rotation plus the window's aspect ratio),
+adds a tint and the time, and the vertex shader multiplies every corner by the matrix.
+
+## The shader side
+
+The whole shader file, because its comments are part of the lesson (step 18 uses its second vertex entry point):
+
+<Snippet src="shaders/transform.slang" />
+
+`ConstantBuffer<FrameUniforms>` with `[[vk::binding(0, 0)]]` declares one uniform buffer at set 0, binding 0. In the
+SPIR-V, Slang turns it into a variable in the `Uniform` storage class whose type is a struct decorated `Block`, and it
+names that struct `FrameUniforms_std140`: the suffix is the layout rule it applied. Each member carries an `Offset`
+decoration, and the matrix also carries `RowMajor` and `MatrixStride 16`. Those decorations, not the Slang source, are
+what the driver uses.
+
+The mesh is step 14's hexagon made regular (the matrix now handles the aspect ratio, so the mesh no longer has to):
+
+<Step file="17_uniforms" region="mesh" />
+
+## The host side
+
+<Step file="17_uniforms" region="uniform-struct" />
+
+80 bytes: the matrix at 0, `tint` at 64, `time` at 76. `repr(C)` in Rust and a plain struct in C++ give those offsets
+because every member is a 4-byte float and the order was chosen so that no padding is needed. `HOST_LAYOUT` records the
+host offsets with `offset_of!` (C++: `offsetof`) so that the program can compare them with the shader's.
+
+<Step file="17_uniforms" region="transform" />
+
+The matrix is stored as four columns of four floats, column-major, the convention of GLM and glam. The math is `S * R`:
+rotate by `angle` about z, then scale x by height / width so the hexagon stays regular in an 800x600 window. Column 0 is
+`(aspect * cos, sin, 0, 0)`, which is the first column of `S * R`.
+
+## Layout rules: where every byte lies
+
+SPIR-V has no implicit layout for a buffer block: every member's offset, every array's stride and every matrix's
+stride is written into the module as a decoration. The compiler picks those numbers by a rule, and Vulkan checks that
+they obey its alignment rules (the spec section "Offset and Stride Assignment"). Three rules matter:
+
+- **std140** (from GLSL): vectors aligned to their size (a 3-component vector like a 4-component one); arrays and
+  structs aligned to 16 bytes and their size rounded up to 16. In Vulkan terms, the *extended alignment*. Uniform blocks
+  must use it unless the `uniformBufferStandardLayout` feature is enabled.
+- **std430**: the same, without the rounding to 16 for arrays and structs, the *base alignment*. Push constants and
+  storage buffers use it by default.
+- **scalar**: every member aligned only to its component size (a `float3` to 4 bytes). Allowed for uniform, storage,
+  push-constant and buffer-device-address blocks when the `scalarBlockLayout` feature is enabled.
+
+Every Vulkan 1.2 device supports `uniformBufferStandardLayout`, and every Vulkan 1.4 device supports `scalarBlockLayout`
+(the spec's lists of required features), but "supported" is not "enabled": a program that wants either has to enable it
+when it creates the device. Step 17 enables neither and lets slangc use std140, which every device accepts. The spec
+adds a note under the rules: "Even if scalar alignment is supported, it is generally more performant to use the base
+alignment."
+
+How different are they? We compiled one test struct with slangc 2026.1 (the SDK's) as a uniform buffer, as push
+constants and as a storage buffer, then once more with `-fvk-use-scalar-layout`, and read the `Offset` decorations from
+`spirv-dis` (2026-10-11):
+
+```hlsl
+struct Inner { float x; };
+struct Probe { float3 a; float b; float3 c; float3 d; float e[2]; Inner s; float f; float2x2 m; float g; };
+```
+
+| Member | std140 (uniform buffer) | std430 (push constants, storage buffer) | scalar (`-fvk-use-scalar-layout`) |
+|---|---|---|---|
+| `a` float3 | 0 | 0 | 0 |
+| `b` float | 12 | 12 | 12 |
+| `c` float3 | 16 | 16 | 16 |
+| `d` float3 | 32 | 32 | **28** |
+| `e` float[2] | **48**, ArrayStride 16 | 44, ArrayStride 4 | **40**, ArrayStride 4 |
+| `s` struct Inner | **80** | 52 | **48** |
+| `f` float | **96** | 56 | **52** |
+| `m` float2x2 | **112**, MatrixStride 16 | 64, MatrixStride 8 | **56**, MatrixStride 8 |
+| `g` float | **144** | 80 | **72** |
+| array stride of `Probe` in a storage buffer | (not used) | 96 | 76 |
+
+Read it top to bottom:
+
+- `b` packs into the last 4 bytes of the float3 `a` under every rule: a 3-component vector is aligned like a
+  4-component one but is only 12 bytes long. That is why `FrameUniforms` can put `time` at 76, right after `tint`.
+- `d`: two float3 in a row. std140 and std430 start the second at the next 16-byte boundary; scalar packs it at 28. A
+  Rust or C++ struct with two `[f32; 3]` in a row also puts the second at +12, so it matches **only** scalar. This is
+  the classic bug: the host writes `d` at 28, the shader reads it at 32.
+- `e`: std140 gives every array element a 16-byte slot, so `float[2]` takes 32 bytes; std430 and scalar use 4.
+- `s`: std140 aligns a struct member to 16 and rounds its size up to 16, so the next member moves too.
+- `m`: a `float2x2` is stored as two 2-float vectors. std140 rounds their stride to 16, the others use 8. Matrices
+  whose stored vectors have 3 or 4 floats (like the `float4x4` of step 17) have a stride of 16 under std140 and std430.
+
+`FrameUniforms` was designed to sit where all three rules agree (a matrix of 16-byte columns, then one float3 followed
+by one float). Most engines do the same, or they pad by hand with explicit `_pad` members, which keeps the host struct
+readable as plain C.
+
+### Matrices: RowMajor that means column-major
+
+The matrix needs one more decision: does memory hold its rows or its columns? SPIR-V says it per member with `RowMajor`
+or `ColMajor`, and `MatrixStride` is the byte distance between two of the stored vectors. Slang's default is
+column-major in memory: consecutive floats walk down a column, as in GLM, glam, Eigen or Maya's `MMatrix` stored by
+columns. And yet the SPIR-V says `RowMajor`:
+
+```text
+OpMemberDecorate %FrameUniforms_std140 0 RowMajor
+OpMemberDecorate %FrameUniforms_std140 0 MatrixStride 16
+%143 = OpVectorTimesMatrix %v4float %142 %30
+```
+
+Nothing is wrong. Slang follows HLSL, where `M[i]` is row `i`, and maps an HLSL row to a SPIR-V *column*: the SPIR-V
+matrix is the transpose of the one you wrote. What HLSL calls column-major (memory walks down an HLSL column) is, for the
+transposed SPIR-V matrix, walking along a row, hence `RowMajor`. The multiplication follows suit: `mul(M, v)` with a
+column vector becomes `OpVectorTimesMatrix` (`v` times the transposed matrix), the same numbers. Two transpositions
+cancel, and the bytes in memory are what the host expects: four columns, 16 bytes apart. With
+`-matrix-layout-row-major` slangc emits `ColMajor` instead, and the host would have to upload rows.
+
+## Trust, but read the SPIR-V
+
+None of this is checked by Vulkan at run time. If the host writes `time` at 76 and the shader reads it at 80, no call
+fails and the validation layer is silent: the shader simply reads the wrong bytes. So step 17 checks it itself, before
+anything else, by reading the [SPIR-V reflection](term:spirv-reflection) data straight from the module it is about to
+use:
+
+<Step file="17_uniforms" region="reflect" />
+
+A SPIR-V module is a stream of 32-bit words: a 5-word header, then instructions whose first word holds the word count
+and the opcode. `reflect` collects the six instructions it needs (names, member names, pointer types, variables, the
+`DescriptorSet` / `Binding` decorations, and the `Offset` / `RowMajor` / `ColMajor` / `MatrixStride` member decorations),
+finds the variable at set 0, binding 0, follows its pointer type to the struct, and lists its members. Libraries such
+as SPIRV-Reflect, or `slangc -reflection-json` at build time, do the same and more; the point here is to see that the
+layout really is in the module.
+
+<Step file="17_uniforms" region="check-layout" />
+
+Each member's name and offset must match the host's, and the matrix must be `RowMajor` with `MatrixStride 16` (four
+16-byte columns on the host). Otherwise the program refuses to start. When the course built `transform.spv` once with
+`-matrix-layout-row-major` as a negative test, step 17 stopped with:
+
+```text
+Error: "layout mismatch: shader transform is ColMajor MatrixStride 16, host expects RowMajor MatrixStride 16"
+```
+
+## One buffer per frame in flight
+
+The data is ready; where does it live? Two frames are in flight, so while the CPU prepares frame N, the GPU may still be
+running frame N-1's vertex shader, which reads its matrix. One buffer for both would let the CPU overwrite a matrix the
+GPU is reading. So each frame slot gets its own uniform buffer, next to its command buffer and fence:
+
+<Step file="17_uniforms" region="frame-resources" />
+
+<Step file="17_uniforms" region="uniform-buffers" />
+
+Each buffer is 80 bytes with usage `UNIFORM_BUFFER`, in the first `HOST_VISIBLE | HOST_COHERENT` type, which is type 3
+(system RAM) on the course GPU. Two limits come with uniform buffers:
+
+- `maxUniformBufferRange`, the largest range one uniform buffer descriptor may cover: 65536 bytes here. Vulkan 1.0
+  guarantees 16384; Vulkan 1.4 raised the minimum to 65536, which is exactly what this GPU reports. Bigger data belongs
+  in storage buffers ([bindless lesson](lesson:bindless)).
+- `minUniformBufferOffsetAlignment`: 64 here (the spec allows up to 256). A descriptor may point at an offset inside a
+  larger buffer, but the offset must be a multiple of it (`VUID-VkWriteDescriptorSet-descriptorType-00327`). This is
+  also why the memory lesson saw the buffer alignment jump to 64 as soon as `UNIFORM_BUFFER` was set.
+
+A common alternative to two buffers is one buffer with a slot per frame at offsets 0, 128, ... and a
+`UNIFORM_BUFFER_DYNAMIC` descriptor whose offset is passed at bind time (`pDynamicOffsets`, again a multiple of the
+alignment: `VUID-vkCmdBindDescriptorSets-pDynamicOffsets-01971`). Same idea, fewer objects; step 17 keeps the two
+buffers to keep each line obvious.
+
+### Persistent mapping
+
+Each buffer is mapped **once**, right after it is created, and the pointer is kept for the program's lifetime. Steps 14
+and 15 mapped, copied and unmapped, which is fine for data written once. For data written every frame, mapping each
+time would be a pointless call; a [persistent mapping](term:persistent-mapping) is the usual practice, and nothing in
+Vulkan asks you to unmap: "If a memory object is mapped at the time it is freed, it is implicitly unmapped." The pointer
+is aligned to at least `minMemoryMapAlignment` (64 here), enough for a direct struct write.
+
+## Writing the frame's values
+
+<Step file="17_uniforms" region="update-uniforms" />
+
+The order matters, and it is the order of [frames in flight](lesson:frames-in-flight#1-wait-for-the-slot-not-for-the-last-frame): first
+wait on the slot's fence, which says the GPU has finished the frame that last used this slot and therefore its uniform
+buffer; then write. One struct write through the pointer, no `memcpy` of individual members, because the layouts were
+proven identical at start.
+
+No flush and no barrier: the memory is `HOST_COHERENT`, so the write is available in the host domain by itself, and the
+`vkQueueSubmit2` a few lines later makes it visible to the vertex shader, the same host write ordering guarantee that
+the [staging lesson](lesson:staging-uploads#recording-the-copy) relied on for its copy source.
+
+<Aside type="note" title="System RAM or VRAM?">
+Type 3 is system RAM: every frame the GPU reads these 80 bytes over PCIe, and after that from its caches, since every
+vertex of the draw reads the same addresses. For 80 bytes that costs nothing measurable. For bigger per-frame data
+(hundreds of matrices) the [BAR heap](lesson:staging-uploads#what-each-road-costs) is the usual home: `DEVICE_LOCAL |
+HOST_VISIBLE`, written by the CPU across the bus, read by the GPU from VRAM.
+</Aside>
+
+## What the program prints
+
+Step 17 (Rust, release, `--seconds 2`; the C++ build prints the same lines except `[timing]`):
+
+```text
+Window: 800x600 pixels
+Found 1 GPU(s)
+GPU 0: NVIDIA GeForce RTX 3080 Ti
+
+Picked: NVIDIA GeForce RTX 3080 Ti
+Graphics + present family: 0
+VkDevice created with VK_KHR_swapchain
+Swapchain: 800x600 B8G8R8A8_SRGB, MAILBOX, 3 images
+
+SPIR-V: 2604 bytes (transform.spv), entry points vertexUniform, fragmentMain
+Uniform block at set 0, binding 0: FrameUniforms_std140 (from the SPIR-V)
+  transform  SPIR-V offset  0, host struct offset  0, RowMajor MatrixStride 16 (host: 16-byte columns)
+  tint       SPIR-V offset 64, host struct offset 64
+  time       SPIR-V offset 76, host struct offset 76
+Host struct: 80 bytes, every offset matches: the CPU can copy it byte for byte
+
+Descriptor set layout: binding 0 = UNIFORM_BUFFER x 1, stage VERTEX
+Pipeline layout: 1 set layout (set 0), no push constants
+Graphics pipeline created (vertexUniform reads set 0, binding 0)
+
+Mesh: regular hexagon, 7 vertices, 18 indices (step 14's buffers, memory type 3)
+Limits: maxUniformBufferRange = 65536, minUniformBufferOffsetAlignment = 64
+Uniform buffers: 2 x 80 bytes, UNIFORM_BUFFER, memory type 3 (HOST_VISIBLE | HOST_COHERENT), persistently mapped
+Descriptor pool: maxSets 2, UNIFORM_BUFFER x 2
+Allocated 2 descriptor sets
+vkUpdateDescriptorSets: slot 0's set, binding 0 -> uniform buffer 0 (offset 0, range 80)
+vkUpdateDescriptorSets: slot 1's set, binding 0 -> uniform buffer 1 (offset 0, range 80)
+
+2 frames in flight, each with its own uniform buffer and descriptor set
+Animation: rotation 0.8 rad/s about z, x scaled by height/width = 0.75
+Rendering. Close the window to exit.
+Window closed
+[timing] 4726 frames in 2.0 s, 2355 fps
+```
+
+The lines between "Descriptor set layout" and "vkUpdateDescriptorSets" are the subject of the
+[next lesson](lesson:descriptor-sets). Validation (with synchronization validation on) reports nothing but the
+`VK_LAYER_bandicam_helper` warning known from the [validation lesson](lesson:validation).
+
+## The map of this lesson
+
+<MindMap />
+
+## Underneath
+
+- **Why a separate kind of buffer?** Hardware treats "the same value for every invocation" specially. GPUs typically
+  have a path for such data that is cheaper than general memory loads: a constant cache, and on many architectures
+  loads into registers shared by a whole warp (scalar registers on AMD). How a driver maps a uniform buffer onto that
+  path is its own business; the usage flag and the descriptor type tell it which data qualifies.
+- **The layout is fixed before the driver sees anything.** `Offset` and `MatrixStride` are written by the shader
+  compiler, so the driver's own compiler only follows them. That is why layout bugs are invisible to the API: there is
+  no "wrong" offset as long as it obeys the alignment rules, only one that differs from the host's.
+- **Coherent memory over PCIe.** The CPU's 80-byte write goes to system RAM; the GPU fetches it through the bus when
+  the draw starts reading it. Writes that are visible in the host domain at submit time are what the GPU's first read
+  sees; that is the whole contract, and the fence wait before the write is what keeps the CPU from racing the
+  previous use of the same buffer.
+
+<Quiz
+	questions={[
+		{
+			q: 'A host struct has two [f32; 3] members in a row, and the shader declares the same two float3 in a ConstantBuffer (std140). What goes wrong?',
+			options: [
+				{
+					text: 'The second vector is at offset 12 on the host but at 16 in the shader',
+					why: 'Right: std140 (and std430) align a float3 to 16 bytes; repr(C) packs it right after the first one. Only the scalar layout matches the host here.',
+				},
+				{
+					text: 'Nothing: a float3 is 12 bytes in both',
+					why: 'Its size is 12 in both, but its alignment differs: 16 in std140 and std430, 4 on the host and in the scalar layout.',
+				},
+				{
+					text: 'vkCreateGraphicsPipelines fails, because the shader\'s offsets disagree with the host struct',
+					why: 'No call checks the host struct; the offsets in SPIR-V are legal. The shader silently reads the wrong bytes.',
+				},
+				{
+					text: 'The validation layer reports a mismatch at draw time',
+					why: 'The layer never sees the host struct, only bytes in memory. That is why step 17 compares the offsets itself.',
+				},
+			],
+			answer: 0,
+			ref: '#layout-rules-where-every-byte-lies',
+		},
+		{
+			q: 'Slang compiles a column-major float4x4, but the SPIR-V decorates the member RowMajor. What does the host have to upload?',
+			options: [
+				{
+					text: 'Rows, because the decoration says RowMajor',
+					why: 'The decoration describes the transposed SPIR-V matrix: a SPIR-V row is an HLSL column. Uploading rows would give the transpose.',
+				},
+				{
+					text: 'Columns, 16 bytes apart, the way glam and GLM store them',
+					why: 'Right: Slang maps an HLSL row to a SPIR-V column, so RowMajor on the transposed matrix means the memory holds the columns of the matrix you wrote.',
+				},
+				{
+					text: 'It depends on the GPU vendor',
+					why: 'The layout is fixed in the SPIR-V by the compiler; every driver follows the decorations.',
+				},
+				{
+					text: 'Either one, because mul() checks the decoration and transposes the matrix at run time if needed',
+					why: 'mul(M, v) was already compiled to OpVectorTimesMatrix; nothing at run time looks at how the host stored the data.',
+				},
+			],
+			answer: 1,
+			ref: '#matrices-rowmajor-that-means-column-major',
+		},
+		{
+			q: 'Why does step 17 have one uniform buffer per frame in flight instead of one shared buffer?',
+			options: [
+				{
+					text: 'Because a descriptor set may point at only one buffer per frame',
+					why: 'A set can point at the same buffer forever; the problem is overwriting data the GPU still reads.',
+				},
+				{
+					text: 'Because HOST_COHERENT memory can be mapped only once per buffer',
+					why: 'Mapping rules do not force it; one buffer could be mapped once and written by both slots.',
+				},
+				{
+					text: 'So the CPU can write frame N while the GPU may still read frame N-1',
+					why: 'Right: the slot\'s fence proves only that slot\'s previous frame is done. A shared buffer would need a wait for every frame in flight.',
+				},
+				{
+					text: 'Because maxUniformBufferRange is too small to hold the data of two frames in one buffer',
+					why: '160 bytes is far below 65536. The reason is the overlap of CPU and GPU work.',
+				},
+			],
+			answer: 2,
+			ref: '#one-buffer-per-frame-in-flight',
+		},
+		{
+			q: 'The uniform buffers are written through a pointer every frame and never unmapped. What makes the new values reach the vertex shader?',
+			options: [
+				{
+					text: 'An explicit vkFlushMappedMemoryRanges after the write',
+					why: 'Flushing is for memory without HOST_COHERENT; type 3 is coherent, so the write is available in the host domain by itself.',
+				},
+				{
+					text: 'A pipeline barrier from HOST to VERTEX_SHADER in the frame\'s command buffer',
+					why: 'Not needed for writes made before the submit: the submission itself orders them. Such a barrier (via an event) is only for writes made after a submit.',
+				},
+				{
+					text: 'Unmapping at exit, when vkFreeMemory runs',
+					why: 'Unmapping does not flush anything, and it happens long after the frames that needed the data.',
+				},
+				{
+					text: 'The queue submission that follows the write',
+					why: 'Right: a submission defines a memory dependency with host writes made before it, so they are visible to the commands it submits.',
+				},
+			],
+			answer: 3,
+			ref: '#writing-the-frames-values',
+		},
+	]}
+/>
