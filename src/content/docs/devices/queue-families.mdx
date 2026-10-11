@@ -64,7 +64,8 @@ How to read it:
 - **Family 0** is the "do everything" family. Almost every program needs only this one.
 - **Family 1** can only copy. Copies submitted here can run on the GPU's copy (DMA) engines *while* family 0 renders -
   useful for streaming textures in the background.
-- **Family 2** computes but cannot draw: **async compute**. Compute work here can overlap with rendering.
+- **Family 2** computes but cannot draw: **async compute**. Compute work here can overlap with rendering (whether it does,
+  and whether that pays, is measured in [async compute](lesson:async-compute)).
 - **Families 3-5** feed the video and optical-flow hardware.
 
 Vulkan does not say which hardware unit backs which family - that is the driver's business, and several families may
@@ -80,7 +81,8 @@ queues anyway. So never conclude "no transfer support" from a graphics family's 
 <Step file="04_queue_families" region="find-graphics" />
 
 For this course we need one family that can draw: the first family with `GRAPHICS`. The dedicated transfer and async
-compute families are printed to show they exist; we use them in the advanced part.
+compute families are printed to show they exist; we use them later, in [staging uploads](lesson:staging-uploads) and
+[async compute](lesson:async-compute).
 
 <Aside type="tip" title="CG analogy">
 Think of a studio pipeline with separate departments: lighting renders, a data team moves files, editorial encodes

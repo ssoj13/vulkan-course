@@ -92,7 +92,7 @@ Format support (vkGetPhysicalDeviceFormatProperties2):
 levels another way. Block-compressed formats typically cannot be blit *targets*: on the course GPU, `BC7_SRGB_BLOCK`
 lists `BLIT_SRC` but not `BLIT_DST` (vulkaninfo `--show-formats`), since writing would mean encoding blocks. Integer
 formats have no linear filtering (none does on the course GPU). Their chains come from the CPU, an offline tool or a
-compute shader. Two more restrictions: blits need a queue with graphics capability
+[compute shader](lesson:compute-pipelines). Two more restrictions: blits need a queue with graphics capability
 (`VUID-vkCmdBlitImage2-commandBuffer-cmdpool`), so a dedicated transfer queue cannot build mips, and neither image may
 be multisampled (`VUID-VkBlitImageInfo2-srcImage-00233`, `VUID-VkBlitImageInfo2-dstImage-00234`): multisampled images
 are averaged by a *resolve* instead, in the

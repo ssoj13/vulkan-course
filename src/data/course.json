@@ -109,6 +109,16 @@
         { "slug": "mipmaps", "title": "Mipmaps", "summary": "Why a far floor shimmers: the mip chain and its memory, generating it with vkCmdBlitImage2 and a barrier per level, how the sampler picks a level, and anisotropic filtering." },
         { "slug": "msaa", "title": "Multisample anti-aliasing (MSAA)", "short": "MSAA", "summary": "Smooth edges without shading every sample: supported sample counts, multisampled transient attachments, the resolve at the end of a rendering, the memory it costs and what MSAA does not fix." }
       ]
+    },
+    {
+      "slug": "compute",
+      "title": "Compute",
+      "summary": "The GPU without triangles: compute pipelines, workgroups and dispatches, shared memory and workgroup barriers, a particle system that compute writes and graphics draws, and async compute on a queue of its own, measured.",
+      "lessons": [
+        { "slug": "compute-pipelines", "title": "Compute pipelines", "summary": "A one-stage pipeline and a grid of workgroups: choosing the workgroup size, ceil-division and the bounds check, storage buffers, a groupshared reduction with workgroup barriers, and reading results back through HOST_CACHED memory." },
+        { "slug": "particles", "title": "Particles", "summary": "A million particles in one buffer that a compute shader moves and the draw reads as points: the barriers within a frame and across frames in flight, and why one buffer is enough when the CPU never touches it." },
+        { "slug": "async-compute", "title": "Async compute", "summary": "The simulation on a compute-only queue: ping-pong buffers, two timeline semaphores and the wait validation missed, CONCURRENT versus EXCLUSIVE, timestamps across queues, and why it gains nothing measurable on the course GPU." }
+      ]
     }
   ],
   "labs": [

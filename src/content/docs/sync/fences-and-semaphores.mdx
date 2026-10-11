@@ -118,7 +118,7 @@ available, and its wait makes them visible to *all device accesses* after it (th
 scope "includes all memory access performed by the device", the wait's second access scope likewise). So memory
 written by one queue and read by another after a semaphore needs no extra barrier for visibility (for a resource
 shared by two queue families this assumes `VK_SHARING_MODE_CONCURRENT`; an `EXCLUSIVE` one also needs a queue family
-ownership transfer, which comes with async compute). A change of image layout is different: that always needs a
+ownership transfer, see [staging uploads](lesson:staging-uploads); [async compute](lesson:async-compute) weighs the two modes). A change of image layout is different: that always needs a
 barrier, as the next lessons show.
 
 The wait comes with a **stage mask**, and this is where a semaphore gets precise. The batch waits only from the

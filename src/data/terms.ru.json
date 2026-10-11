@@ -222,7 +222,7 @@
     "vk-pipeline": {
       "label": "VkPipeline",
       "aka": ["пайплайн", "pipeline", "pipeline state object", "PSO"],
-      "def": "Графический пайплайн, запечённый в один объект: шейдерные стадии плюс настройки всех fixed-function стадий; драйвер компилирует его при создании."
+      "def": "Пайплайн, запечённый в один объект, который драйвер компилирует при создании: у графического — шейдерные стадии плюс настройки всех fixed-function стадий, у compute — один compute-шейдер."
     },
     "dynamic-state": {
       "label": "Динамическое состояние",
@@ -757,6 +757,81 @@
       "label": "Суперсэмплинг (SSAA)",
       "aka": ["supersampling", "SSAA", "суперсэмплинг", "camera AA samples"],
       "def": "Сглаживание, при котором шейдится каждый сэмпл: рендер с N сэмплами на пиксель и последующая фильтрация. Убирает алиасинг краёв, текстур и шейдинга, но стоит в N раз больше шейдинга; так работают оффлайн-рендереры со своими camera samples."
+    },
+    "compute-shader": {
+      "label": "Compute-шейдер",
+      "aka": ["compute shader", "вычислительный шейдер", "kernel", "ядро", "GLCompute"],
+      "def": "Шейдер вне графического пайплайна: ни вершин, ни пикселей; его запускает dispatch как сетку workgroup, и он сам читает и пишет буферы и изображения. Исполняют его те же шейдерные ядра, что и вершинные и фрагментные шейдеры."
+    },
+    "compute-pipeline": {
+      "label": "Compute pipeline",
+      "aka": ["compute pipeline", "вычислительный пайплайн", "VkComputePipelineCreateInfo", "vkCreateComputePipelines"],
+      "def": "VkPipeline ровно с одной стадией, COMPUTE, и pipeline layout; настраивать fixed-function нечего. Привязывается к точке привязки compute, у которой свои пайплайн, наборы дескрипторов и push-константы, отдельные от графических."
+    },
+    "dispatch": {
+      "label": "Dispatch",
+      "aka": ["dispatch", "vkCmdDispatch", "vkCmdDispatchIndirect", "groupCountX"],
+      "def": "vkCmdDispatch(groupCountX, groupCountY, groupCountZ): запуск такой сетки workgroup привязанного compute pipeline. Записывается вне рендеринга; каждое число ограничено maxComputeWorkGroupCount; vkCmdDispatchIndirect берёт числа из буфера."
+    },
+    "workgroup": {
+      "label": "Workgroup",
+      "aka": ["workgroup", "рабочая группа", "LocalSize", "numthreads", "thread block", "SV_GroupID"],
+      "def": "Блок вызовов compute-шейдера с размером, заданным в самом шейдере (LocalSize, [numthreads] в Slang); его вызовы могут делить общую память и встречаться на барьерах. Workgroup одного dispatch независимы и не упорядочены; у NVIDIA одна workgroup живёт на одном SM (thread block в CUDA)."
+    },
+    "invocation": {
+      "label": "Вызов шейдера (invocation)",
+      "aka": ["invocation", "thread", "поток", "SV_DispatchThreadID", "GlobalInvocationId"],
+      "def": "Одно исполнение шейдера для одного элемента: вершины, фрагмента или точки сетки compute. Вызов compute-шейдера знает свою workgroup (SV_GroupID), своё место в ней (SV_GroupThreadID) и место во всей сетке (SV_DispatchThreadID)."
+    },
+    "shared-memory": {
+      "label": "Shared memory (groupshared)",
+      "aka": ["shared memory", "общая память", "groupshared", "Workgroup", "LDS", "maxComputeSharedMemorySize"],
+      "def": "Память класса хранения Workgroup в SPIR-V (groupshared в Slang, shared в GLSL): своя копия у каждой workgroup, видна только её вызовам. На настольных GPU это SRAM на кристалле (у NVIDIA — тот же массив, что и L1-кэш); не больше maxComputeSharedMemorySize байт: 49152 на GPU курса, минимум 16384."
+    },
+    "workgroup-barrier": {
+      "label": "Барьер workgroup",
+      "aka": ["workgroup barrier", "OpControlBarrier", "GroupMemoryBarrierWithGroupSync", "barrier()"],
+      "def": "OpControlBarrier с областью Workgroup (GroupMemoryBarrierWithGroupSync в Slang): ни один вызов workgroup не идёт дальше, пока не пришли все, а записи в общую память до барьера видны после него. До барьера должны дойти все вызовы; между workgroup ничего подобного нет."
+    },
+    "parallel-reduction": {
+      "label": "Параллельная редукция",
+      "aka": ["parallel reduction", "reduction", "редукция", "tree reduction"],
+      "def": "Свёртка многих значений в одно (сумму, минимум) за log2(n) раундов, каждый из которых вдвое сокращает число частичных результатов, с барьером workgroup между раундами. Между workgroup она продолжается следующим dispatch или атомарными операциями."
+    },
+    "readback": {
+      "label": "Readback",
+      "aka": ["readback", "чтение результатов на CPU", "HOST_READ"],
+      "def": "Доставка результатов GPU на CPU: записать их в HOST_VISIBLE-память, лучше HOST_CACHED; записать барьер к HOST / HOST_READ (один fence не делает записи устройства видимыми хосту); дождаться; если память не HOST_COHERENT — invalidate; прочитать."
+    },
+    "gpu-particles": {
+      "label": "Частицы на GPU",
+      "aka": ["GPU particles", "GPU particle system", "симуляция частиц"],
+      "def": "Частицы, состояние которых живёт только в памяти GPU: compute-шейдер каждый кадр обновляет буфер, а отрисовка читает тот же буфер как вход вершин. CPU передаёт только параметры вроде шага времени, поэтому кадрам в полёте не нужны копии состояния."
+    },
+    "point-primitive": {
+      "label": "Точечный примитив",
+      "aka": ["point primitive", "POINT_LIST", "PointSize", "SV_PointSize", "largePoints"],
+      "def": "Топология POINT_LIST: каждая вершина становится квадратом в PointSize пикселей с центром в ней. Пайплайн только с вершинным шейдером обязан писать PointSize (если не включена возможность maintenance5), а размеры кроме 1.0 требуют возможности largePoints."
+    },
+    "async-compute": {
+      "label": "Async compute",
+      "aka": ["async compute", "асинхронные вычисления", "compute-очередь"],
+      "def": "Отправка вычислений в очередь семейства только с compute, чтобы они могли идти параллельно с графикой на том же GPU. Требует своих копий данных и семафоров между очередями и окупается, только когда узкое место — GPU, а графика оставляет блоки простаивать."
+    },
+    "queue-concurrency": {
+      "label": "Параллельность очередей",
+      "aka": ["queue concurrency", "перекрытие очередей", "hardware queues"],
+      "def": "Исполняется ли работа разных очередей действительно одновременно: Vulkan это разрешает, но никогда не обещает; всё зависит от железа и драйвера, и показывает это только измерение (device-timestamps в обеих очередях)."
+    },
+    "sharing-mode": {
+      "label": "Sharing mode",
+      "aka": ["sharing mode", "VkSharingMode", "EXCLUSIVE", "CONCURRENT"],
+      "def": "Как семейства очередей могут пользоваться буфером или изображением: EXCLUSIVE — им владеет одно семейство за раз, а между семействами его передаёт передача владения; CONCURRENT — перечисленные семейства (не меньше двух) пользуются им одновременно без передач, возможно ценой более медленного доступа."
+    },
+    "ping-pong-buffer": {
+      "label": "Ping-pong-буферы",
+      "aka": ["ping-pong", "double buffering", "двойная буферизация"],
+      "def": "Две копии состояния по очереди: шаг n читает одну и пишет другую, так что тот, кто читает состояние n, никогда не делит буфер с тем, кто пишет состояние n+1. То же, что вход Prev_Frame у SOP Solver в Houdini."
     }
   },
   "edges": {
@@ -939,6 +1014,30 @@
     "msaa|related|texture-aliasing": "лечит на краях",
     "transient-attachment|uses|lazily-allocated": "может использовать",
     "sample-shading|related|msaa": "шейдит по сэмплам в",
-    "supersampling|related|msaa": "шейдит каждый сэмпл, в отличие от"
+    "supersampling|related|msaa": "шейдит каждый сэмпл, в отличие от",
+    "compute-shader|uses|storage-buffer": "читает и пишет",
+    "compute-pipeline|uses|compute-shader": "исполняет один",
+    "compute-pipeline|uses|vk-pipeline-layout": "получает данные через",
+    "dispatch|uses|compute-pipeline": "запускает привязанный",
+    "workgroup|built-on|subgroup": "делится на",
+    "workgroup|built-on|shader-core": "работает на одном",
+    "workgroup|uses|shared-memory": "делит данные через",
+    "workgroup-barrier|related|workgroup": "синхронизирует одну",
+    "workgroup-barrier|related|pipeline-barrier": "внутришейдерный родственник",
+    "parallel-reduction|uses|workgroup-barrier": "между раундами",
+    "readback|uses|host-cached": "читает через",
+    "readback|uses|pipeline-barrier": "требует барьер к HOST",
+    "readback|uses|vk-fence": "ждёт",
+    "gpu-particles|uses|compute-shader": "симулируются",
+    "gpu-particles|uses|vertex-buffer": "рисуются из",
+    "gpu-particles|uses|storage-buffer": "хранятся в",
+    "gpu-particles|uses|pipeline-barrier": "упорядочены",
+    "gpu-particles|uses|point-primitive": "рисуются как",
+    "async-compute|uses|queue-family": "семейство только с compute",
+    "async-compute|related|queue-concurrency": "рассчитывает на",
+    "async-compute|uses|timeline-semaphore": "упорядочивается",
+    "queue-concurrency|built-on|hw-engine": "зависит от",
+    "sharing-mode|related|queue-family-ownership-transfer": "EXCLUSIVE требует",
+    "ping-pong-buffer|built-on|vk-buffer": "два"
   }
 }

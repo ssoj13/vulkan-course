@@ -1,0 +1,382 @@
+---
+title: Async compute
+description: 'The simulation on its own queue: a compute-only queue family, ping-pong buffers so the draw and the next simulation step never share a buffer, two timeline semaphores and the cross-queue write-after-read wait that validation did not catch, CONCURRENT versus EXCLUSIVE sharing, timestamps compared across queues, and the honest result: no measurable gain on the course GPU.'
+---
+
+import MindMap from 'course-kit/components/MindMap.astro';
+import Quiz from 'course-kit/components/Quiz.astro';
+import Step from '../../../components/Step.astro';
+import Shots from '../../../components/Shots.astro';
+import shot27 from '../../../assets/27_async_compute.png';
+
+In step 26 the simulation and the draw share one queue and one buffer, so the barriers make them take turns: the
+dispatch waits for the previous draw, the draw waits for the dispatch. The course GPU has a queue family that can
+compute but not draw, family 2. Can the simulation of the *next* frame run on that queue while *this* frame draws? What
+does that take in buffers and synchronization, and does it actually make anything faster here?
+
+## Where this fits
+
+The last lesson of the **compute** module, and the one that uses everything about queues the course has built: the
+[queue families](lesson:queue-families) of module 3 (family 2 was printed and left aside), the
+[timeline semaphores](lesson:timeline-semaphores) of module 7, the
+[queue family ownership transfer](lesson:staging-uploads) of module 8 and the [particles](lesson:particles) of the
+previous lesson. The chain:
+
+`compute-only queue family → its own VkQueue and command pool → ping-pong buffers P[0], P[1] (CONCURRENT) → timeline "computed": graphics frame n waits computed ≥ n → timeline "rendered": compute step n waits rendered ≥ n-2 → device timestamps on both queues → overlap measured`
+
+[Async compute](term:async-compute) means submitting compute work to a queue of its own so it may run alongside
+graphics; whether it really does is [queue concurrency](term:queue-concurrency), which Vulkan allows and never
+promises. Because the draw and the next simulation step then run at the same time, the state lives in a
+[ping-pong pair](term:ping-pong-buffer) of buffers, shared between the two families through their
+[sharing mode](term:sharing-mode). The waits are [timeline semaphores](term:timeline-semaphore), one per queue.
+
+## Two farm pools and a dependency graph
+
+A render farm with two pools, say the GPU nodes for rendering and a CPU pool for simulation, runs a sim job and a
+render job side by side, as long as the dependencies allow: "render frame 12" waits for "sim frame 12", and "sim frame
+13" can start while frame 12 renders. That is the whole idea, and the farm already shows its two costs. The jobs need
+their own copies of the data (the render reads frame 12's cache while the sim writes frame 13's), and every dependency
+has to be written down, because the farm will not guess it.
+
+In Vulkan the pools are queues of two families, the copies are two particle buffers, and the dependencies are
+semaphores. The plan for frame n:
+
+```text
+compute queue:   [step 1] [step 2]  [step 3]  [step 4]  ...
+graphics queue:           [frame 1] [frame 2] [frame 3] ...
+                 step n writes P[n % 2] from P[(n-1) % 2];  frame n draws P[n % 2]
+```
+
+Compute step n+1 is submitted right after frame n, so the GPU *may* run them at the same time: step n+1 reads
+P[n % 2], which frame n is drawing (two reads, no hazard), and writes P[(n+1) % 2], which frame n-1 drew and nobody
+reads once frame n-1 is done (one of the waits below). That is the overlap the step is after.
+
+## The compute family
+
+<Step file="27_async_compute" region="compute-family" />
+
+The family to look for has `COMPUTE` but not `GRAPHICS`. On the RTX 3080 Ti that is family 2 (from the course's
+`vulkaninfo` snapshot: `COMPUTE`, `TRANSFER`, `SPARSE_BINDING`, 8 queues, 64 valid timestamp bits). Its queues feed
+the GPU through a separate channel the driver may schedule next to graphics work, but the spec promises nothing about
+concurrency, and how families map to hardware is the driver's business, as [queue families](lesson:queue-families)
+said. Hence the timestamps below. Without such a family, or with `--same-queue`, the compute submissions go to the
+graphics queue itself, for comparison.
+
+<Step file="27_async_compute" region="cli" />
+
+<Step file="27_async_compute" region="device" />
+
+One queue from each family, so two `VkDeviceQueueCreateInfo`s, and later two command pools: a command buffer is
+recorded for, and submitted to, queues of its pool's family.
+
+## Ping-pong buffers
+
+<Step file="27_async_compute" region="sharing" />
+
+Two buffers, P[0] and P[1], each with all 2^20 particles. Step n reads P[(n-1) % 2] and writes P[n % 2]; frame n draws
+P[n % 2]. The shader gets a fifth entry point, `advance`, which reads `previous` (binding 1) and writes `state`
+(binding 0), instead of updating one buffer in place:
+
+```text
+state[i] = update(previous[i], params.dt, params.time);
+```
+
+A Houdini SOP Solver has exactly this shape: its `Prev_Frame` input is the last state, and the network inside writes
+the next one. Two descriptor sets fix the two directions once and for all, and step n binds set n % 2:
+
+<Step file="27_async_compute" region="descriptor-sets" />
+
+The `pipelines` region of the step is step 26's, with `advance` in place of `simulate`; the
+`init` that writes state 0 into P[0] now runs on the compute queue:
+
+<Step file="27_async_compute" region="init" />
+
+## CONCURRENT or EXCLUSIVE
+
+Two queue families touch the particle buffers: compute writes them, graphics reads them as vertex input. A buffer's
+**sharing mode** says how that is allowed:
+
+| | `EXCLUSIVE` | `CONCURRENT` |
+|---|---|---|
+| Owner | one queue family at a time | the families listed at creation, all at once |
+| Switching families | a [queue family ownership transfer](term:queue-family-ownership-transfer): release barrier on one queue, acquire barrier on the other | nothing |
+| Without the transfer | "the contents of that resource are undefined for any read accesses performed by the second queue family" (spec) | n/a |
+| Cost | the transfers, and their ordering | "`VK_SHARING_MODE_CONCURRENT` may result in lower performance access to the buffer or image than `VK_SHARING_MODE_EXCLUSIVE`" (spec) |
+
+Here every state is read by *both* families at the same time: frame n draws P[n % 2] while step n+1 reads it on the
+compute queue. With `EXCLUSIVE`, each buffer would need a release and an acquire every time it changes hands, and the
+hand-over would serialize exactly the overlap the step is after. So the buffers are `CONCURRENT` with families 0 and
+2. What the "lower performance" costs is up to the implementation; the usual concern is images, whose compression
+some GPUs disable for concurrent sharing. For buffers read once per frame it is a reasonable price.
+
+`--same-queue` uses one family, and then `EXCLUSIVE` is the only choice: `CONCURRENT` needs at least two distinct
+families (`VUID-VkBufferCreateInfo-sharingMode-00914`).
+
+## Two timelines, four waits
+
+<Step file="27_async_compute" region="timelines" />
+
+One [timeline semaphore](term:timeline-semaphore) per producer, each counting the finished work of one queue:
+`computed` reaches n when step n is done (it starts at 0, which stands for `init`), `rendered` reaches n when frame n
+is done. Every wait in the program is "the other queue has reached value v", or the CPU's "this slot is free again":
+
+| Who | Waits for | Why | Hazard |
+|---|---|---|---|
+| graphics frame n | `computed ≥ n` | it draws P[n % 2], which step n writes | read after write, across queues |
+| compute step n | `rendered ≥ n-2` | it overwrites P[n % 2], which frame n-2 drew | write after read, across queues |
+| compute step n (same queue as step n-1) | a barrier at its start | it reads what step n-1 wrote and overwrites what step n-1 read | read after write, write after read |
+| the CPU, before frame n / step n | `rendered ≥ n-2` / `computed ≥ n-2` | the slot's command buffer, semaphore and queries are reused | (host reuse) |
+
+<Step file="27_async_compute" region="submit-compute" />
+
+A semaphore wait carries a memory dependency (the [fences and semaphores](lesson:fences-and-semaphores) lesson): the
+signal makes all device writes before it available, the wait makes them visible to everything after it. So the
+graphics side needs no buffer barrier at all, only the wait for `computed ≥ n`:
+
+<Step file="27_async_compute" region="wait-slot" />
+
+<Step file="27_async_compute" region="record-graphics" />
+
+<Step file="27_async_compute" region="submit-graphics" />
+
+### The wait that validation did not catch
+
+The second row of the table, `rendered ≥ n-2`, is the easiest to leave out, because nothing seems to need it. Check
+what else could order step n's writes after frame n-2's reads:
+
+- the CPU: when it submits step n (right after frame n-1), it has waited only for `rendered ≥ n-3` (frame n-1's slot)
+  and `computed ≥ n-2` (step n's slot). Frame n-2 may still be on the GPU.
+- the compute queue: step n-1, just before step n, waited for `rendered ≥ n-3`. Nothing about frame n-2 either.
+
+So without the wait, step n may start overwriting P[n % 2] while frame n-2's vertex input is still reading it: a
+write-after-read hazard across queues. As with any write after read, an execution dependency is all it takes, and
+the semaphore wait is one.
+
+Synchronization validation did not see it. With both variables set
+(`VK_KHRONOS_VALIDATION_VALIDATE_SYNC` and `VK_KHRONOS_VALIDATION_SYNCVAL_SHADER_ACCESSES_HEURISTIC`, see
+[what it sees](lesson:barriers-and-layouts#what-it-sees-and-what-it-does-not)), a temporary edit that dropped the
+`rendered ≥ n-2` wait ran without a message: a false negative. The same tool did catch the opposite mistake: dropping
+the graphics submit's `computed ≥ n` wait gave "vkQueueSubmit2(): READ_RACING_WRITE hazard detected. vkCmdDraw ...
+reads VkBuffer ..., which was previously written by vkCmdDispatch (... submitted on VkQueue ...)" (excerpt as recorded
+in the project notes). The cross-queue write-after-read slipped through. The wait is in the program because the table
+above requires it; the clean validation run of the finished step (both languages, both modes, only the bandicam layer
+warning) is evidence the rest is consistent, not proof that nothing is missing.
+
+### Why every wait is at ALL_COMMANDS
+
+Both submissions wait and signal at `ALL_COMMANDS`, including the swapchain image's `image_available`, which step 10
+waited at `COLOR_ATTACHMENT_OUTPUT`. The reason is the measurement: each command buffer starts with a `TOP_OF_PIPE`
+timestamp, and the course reads `ALL_COMMANDS` as covering every operation of the batch, timestamp included, so the
+timestamp comes after the waits and the interval measures the work, not the waiting. A wait at a later stage would let
+`TOP_OF_PIPE` pass early, and the graphics interval would include the wait for the image or for the simulation.
+
+The cost: with `image_available` at `ALL_COMMANDS` the vertex work can no longer start before the image is acquired,
+which step 10's narrower stage allowed. In these runs that cost was not measurable: the graphics time was 269 - 277 us
+per frame with the wide wait and 272 - 282 us with the narrow one (MAILBOX, where the acquire hardly waits). The layout
+transition to `COLOR_ATTACHMENT_OPTIMAL` still chains to the wait, since `COLOR_ATTACHMENT_OUTPUT` is inside
+`ALL_COMMANDS`.
+
+## Timestamps from two queues
+
+<Step file="27_async_compute" region="timestamps" />
+
+Each submission writes two timestamps, at its start (`TOP_OF_PIPE`) and its end. Comparing a graphics timestamp with a
+compute one is only meaningful if both count the same clock, and they do: all device timestamps are in
+`VK_TIME_DOMAIN_DEVICE_KHR`, whose values are "comparable with device timestamp values captured using
+vkCmdWriteTimestamp or vkCmdWriteTimestamp2" (spec). The program pairs graphics frame n with compute step n+1, the
+pair that may overlap, and the overlap is the length of the intersection of the two intervals.
+
+Only the low `timestampValidBits` of a timestamp count, and the counter wraps there. Both families have 64 bits here,
+but the code does not rely on it: it takes every value as a signed offset from the graphics start, modulo 2^bits, so a
+wrap between two ticks cannot break the minimum and maximum.
+
+## Does it pay off?
+
+<Shots
+	shots={[
+		{
+			src: shot27,
+			alt: 'Step 27: the same particle picture as step 26, a large blue disk with an orange spiral near the attractor',
+			caption:
+				'Step 27, Rust, release, the 800 x 600 client area about 2.5 s after start: 177328 lit pixels (36.9%), all 356 colors on the same speed ramp as step 26. The picture cannot show which queue ran the simulation; the timestamps can.',
+		},
+	]}
+/>
+
+The default run, Rust (C++ prints the same lines apart from `[timing]`):
+
+```text
+Picked: NVIDIA GeForce RTX 3080 Ti
+Graphics + present family: 0
+Compute family: 2 (COMPUTE without GRAPHICS), its own queue: async compute
+VkDevice created with VK_KHR_swapchain, timelineSemaphore, 2 queue(s)
+Swapchain: 800x600 B8G8R8A8_SRGB, MAILBOX, 3 images
+
+SPIR-V: 7472 bytes (particles.spv), entry points init, advance, vertexMain, fragmentMain; LocalSize 256 x 1 x 1
+Particles: 2 buffers (ping-pong) x 1048576 x 16 bytes, memory type 1 (DEVICE_LOCAL), sharing mode CONCURRENT (families 0 and 2): no ownership transfers
+Pipelines: compute init + advance (set 0: binding 0 = state, binding 1 = previous), graphics POINT_LIST
+Descriptor sets: set 0 writes P[0] and reads P[1], set 1 writes P[1] and reads P[0]
+Timeline semaphores: computed (step n done = n, the init state = 0), rendered (frame n done = n)
+
+init: 4096 workgroups of 256 wrote state 0 into P[0]
+Per frame n: graphics draws P[n % 2] after computed >= n; compute step n+1 writes P[(n+1) % 2] after rendered >= n-1
+Rendering. Close the window to exit.
+[timing] 1s: 1113 frames, GPU time per frame: graphics 269.7 us, compute 46.3 us, overlapping 3.1 us (7% of the compute time)
+[timing] 2s: 1151 frames, GPU time per frame: graphics 265.4 us, compute 46.3 us, overlapping 3.3 us (7% of the compute time)
+[timing] 3s: 1118 frames, GPU time per frame: graphics 284.2 us, compute 46.1 us, overlapping 2.9 us (6% of the compute time)
+[timing] 4s: 1141 frames, GPU time per frame: graphics 282.6 us, compute 46.1 us, overlapping 3.3 us (7% of the compute time)
+Window closed
+[timing] 4525 frames in 4.0 s, 1130 fps
+[timing] whole run: 4523 frames, GPU time per frame: graphics 275.5 us, compute 46.2 us, overlapping 3.2 us (7% of the compute time)
+```
+
+(shortened: the window and GPU list lines at the top. "Step n+1 ... after rendered >= n-1" is the table's
+`rendered ≥ n-2` written for step n+1.) With `--same-queue` the compute family line reads "Compute work on the
+graphics queue (family 0): --same-queue", the device has 1 queue and the buffers are `EXCLUSIVE (one family, 0)`.
+
+The numbers, release builds of both languages, validation on and synchronization validation **off** (it slows
+everything down), 4 s per run, MAILBOX, 2^20 particles, three alternating runs per mode and language, measured twice on
+2026-10-11:
+
+| | Graphics per frame | Compute per step | Overlap | Frames per second |
+|---|---|---|---|---|
+| async, first series | 269 - 277 us | 44.8 - 46.5 us | 2.1 - 5.8 us (5 - 12% of compute) | 895 - 1328 |
+| `--same-queue`, first series | 269 - 277 us | 44.8 - 46.5 us | 0.0 us | 1113 - 1400 |
+| async, second series | 274 - 277 us | 46.2 - 48.2 us | 3.2 - 9.4 us (7 - 20% of compute) | 1130 - 1546 |
+| `--same-queue`, second series | 274 - 276 us | 45.3 - 45.5 us | 0.0 us | 1114 - 1580 |
+
+The honest result: **no measurable gain on this GPU**. The queues do overlap, a little: a few microseconds of every
+46-microsecond step run while the frame draws, against exactly zero on one queue. But the frame rate does not improve,
+and the run-to-run spread swamps any difference. The reason is visible in the same numbers: one frame costs about
+0.32 ms of GPU time, while a frame takes 0.6 - 1.1 ms of wall time. The GPU is idle most of the time; the frame rate
+is set by the CPU and the presentation, so even a perfect overlap, hiding all 46 us of the simulation, would have
+nothing to speed up. Async compute shortens the GPU's critical path, and here the GPU is not on it.
+
+### When async compute does help
+
+The general case, without numbers from this course (none were measured): async compute pays off when the GPU is the
+bottleneck and some graphics work leaves the shader cores underused. Typical examples are passes limited by
+fixed-function hardware, such as shadow-map or depth-only rendering, which keep the rasterizer and the depth units busy
+while much of the shader ALU capacity idles. Compute work that does not depend on that pass (light culling, ambient
+occlusion of the previous frame, particle and cloth simulation, post-processing of the previous frame) can fill the
+gap. It can also hurt: the two queues compete for the same caches and memory bandwidth, and two bandwidth-bound
+workloads side by side may be slower than one after the other. Engines that use it measure per GPU and often keep a
+switch to turn it off. An experiment that makes the GPU the bottleneck (a heavier kernel, many more particles, or
+FIFO with a GPU-bound frame) would show where the break-even lies on this GPU; it is not part of the course yet.
+
+## The map of this lesson
+
+<MindMap />
+
+## Underneath
+
+- **What "its own queue" means in hardware.** A GPU front end typically has several channels it fetches commands from;
+  graphics work goes to the graphics pipe, and compute-only queues to separate compute front ends (AMD calls its
+  Asynchronous Compute Engines). They share the same shader cores: async compute does not add
+  cores, it adds a second source of work for cores that would otherwise wait. How Vulkan queues are mapped onto these
+  channels, and whether two queues of family 2 get separate ones, is not documented in the API and is the driver's
+  choice.
+- **Same queue, zero overlap.** On one queue, Vulkan would still allow commands of different submissions to overlap
+  where no barrier or semaphore forbids it. In these runs the measured overlap was exactly 0.0 us: this driver ran the
+  submissions of one queue one after the other. That is an observation on this machine, not a rule.
+- **Ownership transfers, if you need them.** `EXCLUSIVE` with release/acquire pairs is the right choice when a resource
+  changes family rarely (an upload from a transfer queue, as in [staging uploads](lesson:staging-uploads)), or for
+  images whose compression `CONCURRENT` might disable. The trade-off flips when both families use a resource every
+  frame, as here.
+
+<Quiz
+	questions={[
+		{
+			q: 'Why does step 27 use two particle buffers when step 26 needed only one?',
+			options: [
+				{
+					text: 'Because a buffer cannot be shared by two queue families at all',
+					why: 'It can: CONCURRENT sharing, or EXCLUSIVE with ownership transfers. The reason is the timing, not the families.',
+				},
+				{
+					text: 'So the draw of state n and the computation of state n+1 can run at the same time without touching the same buffer',
+					why: 'Right: with one buffer the next step would have to wait for the draw to finish reading, which removes the overlap.',
+				},
+				{
+					text: 'Because the compute queue cannot read a buffer that the graphics queue has written',
+					why: 'The graphics queue never writes the particles; it only reads them. The second buffer separates reading state n from writing state n+1.',
+				},
+				{
+					text: 'One per frame in flight, like the uniform buffers of module 9',
+					why: 'Those copies protect CPU-written data; here the CPU writes nothing. Two buffers exist for the overlap between queues.',
+				},
+			],
+			answer: 1,
+			ref: '#ping-pong-buffers',
+		},
+		{
+			q: 'Compute step n waits for rendered ≥ n-2. What goes wrong without that wait?',
+			options: [
+				{
+					text: 'Nothing: the CPU has already waited for frame n-2 before submitting step n',
+					why: 'The CPU has waited only for rendered ≥ n-3 and computed ≥ n-2 by then; frame n-2 may still be drawing.',
+				},
+				{
+					text: 'Step n may overwrite P[n % 2] while frame n-2 still reads it: a write after read across queues',
+					why: 'Right: nothing else orders step n after frame n-2, and synchronization validation did not report it either.',
+				},
+				{
+					text: 'Frame n would draw particles from before step n, which is a read after write',
+					why: 'That is the hazard the graphics wait for computed ≥ n closes, and validation did report it when that wait was removed.',
+				},
+				{
+					text: 'The timeline semaphore would overflow, because nothing would ever wait on the values the graphics queue signals',
+					why: 'A timeline value is a 64-bit counter that only grows; it does not depend on anyone waiting.',
+				},
+			],
+			answer: 1,
+			ref: '#the-wait-that-validation-did-not-catch',
+		},
+		{
+			q: 'Why are the particle buffers CONCURRENT rather than EXCLUSIVE?',
+			options: [
+				{
+					text: 'EXCLUSIVE buffers cannot be used as vertex buffers',
+					why: 'Any sharing mode works with any usage; sharing mode is about queue families.',
+				},
+				{
+					text: 'CONCURRENT is always faster',
+					why: 'The spec warns the opposite: CONCURRENT "may result in lower performance access" than EXCLUSIVE.',
+				},
+				{
+					text: 'Both families read each buffer every frame, and ownership transfers would serialize the overlap',
+					why: 'Right: EXCLUSIVE would need a release and an acquire at every hand-over, which forces the order the step tries to relax.',
+				},
+				{
+					text: 'Because EXCLUSIVE needs the queue family ownership transfer feature, which this GPU does not have',
+					why: 'Ownership transfers are core Vulkan, no feature needed; step 15 used them on this GPU.',
+				},
+			],
+			answer: 2,
+			ref: '#concurrent-or-exclusive',
+		},
+		{
+			q: 'Async compute overlapped a few microseconds per frame, but the frame rate did not improve. Why?',
+			options: [
+				{
+					text: 'The two queues of the RTX 3080 Ti share one hardware queue on this driver, so they can never overlap',
+					why: 'They did overlap (2 - 9 us per frame, against 0.0 on one queue); overlap was not the limit.',
+				},
+				{
+					text: 'Timeline semaphores are too slow for work that only takes 46 microseconds',
+					why: 'The waits did not lengthen the GPU work; the GPU was idle most of each frame anyway.',
+				},
+				{
+					text: 'Validation was on, and it serializes all queues of a device',
+					why: 'Validation checks API calls on the CPU; it does not serialize GPU queues, and the overlap was measured with it on.',
+				},
+				{
+					text: 'The GPU was busy only about 0.32 ms of a 0.6 - 1.1 ms frame: CPU and presentation set the pace',
+					why: 'Right: shortening GPU work does not help when the GPU is not the bottleneck; async compute pays off in GPU-bound frames.',
+				},
+			],
+			answer: 3,
+			ref: '#does-it-pay-off',
+		},
+	]}
+/>

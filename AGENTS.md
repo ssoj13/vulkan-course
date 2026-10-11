@@ -651,10 +651,46 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
 - [ ] Module 10: independent review of the RU lessons (language + facts vs EN).
 - [x] Module 11 examples 25-27 (2026-10-11): see State "examples 25-27"; CMake STEPS/WINDOW_STEPS (SHADER_DIR now
   defined for every step: 25 has no window but loads SPIR-V) and READMEs updated. fmt + clippy -D warnings, C++ /W4 clean.
-- [ ] Module 11: independent reviews of 25-27 (code vs spec), then the EN lessons compute/{compute-shaders, particles,
-  async-compute} (module `compute` not yet in course.json); `sync:vuids` is not needed for examples (src/ only).
+- [ ] Module 11: independent reviews of 25-27 (code vs spec); `sync:vuids` is not needed for examples (src/ only).
   Review 1 findings fixed 2026-10-11 (State "Module 11 review fixes"); lessons quoting 27's submit-graphics region or
   its measurements must say image_available is waited at ALL_COMMANDS and use the re-measured numbers.
+- [x] Module 11 EN lessons (2026-10-11): module `compute` ("Compute") in course.json/course.ru.json; slugs
+  compute/{compute-pipelines, particles, async-compute} (NOT compute-shaders); RU pages are placeholders («Русская
+  версия урока готовится.»). Regions shown once: 25 all except cleanup (compute-pipelines, + Snippets saxpy.slang,
+  reduce.slang), 26 all except cleanup (particles, + Snippet particles.slang), 27 all except pipelines (= 26's with
+  `advance`, named in the text) and cleanup (async-compute). No ObjectGraph build: objects.json has no compute
+  pipeline object (`pipeline` = vkCreateGraphicsPipelines); adding one is a TODO below. 15 terms added (scratchpad
+  m11lesson/addterms11.py) + RU overlay: compute-shader, compute-pipeline, dispatch, workgroup, invocation,
+  shared-memory, workgroup-barrier, parallel-reduction, readback (compute-pipelines), gpu-particles, point-primitive
+  (particles), async-compute, queue-concurrency, sharing-mode, ping-pong-buffer (async-compute); storage-buffer and
+  subgroup stay owned by bindless; vk-pipeline def (EN+RU) widened to compute. Older EN lessons now link here
+  (queue-families x2, fences-and-semaphores, window-and-surface, bindless, mipmaps, descriptor-sets); their RU
+  counterparts were NOT changed. VUIDs named (synced): RuntimeSpirv-x-06429/06432, vkCmdDispatch-groupCountX-00386,
+  vkCmdDispatch-None-10672, VkComputePipelineCreateInfo-stage-00701, VkWriteDescriptorSet-descriptorType-00333,
+  VkGraphicsPipelineCreateInfo-topology-08773, VkBufferCreateInfo-sharingMode-00914. Runs for the lesson (scratchpad
+  m11lesson/, fresh release binaries of 10:23, validation on, sync off; stdout Rust == C++ without [timing] for 25
+  default/--uncached/--count 8388608, 26, 27 async and --same-queue x3): 25 saxpy 0.55-0.65 ms (first runs up to
+  0.96 ms), CPU copy HOST_CACHED 0.80-1.21 ms (2.69 ms in the first C++ run) vs --uncached 23.5-29.9 ms, 8M saxpy
+  5.1-5.9 ms; 26 1530/1866 fps (Rust/C++, 3 s); 27 second series (3 alternating runs x 2 languages, 4 s): graphics
+  273.8-276.8 us, compute 45.3-48.2 us, overlap async 3.2-9.4 us (7-20%), same-queue 0.0, fps async 1130-1546 vs
+  same 1114-1580 (lesson table shows it next to the "Module 11 review fixes" series). Sync re-check (both env vars,
+  25/26/27/27 --same-queue, both languages): only bandicam. `spirv-dis reduce.spv`: `OpControlBarrier %uint_2 %uint_2
+  %uint_264` (quoted). Spec quotes used: graphics => some family has graphics+compute; largePoints; CONCURRENT "may
+  result in lower performance access"; EXCLUSIVE without transfer "undefined for any read accesses performed by the
+  second queue family"; VK_TIME_DOMAIN_DEVICE_KHR "comparable with device timestamp values captured using
+  vkCmdWriteTimestamp or vkCmdWriteTimestamp2"; OpFAdd/OpFMul "Correctly rounded"; HOST_CACHED read speed; fence Note.
+  Not sourced, hedged in text: NVIDIA shared memory = L1 array, workgroup stays on one SM, hardware compute queues.
+- [ ] Screenshots of 26/27: `examples/screenshots/{26_particles,27_async_compute}.png` are 795x628 window grabs WITH the
+  title bar (not the 800x600 client-area convention; their colors are off the shader ramp, e.g. B 66 < 89, so they were
+  resampled). The lesson copies in src/assets were recaptured 2026-10-11 with scratchpad cap.py (PrintWindow client
+  area, Rust release, `--seconds 4`, ~2.5 s): 800x600, every lit color within 0.56 of the sRGB-encoded blue->orange
+  ramp, 26: 175375 lit px, 359 colors, disk bbox 479x480; 27: 177328 lit px, 356 colors. Owner of examples/: replace
+  the originals with these (copies in scratchpad m11lesson/).
+- [ ] Module 11: independent review of the EN lessons (facts vs spec/runs, quizzes), then the RU lessons; RU links to
+  compute in ru/{devices/queue-families, sync/fences-and-semaphores, presentation/window-and-surface,
+  descriptors/bindless, images/mipmaps, descriptors/descriptor-sets} as in EN.
+- [ ] objects.json: a compute pipeline object (vkCreateComputePipelines, parents device + pipeline-layout + shader
+  module createOnly) would let compute-pipelines show an ObjectGraph build; needs ObjectGraph/test review.
 - [ ] Course-wide (Rust windowed steps): `Vk::new` returns through `?` after creating objects, leaking them on an
   error midway (no Drop guard until `Self` exists; C++ RAII has no such gap). Harmless at process exit, but not what
   the course teaches; decide on a guard pattern (as in 25's `Objects`) for all `Vk::new` before changing them.

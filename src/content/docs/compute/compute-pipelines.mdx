@@ -1,0 +1,490 @@
+---
+title: Compute pipelines
+description: 'Running your own kernel on the GPU without vertices or pixels: the one-stage compute pipeline, workgroups, invocations and vkCmdDispatch, choosing a workgroup size against the subgroup size and the limits, storage buffers, a groupshared reduction with workgroup barriers, and reading the results back through HOST_CACHED memory after a COMPUTE -> HOST barrier.'
+---
+
+import MindMap from 'course-kit/components/MindMap.astro';
+import Quiz from 'course-kit/components/Quiz.astro';
+import Snippet from 'course-kit/components/Snippet.astro';
+import Step from '../../../components/Step.astro';
+
+Every shader so far ran because a triangle was drawn: one vertex shader invocation per vertex, one fragment shader
+invocation per covered pixel. But the [shader cores](term:shader-core) underneath are general processors, and plenty of
+work has no triangle in it: simulating particles, building a histogram, blurring an image, culling a scene. How do you
+run your own function over a million elements on the GPU, with no vertices and no pixels involved, and get the answers
+back to the CPU?
+
+## Where this fits
+
+The first lesson of the **compute** module, the last module of the core course. It reuses a lot: the
+[shaders and SPIR-V](lesson:shaders-and-spirv) of module 5, the [pipeline layout](lesson:pipeline-layout),
+[descriptor sets](lesson:descriptor-sets), [push constants](lesson:push-constants) and
+[storage buffers](lesson:bindless) of module 9, the [memory types](lesson:memory-types) of module 8 (`HOST_CACHED`
+finally gets a job) and the [barriers](lesson:barriers-and-layouts) and GPU timestamps of module 7. The chain:
+
+`Slang [numthreads(256,1,1)] kernel → SPIR-V (OpExecutionMode LocalSize) → VkComputePipeline (one stage + layout) → bind (COMPUTE bind point) + descriptor set + push constants → vkCmdDispatch(groups) → workgroups → subgroups (warps) on SMs → barrier COMPUTE → HOST → mapped HOST_CACHED memory`
+
+A [compute shader](term:compute-shader) is a shader with no place in the graphics pipeline; a
+[compute pipeline](term:compute-pipeline) wraps exactly one of them. A [dispatch](term:dispatch) launches a grid of
+[workgroups](term:workgroup), and each workgroup is a fixed number of [invocations](term:invocation). The invocations of
+one workgroup can cooperate through [shared memory](term:shared-memory) and meet at a
+[workgroup barrier](term:workgroup-barrier); the [parallel reduction](term:parallel-reduction) below is the classic
+use. Getting results to the CPU is a [readback](term:readback): a barrier to the host and cached host memory. After
+this lesson: [particles](lesson:particles) (compute and graphics on the same buffer) and
+[async compute](lesson:async-compute) (compute on its own queue).
+
+## A pipeline with one stage
+
+The graphics pipeline of module 5 is a long assembly line: vertex input, vertex shader, rasterizer, fragment shader,
+depth test, blending, each configured in one big create-info. A compute pipeline has none of that:
+
+| | Graphics pipeline | Compute pipeline |
+|---|---|---|
+| Shader stages | vertex + fragment (+ optional others) | exactly one: `COMPUTE` |
+| Fixed-function state | vertex input, rasterizer, depth, blending, attachments | none |
+| Started by | `vkCmdDraw*` inside a rendering | `vkCmdDispatch*` outside any rendering |
+| Who decides how many invocations | the geometry and the pixels it covers | you: groups x group size |
+| Where results go | attachments | wherever the shader writes (storage buffers, storage images) |
+| Create call | `vkCreateGraphicsPipelines` | `vkCreateComputePipelines` |
+
+What stays is everything a shader needs to reach data: a [pipeline layout](term:vk-pipeline-layout) with descriptor set
+layouts and push constant ranges. The pipeline is still a [`VkPipeline`](term:vk-pipeline), bound with
+`vkCmdBindPipeline`, but to the **compute bind point**, which has its own pipeline, descriptor sets and push constants:
+binding a compute pipeline does not disturb what a draw has bound, and the other way round.
+
+If you have written a Houdini wrangle, you have written a compute kernel. An Attribute Wrangle runs its VEX snippet
+once per point, in parallel, and `@ptnum` tells each run which point it is; a Nuke BlinkScript kernel runs once per
+output pixel. A compute shader is the same idea with the loop made explicit: you say how many invocations to launch,
+and each one gets its index, `SV_DispatchThreadID`, and decides what to do with it. Houdini's OpenCL SOP is closer
+still: it is literally a compute kernel run over the geometry's attributes.
+
+## Grid, workgroups, invocations
+
+Invocations are not launched one by one but in **workgroups** of a size fixed in the shader. Step 25's first kernel is
+SAXPY, the "hello world" of GPU computing (`result = a * x + y`, one element per invocation):
+
+<Snippet src="shaders/saxpy.slang" />
+
+`[numthreads(256, 1, 1)]` makes every workgroup 256 invocations, arranged as a 256 x 1 x 1 block (2D and 3D shapes
+exist for images and volumes; the indices then have y and z too). The host decides how many workgroups:
+`vkCmdDispatch(cmd, groupCountX, groupCountY, groupCountZ)`. The spec's words: "Compute workloads are formed from groups
+of work items called workgroups ... A workgroup is a collection of shader invocations that execute the same shader,
+potentially in parallel." Each invocation then knows three things:
+
+| Slang | SPIR-V built-in | Meaning |
+|---|---|---|
+| `SV_GroupID` | `WorkgroupId` | which workgroup in the grid |
+| `SV_GroupThreadID` | `LocalInvocationId` | which invocation inside its workgroup |
+| `SV_DispatchThreadID` | `GlobalInvocationId` | group id x group size + local id: the position in the whole grid |
+
+A render farm picture works: the grid is the frame, the workgroups are its buckets, the invocations the pixels of a
+bucket. Buckets are independent and run in any order on whatever is free; inside a bucket, the pixels are rendered
+together and can share data. Nothing in Vulkan orders the workgroups of a dispatch, or the invocations of one
+workgroup, relative to each other.
+
+The workgroup size lives in the shader, so the host has to know it to compute the number of groups. Instead of a
+second constant in C++ or Rust that could drift from the shader, step 25 reads it from the SPIR-V: the module's
+`OpEntryPoint` names the function, and `OpExecutionMode ... LocalSize 256 1 1` (what Slang emits for `numthreads`)
+gives the size. The spec allows three ways to state it (`LocalSize`, `LocalSizeId` or a constant decorated
+`WorkgroupSize`); this reader handles the one Slang uses.
+
+<Step file="25_compute" region="local-size" />
+
+## Choosing the workgroup size
+
+Why 256? Two facts decide it. The first is the device's limits, printed by the step:
+
+<Step file="25_compute" region="limits" />
+
+```text
+Compute limits:
+  maxComputeWorkGroupInvocations = 1024 (Vulkan 1.4 guarantees 256)
+  maxComputeWorkGroupSize = 1024 x 1024 x 64
+  maxComputeWorkGroupCount = 2147483647 x 65535 x 65535
+  maxComputeSharedMemorySize = 49152 bytes
+  subgroupSize = 32
+```
+
+A workgroup may have at most `maxComputeWorkGroupInvocations` invocations in total and at most
+`maxComputeWorkGroupSize` along each axis. Vulkan 1.0 guarantees only 128; Vulkan 1.4 raised the minimum to 256 (and
+the per-axis size to 256 x 256 x 64), so 256 runs on every 1.4 device. The RTX 3080 Ti allows 1024.
+
+The second fact is the [subgroup](term:subgroup) size. The hardware does not schedule single invocations: it packs
+them into subgroups that issue instructions together, 32 on this GPU (a warp, in NVIDIA's word; AMD's waves are 32 or
+64). A workgroup is cut into subgroups, so a size that is not a multiple of 32 leaves lanes of its last subgroup empty
+for the whole run. 256 = 8 subgroups of 32, or 4 of AMD's wave64: full everywhere. Beyond "a multiple of the subgroup
+size, within the limits", the best size depends on the kernel (how many registers and how much shared memory each
+workgroup needs, which limits how many workgroups fit on a core at once) and is found by measuring. 64 to 256 is the
+usual range for a simple kernel like this one.
+
+## How many workgroups: ceil-division and the bounds check
+
+<Step file="25_compute" region="group-count" />
+
+A million elements do not divide into groups of 256: 1000000 / 256 = 3906.25. The host rounds **up**,
+`ceil(N / 256) = (N + 255) / 256 = 3907` groups (`div_ceil` in Rust), and the last group has only 64 elements in
+range. The other 192 invocations of that group still run, so the shader checks `i < count` and returns. Without the
+check they would read `x` and `y` past their end and write `result` past its end: nothing makes an out-of-bounds
+storage-buffer access safe unless a robustness feature is enabled, and step 25 enables none.
+
+Two kinds of limits apply, and the program checks both before dispatching. The workgroup *size* is a rule on the
+shader the pipeline is built from (`VUID-RuntimeSpirv-x-06429` for the x size, `VUID-RuntimeSpirv-x-06432` for the
+product). The workgroup *count* is a rule on the dispatch itself (`VUID-vkCmdDispatch-groupCountX-00386`): at most
+2147483647 groups along x here, so a one-dimensional grid is never the problem on this GPU. A device at the spec
+minimum allows only 65535 groups per axis; there, very large 1D jobs are split into several dispatches or folded into
+a 2D grid.
+
+## Storage buffers and where they live
+
+Compute shaders read and write [storage buffers](term:storage-buffer), the `STORAGE_BUFFER` descriptors of module 9:
+`StructuredBuffer<float>` for a read-only one, `RWStructuredBuffer<float>` for one the shader writes, both in the
+[std430](term:std430) layout (a `float` array has a 4-byte stride). Step 25 creates five of them:
+
+<Step file="25_compute" region="memory" />
+
+The interesting decision is the memory type, made with the two-pass rule of [memory types](lesson:memory-types)
+(required flags, then preferred ones):
+
+- **Inputs** (`x`, `y` and the reduction's `values`): the CPU writes them once, the GPU reads them. `HOST_VISIBLE |
+  HOST_COHERENT`, type 3 here: the upload type of [vertex buffers](lesson:vertex-and-index-buffers), uncached and
+  typically write-combined (fast to write, slow to read back).
+- **Outputs** (`result`, `groupSums`): the GPU writes them, the CPU *reads* them. The spec describes
+  `HOST_CACHED` as the type for that: "Host memory read accesses to uncached memory are slower than to cached memory".
+  The choice requires `HOST_VISIBLE` and prefers `HOST_CACHED`, which picks type 4, `HOST_VISIBLE | HOST_COHERENT |
+  HOST_CACHED`.
+
+Both types sit in system RAM on this GPU, so the shaders read and write across PCIe. For one pass over the data that
+is fine (it avoids copying everything into VRAM first); data the GPU reuses many times belongs in `DEVICE_LOCAL`
+memory, filled by a [staging copy](lesson:staging-uploads), as the next lesson does.
+
+<Step file="25_compute" region="fill-inputs" />
+
+The inputs are chosen so that the GPU's results can be compared with the CPU's exactly, with `==`: `x[i] = i`, `y[i] =
+1`, so `result[i] = 2i + 1`. Every integer below 2^24 is exact in a 32-bit float, and Vulkan requires `OpFMul` and
+`OpFAdd` to be "Correctly rounded" (spec, precision of core SPIR-V instructions): an exact result needs no rounding, so
+GPU and CPU must agree bit for bit, whether the GPU fuses the multiply and add or not. That is also why `--count` stops
+at 2^23 (the largest result, `2N - 1`, must stay below 2^24):
+
+<Step file="25_compute" region="cli" />
+
+## The compute pipeline object
+
+<Step file="25_compute" region="kernel" />
+
+One function builds each kernel, and it is short because there is little to describe:
+
+1. A [descriptor set layout](term:vk-descriptor-set-layout) with `bindings` storage buffers, visible to the `COMPUTE`
+   stage.
+2. A [pipeline layout](term:vk-pipeline-layout) with that set and a push constant range for the `COMPUTE` stage: 8
+   bytes for SAXPY (`a`, `count`), 4 for the reduction.
+3. `VkComputePipelineCreateInfo`: one `VkPipelineShaderStageCreateInfo` (stage `COMPUTE`, which is required:
+   `VUID-VkComputePipelineCreateInfo-stage-00701`; the module; the entry point name) and the layout. That is all.
+
+As with graphics pipelines, the shader module can be destroyed right after the pipeline is created: creating the
+pipeline is where the driver compiles the SPIR-V into the GPU's machine code. The workgroup size is part of that
+shader, so it is fixed from then on; only the number of groups is chosen per dispatch.
+
+<Step file="25_compute" region="descriptors" />
+
+One descriptor pool, two sets, five `vkUpdateDescriptorSets` writes, each binding a whole buffer (`VK_WHOLE_SIZE`):
+the same steps as [descriptor sets](lesson:descriptor-sets), with `STORAGE_BUFFER` instead of `UNIFORM_BUFFER`.
+
+## Recording a dispatch
+
+The queue: any family with `COMPUTE` runs dispatches. On desktop GPUs the graphics family has it too, and step 25
+simply takes the first one, family 0. ([Async compute](lesson:async-compute) looks for a family *without* graphics.)
+
+<Step file="25_compute" region="queue-family" />
+
+<Step file="25_compute" region="timestamps" />
+
+<Step file="25_compute" region="record" />
+
+The recording reads like a draw without a rendering: bind the pipeline at `VK_PIPELINE_BIND_POINT_COMPUTE`, bind the
+set, push the constants, `vkCmdDispatch(3907, 1, 1)`, then the same for the reduction. A dispatch must be recorded
+outside a rendering (`VUID-vkCmdDispatch-None-10672`), which never matters here because there is no rendering at all.
+
+Note what is *not* between the two dispatches: a barrier. They read and write different buffers, so neither depends on
+the other, and nothing orders them: the GPU may run the reduction's workgroups while SAXPY's are still in flight. A
+barrier is needed only when one command consumes what an earlier one produced, as at the end of this command buffer (for
+the host) and throughout the [next lesson](lesson:particles).
+
+Three [timestamps](lesson:barriers-and-layouts) bracket the work: `TOP_OF_PIPE` before, `COMPUTE_SHADER` after SAXPY
+(written once every earlier command has finished its compute stage, which here means SAXPY), `COMPUTE_SHADER` after
+both.
+
+## Cooperation inside a workgroup: groupshared memory and barriers
+
+SAXPY's invocations never talk to each other. The second kernel, a **reduction**, needs them to: every workgroup sums
+its 256 values into one number.
+
+<Snippet src="shaders/reduce.slang" />
+
+The data lives in [shared memory](term:shared-memory): `groupshared uint partial[256]` (SPIR-V storage class
+`Workgroup`), one copy per workgroup, visible to that workgroup's invocations only. On NVIDIA GPUs it is on-chip SRAM
+in the same array as the L1 cache; NVIDIA documents the two as one configurable block per SM. That makes it far faster
+than a storage buffer, and small: `maxComputeSharedMemorySize` is 49152 bytes here (the spec minimum is 16384), and
+the reduction uses 1024 bytes per workgroup.
+
+The sum is a tree: 256 values become 128 partial sums, then 64, ..., then 1, in eight rounds instead of 255 additions
+one after another. Between two rounds, every invocation must see what the others wrote in the previous round. That is
+the job of `GroupMemoryBarrierWithGroupSync()`, a [workgroup barrier](term:workgroup-barrier). In the SPIR-V it is one
+instruction, as the disassembly of `reduce.spv` shows:
+
+```text
+     %uint_2 = OpConstant %uint 2
+   %uint_264 = OpConstant %uint 264
+               OpControlBarrier %uint_2 %uint_2 %uint_264
+```
+
+(excerpt of `spirv-dis shaders/spv/reduce.spv`). Scope 2 is `Workgroup`, and the semantics 264 = 0x100 | 0x8 =
+`WorkgroupMemory | AcquireRelease`. It is two barriers in one:
+
+- **Execution** (the first `Workgroup`, the execution scope): no invocation of the workgroup continues past this point
+  until all of them have reached it.
+- **Memory** (the second `Workgroup` and the semantics): writes to workgroup memory made before the barrier are visible
+  to reads after it (`AcquireRelease` on `WorkgroupMemory`).
+
+The same two halves as a [pipeline barrier](term:pipeline-barrier) (an execution dependency plus a memory dependency),
+only inside one workgroup and inside one shader. Because it is "wait until *all* arrive", every invocation must reach
+every barrier: if some invocations returned early and skipped it, the others would wait for invocations that never
+come, which SPIR-V leaves undefined. That is why `reduce` does not return for the 192 out-of-range invocations of the
+last group, as SAXPY does: they load 0 instead and walk through every round. And the loop bound is the same for all
+invocations, so all of them meet each barrier; only the additions are skipped by the upper half.
+
+There is no such barrier *between* workgroups. Workgroups run in any order, possibly not at the same time, so one
+cannot wait for another. Cooperation across the whole grid takes a second dispatch (with a barrier between), or
+atomics. Step 25 leaves the final step, adding the 3907 group sums, to the CPU, which also checks them. The VEX analogy
+holds here too: inside one wrangle a point cannot read another point's freshly written attribute (it sees the input
+geometry); to use those results you add a second wrangle, a second pass.
+
+## Getting the results to the CPU
+
+<Step file="25_compute" region="readback-barrier" />
+
+Step 25 waits for a fence, then reads the mapped memory. The fence alone is not enough, and the spec says so in a
+note: "Signaling a fence and waiting on the host does not guarantee that the results of memory accesses will be visible
+to the host, as the access scope of a memory dependency defined by a fence only includes device access. A memory
+barrier or other memory dependency must be used to guarantee this." So the command buffer ends with a memory barrier
+whose source is the compute stage's storage writes and whose destination is the **host**: stage `HOST`, access
+`HOST_READ`. It makes the shader writes available and visible to the host domain; the fence then tells the CPU when
+that has happened.
+
+<Step file="25_compute" region="submit-and-wait" />
+
+<Step file="25_compute" region="read-results" />
+
+One more step would be needed on another GPU. If the chosen type were `HOST_CACHED` but **not** `HOST_COHERENT`, the
+CPU's caches could still hold stale lines of the buffer from before the dispatch, and `vkInvalidateMappedMemoryRanges`
+must discard them before reading: the mirror image of the flush a non-coherent *upload* needs. Type 4 on this GPU is
+coherent, so the program prints that no invalidate is needed; the code takes the other branch where it has to.
+
+Synchronization validation is no help with this barrier: it does not track host accesses at all (see
+[what it sees](lesson:barriers-and-layouts#what-it-sees-and-what-it-does-not)). A temporary edit that removed the
+`COMPUTE -> HOST` barrier ran without a message, with both validation variables set, and the results were still
+correct on this machine. The barrier is there because the spec requires it, not because a tool complained.
+
+### Cached versus uncached: what the choice is worth
+
+`--uncached` rules out every `HOST_CACHED` type, so the outputs land in type 3, the write-combined upload type, and
+the CPU's copy of the 4 MB of results is timed in both cases. Release builds, validation on, synchronization
+validation off, 2026-10-11, nine runs per variant (Rust and C++ alternating):
+
+| Outputs in | CPU copy of 4015628 bytes | Throughput |
+|---|---|---|
+| type 4, `HOST_CACHED` (default) | 0.80 - 1.21 ms (2.69 ms in the first C++ run) | 3.3 - 5.0 GB/s |
+| type 3, uncached (`--uncached`) | 23.5 - 29.9 ms | 0.13 - 0.17 GB/s |
+
+About 20 to 30 times slower without the cache. Uncached, typically write-combined memory is built for streaming
+*writes*: the CPU combines them into full lines and sends them off. A *read* from it cannot use the CPU caches or their
+prefetching, so every load waits for a round trip to memory. The GPU side does not notice the difference (SAXPY took
+the same time with either type). The rule that follows: memory the CPU reads is `HOST_CACHED`, memory the CPU only
+writes need not be.
+
+## Checking the answers
+
+<Step file="25_compute" region="verify-saxpy" />
+
+<Step file="25_compute" region="verify-reduce" />
+
+The reduction's input is `values[i] = i % 1000`, integers again: the CPU sums the same chunks of 256 and compares all
+3907 group sums, and their total, with the GPU's. Group 0 holds 0 + 1 + ... + 255 = 32640, the program's first
+printed sum. Integers make the comparison exact; a floating-point sum would depend on the order of the additions,
+which differs between the tree and a CPU loop, and the comparison would need a tolerance.
+
+## What the program prints
+
+The default run, Rust (C++ prints the same lines; only the `[timing]` values differ):
+
+```text
+Found 1 GPU(s)
+GPU 0: NVIDIA GeForce RTX 3080 Ti
+
+Picked: NVIDIA GeForce RTX 3080 Ti
+Compute queue family: 0 (the first with COMPUTE)
+VkDevice created with synchronization2
+
+Compute limits:
+  maxComputeWorkGroupInvocations = 1024 (Vulkan 1.4 guarantees 256)
+  maxComputeWorkGroupSize = 1024 x 1024 x 64
+  maxComputeWorkGroupCount = 2147483647 x 65535 x 65535
+  maxComputeSharedMemorySize = 49152 bytes
+  subgroupSize = 32
+
+Kernels (workgroup size read from the SPIR-V):
+  saxpy.spv: 1444 bytes, entry point saxpy, LocalSize 256 x 1 x 1 = 8 subgroups of 32
+  reduce.spv: 2216 bytes, entry point reduce, LocalSize 256 x 1 x 1 = 8 subgroups of 32
+  reduce: groupshared 1024 bytes per workgroup (limit 49152)
+
+1000000 elements -> 3907 workgroups of 256 (the last one has 64 elements in range)
+
+Memory:
+  inputs x, y, values (4000000 bytes each): memory type 3 (HOST_VISIBLE | HOST_COHERENT), written by the CPU
+  outputs result (4000000 bytes), groupSums (15628 bytes): memory type 4 (HOST_VISIBLE | HOST_COHERENT | HOST_CACHED), read by the CPU
+
+Compute pipelines: saxpy (3 storage buffers, 8 push constant bytes), reduce (2 storage buffers, 4 bytes)
+Descriptor sets: saxpy x/y/result at bindings 0/1/2, reduce values/groupSums at 0/1
+
+Recorded: dispatch saxpy 3907 x 1 x 1, dispatch reduce 3907 x 1 x 1
+Barrier: COMPUTE_SHADER / SHADER_STORAGE_WRITE -> HOST / HOST_READ
+[timing] GPU: saxpy 567.8 us (21.1 GB/s over PCIe), saxpy + reduce 766.0 us
+Output memory is HOST_COHERENT: no vkInvalidateMappedMemoryRanges needed
+[timing] CPU copy of the results out of memory type 4: 0.80 ms (5.00 GB/s)
+
+saxpy: result[i] = 2 * x[i] + y[i], x[i] = i, y[i] = 1
+  result[0..4] = 1, 3, 5, 7, result[999999] = 1999999
+  all 1000000 results equal the CPU's exactly
+
+reduce: values[i] = i % 1000, one sum per workgroup of 256
+  groupSums[0] = 32640, groupSums[3906] = 61920 (the last group has 64 values)
+  all 3907 group sums equal the CPU's; their total 499500000 = the CPU's sum of all 1000000 values
+```
+
+Across the runs of that session (18 runs, default and `--uncached`, both languages), SAXPY took 0.55 - 0.65 ms on the
+GPU in most runs and up to 0.96 ms in the first ones. The GB/s figure counts 12 bytes per element (two floats read,
+one written), all of them crossing PCIe because the buffers are in system RAM: the kernel is limited by the bus, not by
+the shader cores, which do one multiply-add per 12 bytes. With `--count 8388608` (32 MB per buffer) SAXPY took 5.1 - 5.9 ms
+(17 - 20 GB/s, one run per language) and the whole command buffer 7.2 - 7.9 ms. On the CPU side, the second `[timing]` line is the cached copy
+discussed above. With both synchronization validation variables set
+([why two](lesson:barriers-and-layouts#what-it-sees-and-what-it-does-not)) every variant runs with no message apart
+from the known bandicam layer warning.
+
+## The map of this lesson
+
+<MindMap />
+
+## Underneath
+
+- **Workgroups to cores.** The GPU's front end hands out workgroups to the shader cores (SMs) as they have room; on
+  NVIDIA a workgroup (a CUDA "thread block") stays on one SM for its whole life, which is what lets its shared memory be
+  on-chip and its barrier be cheap. How many workgroups fit on one SM at once is limited by their registers, their
+  shared memory and the SM's maximum of resident warps; that "occupancy" is why kernels with heavy shared memory use
+  run fewer workgroups side by side, and why the right workgroup size is measured, not derived.
+- **Subgroups in lockstep, or not.** A subgroup of 32 issues instructions together where it can, so an `if` that splits
+  it runs both sides one after the other, with half the lanes masked (the [warp divergence](lab:warp-divergence)
+  interactive). Since Volta, NVIDIA schedules the threads of a warp independently, and Vulkan promises no lockstep
+  either: code that needs invocations to agree uses barriers or subgroup operations, never timing.
+- **A barrier inside a shader** compiles to a hardware instruction that holds each warp of the workgroup until all have
+  arrived, plus whatever ordering the memory semantics require. It costs little because every warp it waits for is on
+  the same SM; there is no hardware equivalent across SMs, which is the deeper reason for "no barrier between
+  workgroups".
+- **The dispatch itself** is a packet the command processor reads from the command buffer, like a draw, with the group
+  counts and a pointer to the compiled kernel. `vkCmdDispatchIndirect` reads the counts from a buffer instead, so a
+  previous dispatch can decide how much work the next one gets without the CPU.
+
+<Quiz
+	questions={[
+		{
+			q: 'Step 25 dispatches 3907 workgroups of 256 for 1000000 elements. What do the 192 extra invocations of the last workgroup do?',
+			options: [
+				{
+					text: 'Nothing: Vulkan launches only as many invocations as the data has',
+					why: 'Vulkan launches whole workgroups; it knows nothing about your element count. The extra invocations run.',
+				},
+				{
+					text: 'They run, and the shader\'s `i < count` check stops them before they touch the buffers',
+					why: 'Right: the grid is rounded up to whole groups, so the kernel itself has to ignore positions past the end.',
+				},
+				{
+					text: 'They wrap around and process elements 0 to 191 a second time',
+					why: 'SV_DispatchThreadID just keeps counting (1000000 to 1000191); nothing wraps. Without the check they would access past the end.',
+				},
+				{
+					text: 'The driver clamps their accesses to the buffer, which is what makes the rounding up safe',
+					why: 'Only robustness features clamp out-of-bounds accesses, and step 25 enables none; without the check the accesses would be out of bounds.',
+				},
+			],
+			answer: 1,
+			ref: '#how-many-workgroups-ceil-division-and-the-bounds-check',
+		},
+		{
+			q: 'Why does reduce.slang load 0 for out-of-range invocations instead of returning early like saxpy.slang?',
+			options: [
+				{
+					text: 'Because returning early from a compute shader is not allowed',
+					why: 'saxpy.slang returns early and is valid; the problem is specific to kernels with barriers.',
+				},
+				{
+					text: 'Because 0 is needed to make the sum of the last group come out right',
+					why: 'Zeros do not change a sum, but the same effect could come from skipping the additions; the real constraint is the barrier.',
+				},
+				{
+					text: 'Every invocation of a workgroup must reach each barrier, so none may leave before the last one',
+					why: 'Right: the barrier waits for all invocations of the workgroup; one that returned would never arrive, which SPIR-V leaves undefined.',
+				},
+				{
+					text: 'Because shared memory has to be fully written before the GPU will let a workgroup finish and release it',
+					why: 'There is no such rule; the reason is that every invocation must reach every workgroup barrier.',
+				},
+			],
+			answer: 2,
+			ref: '#cooperation-inside-a-workgroup-groupshared-memory-and-barriers',
+		},
+		{
+			q: 'Step 25 waits for a fence before reading the results. Why does it also record a COMPUTE_SHADER -> HOST barrier?',
+			options: [
+				{
+					text: 'A fence only orders and makes visible device accesses; the barrier makes the shader writes visible to the host',
+					why: 'Right: the spec note says a fence does not guarantee host visibility; a memory dependency with destination HOST does.',
+				},
+				{
+					text: 'To keep the reduction from starting before SAXPY has finished',
+					why: 'The two dispatches use different buffers and need no order between them; the barrier is at the end, for the host.',
+				},
+				{
+					text: 'Because synchronization validation reports an error without it',
+					why: 'It does not: host accesses are not tracked, and removing the barrier gave no message. The rule comes from the spec.',
+				},
+				{
+					text: 'It is only needed for memory that is not HOST_COHERENT',
+					why: 'Coherence is about CPU caches (flush and invalidate); the device-side availability the barrier provides is needed for any memory type.',
+				},
+			],
+			answer: 0,
+			ref: '#getting-the-results-to-the-cpu',
+		},
+		{
+			q: 'With --uncached, the CPU copy of the results took 23.5 - 29.9 ms instead of 0.80 - 1.21 ms. What follows?',
+			options: [
+				{
+					text: 'The GPU writes uncached memory more slowly, so SAXPY took longer too',
+					why: 'SAXPY took the same time in both runs; the difference is entirely on the CPU side.',
+				},
+				{
+					text: 'Memory the CPU reads should be HOST_CACHED; uncached, write-combined memory suits data the CPU only writes',
+					why: 'Right: CPU reads of uncached memory cannot use caches or prefetching; the spec says such reads are slower.',
+				},
+				{
+					text: 'Results should always be read straight from DEVICE_LOCAL memory, which is the fastest memory in the machine',
+					why: 'DEVICE_LOCAL memory is fast for the GPU; the CPU reads it only through a mapping (if host-visible at all), typically uncached.',
+				},
+				{
+					text: 'HOST_CACHED memory is not coherent, so the invalidate call is what makes it fast',
+					why: 'Type 4 here is HOST_CACHED and HOST_COHERENT; no invalidate is called. The cache itself makes the reads fast.',
+				},
+			],
+			answer: 1,
+			ref: '#cached-versus-uncached-what-the-choice-is-worth',
+		},
+	]}
+/>

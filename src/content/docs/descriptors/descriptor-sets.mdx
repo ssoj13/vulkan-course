@@ -148,7 +148,7 @@ split, descriptors fixed and data changing, is the normal case.
 <Step file="17_uniforms" region="bind-and-draw" />
 
 `vkCmdBindDescriptorSets` records "use these sets, starting at set number `firstSet`, for the graphics bind point,
-interpreted through this pipeline layout". Graphics and compute have separate bind points, so a compute dispatch does
+interpreted through this pipeline layout". Graphics and [compute](lesson:compute-pipelines) have separate bind points, so a compute dispatch does
 not disturb the sets of a draw. The last argument is the list of dynamic offsets, empty here.
 
 When does the GPU read the descriptors? The spec defines a window rather than an instant: without `UPDATE_AFTER_BIND`,

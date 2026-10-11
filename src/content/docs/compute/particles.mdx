@@ -1,0 +1,332 @@
+---
+title: Particles
+description: 'Compute and graphics on the same data: a million particles in one DEVICE_LOCAL buffer that a compute shader moves and the vertex input draws as points, the barriers inside one frame and across frames in flight (RAW, WAR, WAW), why one buffer is enough when the CPU never touches the data, and point topology with PointSize.'
+---
+
+import MindMap from 'course-kit/components/MindMap.astro';
+import Quiz from 'course-kit/components/Quiz.astro';
+import Snippet from 'course-kit/components/Snippet.astro';
+import Step from '../../../components/Step.astro';
+import Shots from '../../../components/Shots.astro';
+import shot26 from '../../../assets/26_particles.png';
+
+The previous lesson's results went back to the CPU. Most compute work in a renderer never does: it produces data that
+the very next draw consumes. Step 26 moves a million particles with a compute shader every frame and draws them as
+points from the same buffer, with two frames in flight and no copy anywhere. Who writes the buffer when, who reads it
+when, and what keeps a frame's draw from seeing half-moved particles, or the next frame's simulation from moving
+particles the previous draw is still reading?
+
+## Where this fits
+
+The second lesson of the **compute** module. It joins the [compute pipeline](lesson:compute-pipelines) of the previous
+lesson to the frame loop of [frames in flight](lesson:frames-in-flight), and its central question is the one of
+[barriers](lesson:barriers-and-layouts): which [hazards](term:data-hazard) exist and which barrier closes each. The
+chain:
+
+`init dispatch (fence-waited once) → per frame: barrier (previous frame → this dispatch) → dispatch simulate (writes the buffer) → barrier (COMPUTE_SHADER write → VERTEX_ATTRIBUTE_INPUT read) → draw POINT_LIST (vertex input reads the same buffer) → present`
+
+A [GPU particle system](term:gpu-particles) keeps its state in one buffer that is both a
+[storage buffer](term:storage-buffer) and a [vertex buffer](term:vertex-buffer); the draw turns every element into a
+[point primitive](term:point-primitive). Between the two uses sit [pipeline barriers](term:pipeline-barrier), and the
+lesson's main claim is about [frames in flight](term:frames-in-flight): they need per-frame copies only of data the
+CPU writes. After this lesson: [async compute](lesson:async-compute), which moves the simulation to its own queue.
+
+## The particle buffer is the vertex buffer
+
+A Houdini POP network keeps its points in the solver: every frame the solver reads the points, applies forces and
+writes them back, and the viewport draws whatever is there. Nothing leaves for disk between frames. Step 26 is that
+picture on the GPU: one buffer holds every particle, a compute shader is the solver, the graphics pipeline is the
+viewport.
+
+<Step file="26_particles" region="particle" />
+
+A particle is 16 bytes: a position and a velocity, two `float2` each. The shader declares the same struct:
+
+<Snippet src="shaders/particles.slang" />
+
+One module, four entry points: `init` writes the starting state, `simulate` moves every particle by one time step
+(explicit Euler: accelerate toward an attractor that circles the window, apply a little drag, bounce off the edges),
+`vertexMain` and `fragmentMain` draw. (`advance`, the fifth, belongs to the [next lesson](lesson:async-compute).)
+
+<Step file="26_particles" region="particle-buffer" />
+
+The buffer gets two usages, `STORAGE_BUFFER` so the compute shader can bind it through a descriptor, and
+`VERTEX_BUFFER` so `vkCmdBindVertexBuffers` can bind the same bytes for the draw. A `VkBuffer` may have any
+combination of usages; the usage flags only say which ways it will be accessed, so the driver can place and align it
+for all of them. The memory is `DEVICE_LOCAL` (type 1): the CPU never reads or writes a particle, so there is no
+reason for it to be anywhere else, and no staging upload either, because the GPU writes the starting state itself.
+
+At 2^20 particles the buffer is 16 MiB. The step also refuses a buffer larger than `maxStorageBufferRange`: its
+descriptor binds the whole buffer as a storage buffer, and that range may not exceed the limit
+(`VUID-VkWriteDescriptorSet-descriptorType-00333`). The spec only guarantees 2^27 bytes (128 MiB), less than the
+2^24 x 16 bytes that `--count` allows; the RTX 3080 Ti reports 4294967295, so the check never fires here.
+
+<Step file="26_particles" region="cli" />
+
+## One queue for both
+
+The dispatch and the draw go into one command buffer, so into one queue, so the queue family must support both
+`GRAPHICS` and `COMPUTE` (and presenting).
+
+<Step file="26_particles" region="pick-device" />
+
+On desktop GPUs the graphics family typically has compute too, but the spec's promise is weaker than "every graphics
+family can compute": "If an implementation exposes any queue family that supports graphics operations, at least one
+queue family of at least one physical device exposed by the implementation must support both graphics and compute
+operations." So the step checks both flags. Family 0 of the RTX 3080 Ti has them.
+
+## Two pipelines and a draw of points
+
+<Step file="26_particles" region="compute-pipelines" />
+
+`init` and `simulate` share one layout (set 0, binding 0: the particle buffer; a 16-byte push constant range for the
+compute stage), and one `vkCreateComputePipelines` call creates both from one module.
+
+<Step file="26_particles" region="graphics-pipeline" />
+
+The draw reads the particles through **vertex input**, not through a descriptor: binding 0 with a stride of 16, the
+position as attribute 0 at offset 0, the velocity as attribute 1 at offset 8 (the vertex shader colors by speed).
+Topology `POINT_LIST`: every vertex is one [point](term:point-primitive), a square of `PointSize` pixels centered on it.
+
+Points have a rule of their own. A pipeline that draws `POINT_LIST` with only a vertex shader must write `PointSize`
+(`VUID-VkGraphicsPipelineCreateInfo-topology-08773`, unless the `maintenance5` feature is enabled, which this course
+does not do), so `vertexMain` writes `SV_PointSize = 1.0`. And 1.0 is the only size that is free: the `largePoints`
+feature "specifies whether points with size greater than 1.0 are supported. If this feature is not enabled, only a
+point size of 1.0 written by a shader is supported." Larger, soft or textured particles are usually drawn as
+camera-facing quads instead (two triangles per particle, generated in the vertex shader from the vertex index), which
+also escapes the device's `pointSizeRange`.
+
+## The starting state, written by the GPU
+
+<Step file="26_particles" region="init" />
+
+`init` computes each particle from its index alone: a 32-bit integer hash spreads consecutive indices into unrelated
+bit patterns, which become a radius and an angle in a disk of radius 0.8, with every particle orbiting the center. No
+random numbers from the CPU, no upload: one dispatch of 4096 workgroups, submitted once and waited for with a fence
+before the first frame. The fence is enough for the *host* to know `init` is done; what makes `init`'s writes visible
+to the first `simulate` is the barrier at the start of every frame, below. Its source scope includes the compute
+stage of everything submitted earlier to the queue, `init` included.
+
+## The frame: three hazards and two barriers
+
+Each frame records, into one command buffer:
+
+<Step file="26_particles" region="simulate" />
+
+<Step file="26_particles" region="draw" />
+
+`simulate` updates the buffer in place: invocation `i` reads particle `i` and writes it back, and touches no other
+particle, so no invocation can see a half-updated neighbor and no barrier is needed *inside* the dispatch. The draw
+then reads every particle as a vertex. Dispatches cannot be recorded inside a rendering, so the compute work comes
+before `vkCmdBeginRendering`.
+
+Now list who touches the buffer, in queue order, with two frames in flight:
+
+| Earlier access | Later access | Hazard | What it needs |
+|---|---|---|---|
+| frame n: `simulate` writes (compute) | frame n: draw reads (vertex input) | read after write | memory dependency: make the writes visible to `VERTEX_ATTRIBUTE_READ` |
+| frame n-1: draw reads (vertex input) | frame n: `simulate` writes (compute) | write after read | execution dependency only |
+| frame n-1: `simulate` writes (compute) | frame n: `simulate` reads and writes | read after write, write after write | memory dependency: visible to `SHADER_STORAGE_READ \| WRITE` |
+
+<Step file="26_particles" region="frame-barriers" />
+
+The two barriers of the frame cover the table:
+
+- **Before the dispatch**, two memory barriers in one `vkCmdPipelineBarrier2`. The first, `VERTEX_ATTRIBUTE_INPUT` /
+  `NONE` to `COMPUTE_SHADER` / `NONE`, is the write-after-read: the dispatch must not start writing while the previous
+  frame's vertex fetch may still read. A read leaves nothing to make available, so access masks of `NONE` are right:
+  an execution dependency is all a WAR needs. The second, `COMPUTE_SHADER` / `SHADER_STORAGE_WRITE` to
+  `COMPUTE_SHADER` / `SHADER_STORAGE_READ | SHADER_STORAGE_WRITE`, makes the previous frame's simulation results
+  available and visible to this one.
+- **Between the dispatch and the draw**, `COMPUTE_SHADER` / `SHADER_STORAGE_WRITE` to `VERTEX_ATTRIBUTE_INPUT` /
+  `VERTEX_ATTRIBUTE_READ`: this frame's draw reads this frame's positions.
+
+The barriers before the dispatch reach into the *previous* frame because a pipeline barrier's first scope is every
+command earlier in submission order on the same queue, including other command buffers and other submissions. That
+is the same reason one barrier covered the shared depth image of [depth buffers](lesson:depth), and the reason the
+first frame's barrier also orders `simulate` after `init`.
+
+### What synchronization validation saw
+
+The barriers above were derived from the spec, then each was removed in a temporary edit (reverted) to see what
+synchronization validation reports. Plain `VK_KHRONOS_VALIDATION_VALIDATE_SYNC=true` does not track what shaders access
+through descriptors, so these runs also set `VK_KHRONOS_VALIDATION_SYNCVAL_SHADER_ACCESSES_HEURISTIC=true`
+([what it sees, and what it does not](lesson:barriers-and-layouts#what-it-sees-and-what-it-does-not)). Excerpts of
+the messages as recorded in the project notes:
+
+- without the compute-to-vertex barrier: "vkCmdDraw(): READ_AFTER_WRITE hazard detected. vkCmdDraw reads vertex
+  VkBuffer ..., which was previously written by vkCmdDispatch";
+- without the write-after-read barrier: "vkQueueSubmit2(): WRITE_AFTER_READ hazard detected. vkCmdDispatch ... writes
+  to VkBuffer ..., which was previously read by vkCmdDraw ... Vulkan insight: an execution dependency is sufficient";
+- without the compute-to-compute barrier: **nothing**, even with the heuristic.
+
+The last line is the lesson in miniature: the heuristic reads the SPIR-V statically and is documented to "ignore
+certain types of accesses", and a dispatch reading and writing what the previous dispatch wrote slipped through. A
+clean run means the tool found nothing, not that nothing is there. With all barriers in place, step 26 runs with both
+variables set without a message apart from the bandicam layer warning, in both languages.
+
+## Why one buffer is enough
+
+[Frames in flight](lesson:frames-in-flight) taught one copy per frame of everything a frame writes: command buffers,
+semaphores, and in [uniform buffers](lesson:uniform-buffers) one uniform buffer per frame. So why does step 26, with two
+frames in flight, have only *one* particle buffer?
+
+Because the copies exist for data the **CPU** writes. A uniform buffer is written by the CPU while the GPU may still be
+reading the previous frame's contents from it; the CPU cannot see the GPU's progress except through fences, so the
+safe way is to give it a different buffer for each frame in flight. The particles are written only by the GPU, and
+work on one queue can be ordered by barriers, as above. Nothing the CPU does touches the buffer, so nothing needs to be
+duplicated.
+
+What the barriers cost is overlap on the GPU: frame n's simulation waits until frame n-1's vertex fetch is done. Frames
+in flight still do their job, which is to keep the *CPU* from waiting: it records frame n+1 while the GPU works on
+frame n. The CPU side of the frame is unchanged from step 10:
+
+```text
+Per frame: barrier -> dispatch simulate 4096 x 1 x 1 -> barrier COMPUTE_SHADER/SHADER_STORAGE_WRITE -> VERTEX_ATTRIBUTE_INPUT/VERTEX_ATTRIBUTE_READ -> draw 1048576 points
+2 frames in flight, ONE particle buffer: the GPU orders the frames with barriers, the CPU never touches it
+```
+
+If the simulation of frame n+1 should run *while* frame n draws, one buffer is no longer enough: the draw reads state n
+while the simulation writes state n+1, so they need two buffers, and the GPU needs a reason to run them side by side.
+That is [async compute](lesson:async-compute).
+
+The time step comes from the CPU clock but is capped at 1/60 s, so a stalled frame (the window dragged, a breakpoint)
+does not make the explicit Euler step jump particles across the window; it travels to the GPU in the push constants,
+the only per-frame data the CPU produces.
+
+## What it looks like
+
+<Shots
+	shots={[
+		{
+			src: shot26,
+			alt: 'Step 26: a large disk of mostly blue points, with a black streak toward an orange spiral near the lower right where particles orbit the attractor',
+			caption:
+				'Step 26, Rust, release, the 800 x 600 client area about 2.5 s after start, 2^20 particles. 175375 of 480000 pixels are lit, so about 6 particles share a lit pixel on average (no blending: the last one drawn wins). All 359 distinct colors lie on the shader\'s blue-to-orange speed ramp after sRGB encoding (within 0.56 of a level). The outer disk is still round, 479 x 480 pixels: radius 0.8 of a window 2 units tall, with the vertex shader\'s aspect correction.',
+		},
+	]}
+/>
+
+Slow particles are blue, fast ones orange: the orange spiral is where particles fall past the attractor at speed, and
+the dark streak is the path they have been pulled out of.
+
+## What the program prints
+
+Rust, release, `--seconds 3` (C++ prints the same lines; only `[timing]` differs):
+
+```text
+Window: 800x600 pixels
+Found 1 GPU(s)
+GPU 0: NVIDIA GeForce RTX 3080 Ti
+
+Picked: NVIDIA GeForce RTX 3080 Ti
+Graphics + compute + present family: 0
+VkDevice created with VK_KHR_swapchain
+Swapchain: 800x600 B8G8R8A8_SRGB, MAILBOX, 3 images
+
+SPIR-V: 7472 bytes (particles.spv), entry points init, simulate, vertexMain, fragmentMain; LocalSize 256 x 1 x 1
+Particles: 1048576 x 16 bytes = 16777216 bytes, STORAGE_BUFFER | VERTEX_BUFFER, memory type 1 (DEVICE_LOCAL)
+Compute pipelines: init, simulate (set 0: binding 0 = STORAGE_BUFFER; 16 push constant bytes)
+Graphics pipeline: POINT_LIST, vertex input binding 0 = the particle buffer (stride 16)
+
+init: 4096 workgroups of 256 wrote 1048576 particles (one submit, fence waited)
+Per frame: barrier -> dispatch simulate 4096 x 1 x 1 -> barrier COMPUTE_SHADER/SHADER_STORAGE_WRITE -> VERTEX_ATTRIBUTE_INPUT/VERTEX_ATTRIBUTE_READ -> draw 1048576 points
+2 frames in flight, ONE particle buffer: the GPU orders the frames with barriers, the CPU never touches it
+Rendering. Close the window to exit.
+Window closed
+[timing] 4599 frames in 3.0 s, 1530 fps
+```
+
+The C++ run right after it showed 1866 fps; frame rates on this shared machine vary that much between runs, so they
+are not a benchmark. The [next lesson](lesson:async-compute) measures the GPU time of the two halves with timestamps.
+
+## The map of this lesson
+
+<MindMap />
+
+## Underneath
+
+- **One memory, two paths.** The compute shader writes the buffer through the shader cores' load/store path (the L1
+  and the L2 cache); the draw reads it through the vertex fetch path. The barrier between them is typically where the
+  driver makes sure the writes have reached a level of the cache hierarchy both paths share (on desktop GPUs, the L2)
+  and that no stale copy sits in a cache the vertex fetch reads, besides waiting for the dispatch to finish.
+- **Barriers drain.** On one queue, a barrier from `COMPUTE_SHADER` to `VERTEX_ATTRIBUTE_INPUT` typically means: let
+  the dispatch's workgroups finish before the draw's vertices start. For the moment between them parts of the GPU idle.
+  That small bubble per frame is one of the things [async compute](lesson:async-compute) tries to fill.
+- **Points are cheap to rasterize** but 2^20 of them cover only about 175000 pixels here, so most fragments overwrite a
+  pixel another particle already wrote. With blending off, the last particle in primitive order wins; with additive
+  blending (a common look for sparks) the order would not matter, and the overdraw would become brightness.
+
+<Quiz
+	questions={[
+		{
+			q: 'Step 26 keeps two frames in flight but only one particle buffer. Why is that safe?',
+			options: [
+				{
+					text: 'Because the particle buffer is DEVICE_LOCAL, and DEVICE_LOCAL memory is never read by two frames in flight at once',
+					why: 'The memory type says nothing about frames; two frames could use the same DEVICE_LOCAL buffer at once if nothing ordered them.',
+				},
+				{
+					text: 'Only the GPU touches it, and barriers on the one queue order each frame\'s accesses after the previous frame\'s',
+					why: 'Right: per-frame copies protect data the CPU writes while the GPU may still read it; GPU-only data is ordered with barriers.',
+				},
+				{
+					text: 'Because the fence waited at the start of each frame guarantees the previous frame is done',
+					why: 'That fence belongs to the frame two submissions back (the same slot); frame n-1 may still be running.',
+				},
+				{
+					text: 'It is not safe; the program relies on the frames being too short to overlap',
+					why: 'It is safe by construction: the barrier before each dispatch reaches back to the previous frame\'s draw and dispatch.',
+				},
+			],
+			answer: 1,
+			ref: '#why-one-buffer-is-enough',
+		},
+		{
+			q: 'The barrier for "frame n-1\'s draw reads, frame n\'s simulate writes" has access masks NONE on both sides. Why is that enough?',
+			options: [
+				{
+					text: 'Because vertex input reads are coherent with compute writes on every GPU',
+					why: 'There is no such guarantee; the point is that a write-after-read hazard needs no memory dependency at all.',
+				},
+				{
+					text: 'A write after a read only needs the read to finish first: nothing written has to be made visible',
+					why: 'Right: the read leaves nothing to make available, so an execution dependency is enough; validation itself calls it "an execution dependency is sufficient".',
+				},
+				{
+					text: 'It is not enough; the access masks should name VERTEX_ATTRIBUTE_READ and SHADER_STORAGE_WRITE explicitly',
+					why: 'Naming them is harmless but adds nothing for this hazard; the stages alone give the order that a WAR needs.',
+				},
+				{
+					text: 'Because NONE means "all accesses" in synchronization2',
+					why: 'NONE means no accesses; ALL accesses would be MEMORY_READ | MEMORY_WRITE.',
+				},
+			],
+			answer: 1,
+			ref: '#the-frame-three-hazards-and-two-barriers',
+		},
+		{
+			q: 'Removing step 26\'s compute-to-compute barrier produced no validation message, even with the shader-access heuristic. What does that show?',
+			options: [
+				{
+					text: 'That barrier is redundant: the barrier between the dispatch and the draw already orders consecutive dispatches as well',
+					why: 'That barrier orders the dispatch before the draw, not the next frame\'s dispatch after this one\'s writes; the RAW/WAW across frames is real.',
+				},
+				{
+					text: 'A clean validation run is evidence, not proof: the barrier comes from the hazard table, and the tool missed this case',
+					why: 'Right: the heuristic is documented to ignore some accesses; barriers are derived from the spec, validation only catches some mistakes.',
+				},
+				{
+					text: 'Shader writes to storage buffers are always visible to the next dispatch',
+					why: 'Visibility between dispatches needs a memory dependency; nothing makes storage writes visible by default.',
+				},
+				{
+					text: 'Synchronization validation does not look at compute work at all',
+					why: 'It does with the heuristic: removing the compute-to-vertex barrier was reported as a READ_AFTER_WRITE by vkCmdDraw.',
+				},
+			],
+			answer: 1,
+			ref: '#what-synchronization-validation-saw',
+		},
+	]}
+/>
