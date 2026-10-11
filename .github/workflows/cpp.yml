@@ -119,6 +119,8 @@ jobs:
           if [ "$RUNNER_OS" = Windows ]; then
             # The SDK's own loader and layers: a cached SDK restores files, not the installer's registry entries.
             export PATH="$VULKAN_SDK/runtime/x64:$PATH" VK_ADD_LAYER_PATH="$VULKAN_SDK/Bin"
+            find "$VULKAN_SDK/runtime" -iname 'vulkan-1.dll'; ls "$VULKAN_SDK/Bin" | grep -i -E 'json|VkLayer' || true
+            export VK_LOADER_DEBUG=layer
           fi
           vulkaninfo${{ runner.os == 'Windows' && 'SDK' || '' }} --summary
           for step in 01_instance 03_physical_devices 13_memory_types 16_allocator 25_compute; do
