@@ -345,10 +345,11 @@ try {
     // - results the CPU reads back: HOST_VISIBLE, preferably HOST_CACHED
     //   (uncached reads from the CPU are very slow);
     // - small data the CPU rewrites every frame: HOST_VISIBLE + HOST_COHERENT,
-    //   preferably also DEVICE_LOCAL (the CPU-visible window of VRAM);
-    // - transient attachments: DEVICE_LOCAL, preferably LAZILY_ALLOCATED
-    //   (tile-based mobile GPUs; desktop GPUs have no such type, so the required
-    //   flags alone decide).
+    //   preferably also DEVICE_LOCAL (the CPU-visible window of VRAM).
+    // LAZILY_ALLOCATED is not in this table: the spec never lets a buffer use a
+    // lazily allocated type (memoryTypeBits of a buffer never includes one).
+    // Such memory exists only for images created with TRANSIENT_ATTACHMENT
+    // usage, which module 10 covers.
     using Mem               = vk::MemoryPropertyFlagBits;
     const uint32_t bits     = requirements.at(0).memoryTypeBits;
     struct Intent {
@@ -361,7 +362,6 @@ try {
         Intent{"staging upload", Mem::eHostVisible | Mem::eHostCoherent, {}},
         Intent{"readback", Mem::eHostVisible, Mem::eHostCached},
         Intent{"per-frame data", Mem::eHostVisible | Mem::eHostCoherent, Mem::eDeviceLocal},
-        Intent{"transient attachment", Mem::eDeviceLocal, Mem::eLazilyAllocated},
     };
     std::println("\nChoosing memory types for memoryTypeBits {:#b} (first type in index order with the flags; preferred flags tried first):",
                  bits);
@@ -375,6 +375,7 @@ try {
         std::println("  {:<21} required {}, preferred {} -> {}", intent.label, memoryNames(intent.required),
                      memoryNames(intent.preferred), result);
     }
+    std::println("  (LAZILY_ALLOCATED: never for buffers, only for images with TRANSIENT_ATTACHMENT usage, module 10)");
     // #endregion
 
     // #region allocate-and-bind
@@ -406,7 +407,7 @@ try {
     // HOST_COHERENT, so plain writes are enough: no vkFlushMappedMemoryRanges (a
     // non-coherent type needs a flush of ranges aligned to nonCoherentAtomSize
     // after writing). Reading back from this type works but is slow: it is
-    // uncached, write-combined memory.
+    // uncached (typically write-combined) memory.
     void* ptr          = uploadMemory.mapMemory(0, vk::WholeSize);
     const bool aligned = reinterpret_cast<uintptr_t>(ptr) % limits.minMemoryMapAlignment == 0;
     std::println("Mapped: pointer aligned to minMemoryMapAlignment ({}): {}", limits.minMemoryMapAlignment, aligned ? "yes" : "no");

@@ -65,7 +65,8 @@ VKAPI_ATTR vk::Bool32 VKAPI_CALL debugCallback(vk::DebugUtilsMessageSeverityFlag
 
 // #region cli
 // Command line: --count N, the number of buffers (default 3000, below the 4096
-// the spec guarantees, so the raw path works on every device).
+// the spec guarantees, so the raw path works on every device). The buffers must
+// also fit their memory heap; that is checked once the memory type is known.
 uint32_t parseCount(int argc, char** argv) {
     uint32_t count = 3000;
     if (argc == 3 && std::string_view{argv[1]} == "--count") {
@@ -257,10 +258,29 @@ try {
         };
     };
     const vk::PhysicalDeviceMemoryProperties mem = physicalDevice.getMemoryProperties();
-    const uint32_t probeBits                     = vk::raii::Buffer(device, bufferInfo(0)).getMemoryRequirements().memoryTypeBits;
-    const auto memoryType                        = findType(mem, probeBits, vk::MemoryPropertyFlagBits::eDeviceLocal);
+    std::array<vk::MemoryRequirements, sizes.size()> reqs{};
+    for (uint32_t i = 0; i < reqs.size(); ++i) {
+        reqs[i] = vk::raii::Buffer(device, bufferInfo(i)).getMemoryRequirements();
+    }
+    const auto memoryType = findType(mem, reqs[0].memoryTypeBits, vk::MemoryPropertyFlagBits::eDeviceLocal);
     if (!memoryType) {
         throw std::runtime_error("no DEVICE_LOCAL memory type for the buffers");
+    }
+    // Each path holds all N buffers at once, so their sizes must fit the heap
+    // behind the type: check before allocating anything (the default fits
+    // easily; --count 1000000 asks for about 23 GB). The heap size is only an
+    // upper bound, not the budget: the driver and other programs use the heap
+    // too, and VK_EXT_memory_budget reports how much of it this process may use.
+    vk::DeviceSize need = 0;
+    for (uint32_t i = 0; i < count; ++i) {
+        need += reqs[i % reqs.size()].size;
+    }
+    const uint32_t heap           = mem.memoryTypes[*memoryType].heapIndex;
+    const vk::DeviceSize heapSize = mem.memoryHeaps[heap].size;
+    if (need > heapSize) {
+        throw std::runtime_error(std::format("--count {}: the buffers need {} bytes, but heap {} has only {} bytes (an upper bound, not "
+                                             "the budget: see VK_EXT_memory_budget)",
+                                             count, need, heap, heapSize));
     }
     std::println("Buffers: {}, sizes {} / {} / {} bytes in turn, usage VERTEX_BUFFER | INDEX_BUFFER | TRANSFER_DST, DEVICE_LOCAL "
                  "(memory type {})",

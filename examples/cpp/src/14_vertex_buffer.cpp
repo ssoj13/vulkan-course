@@ -230,9 +230,9 @@ GpuBuffer createBuffer(const vk::raii::Device& device, const vk::PhysicalDeviceM
 }
 
 // Copies data to the start of a HOST_VISIBLE | HOST_COHERENT allocation: map,
-// memcpy, unmap. Coherent memory needs no flush, and the writes are visible to
-// the GPU for every command submitted after this (vkQueueSubmit makes earlier
-// host writes available to the device).
+// memcpy, unmap. Coherent memory needs no flush: host writes to it are
+// available in the host domain at once, and vkQueueSubmit makes them visible to
+// all device accesses of every command submitted after this.
 template <typename T, size_t N> void writeMapped(const vk::raii::DeviceMemory& memory, std::span<T, N> data) {
     void* ptr = memory.mapMemory(0, vk::WholeSize);
     std::memcpy(ptr, data.data(), data.size_bytes());

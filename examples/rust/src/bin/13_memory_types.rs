@@ -398,10 +398,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // - results the CPU reads back: HOST_VISIBLE, preferably HOST_CACHED
     //   (uncached reads from the CPU are very slow);
     // - small data the CPU rewrites every frame: HOST_VISIBLE + HOST_COHERENT,
-    //   preferably also DEVICE_LOCAL (the CPU-visible window of VRAM);
-    // - transient attachments: DEVICE_LOCAL, preferably LAZILY_ALLOCATED
-    //   (tile-based mobile GPUs; desktop GPUs have no such type, so the
-    //   required flags alone decide).
+    //   preferably also DEVICE_LOCAL (the CPU-visible window of VRAM).
+    // LAZILY_ALLOCATED is not in this table: the spec never lets a buffer use a
+    // lazily allocated type (memoryTypeBits of a buffer never includes one).
+    // Such memory exists only for images created with TRANSIENT_ATTACHMENT
+    // usage, which module 10 covers.
     let bits = requirements
         .first()
         .ok_or("no requirements")?
@@ -426,11 +427,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "per-frame data",
             vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
             vk::MemoryPropertyFlags::DEVICE_LOCAL,
-        ),
-        (
-            "transient attachment",
-            vk::MemoryPropertyFlags::DEVICE_LOCAL,
-            vk::MemoryPropertyFlags::LAZILY_ALLOCATED,
         ),
     ];
     println!(
@@ -459,6 +455,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             memory_names(preferred)
         );
     }
+    println!(
+        "  (LAZILY_ALLOCATED: never for buffers, only for images with TRANSIENT_ATTACHMENT usage, module 10)"
+    );
     // #endregion
 
     // #region allocate-and-bind
@@ -495,7 +494,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // HOST_COHERENT, so plain writes are enough: no vkFlushMappedMemoryRanges
     // (a non-coherent type needs a flush of ranges aligned to
     // nonCoherentAtomSize after writing). Reading back from this type works
-    // but is slow: it is uncached, write-combined memory.
+    // but is slow: it is uncached (typically write-combined) memory.
     // SAFETY: the memory is HOST_VISIBLE and not mapped yet; the range is inside it.
     let ptr = unsafe {
         device.map_memory(

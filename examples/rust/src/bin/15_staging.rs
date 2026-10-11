@@ -90,6 +90,7 @@ struct Vertex {
     /// Linear RGB.
     color: [f32; 3],
 }
+const _: () = assert!(size_of::<Vertex>() == 20);
 // #endregion
 
 // #region mesh
@@ -221,9 +222,9 @@ fn create_buffer(
 }
 
 /// Copies byte blocks into a HOST_VISIBLE | HOST_COHERENT allocation, each at
-/// its offset: map, memcpy, unmap. Coherent memory needs no flush, and the
-/// writes are visible to the GPU for every command submitted after this
-/// (vkQueueSubmit makes earlier host writes available to the device).
+/// its offset: map, memcpy, unmap. Coherent memory needs no flush: host writes
+/// to it are available in the host domain at once, and vkQueueSubmit makes
+/// them visible to all device accesses of every command submitted after this.
 fn write_mapped(
     device: &ash::Device,
     memory: vk::DeviceMemory,
@@ -332,8 +333,8 @@ fn mb_per_s(bytes: usize, time: Duration) -> f64 {
 /// `--bar`: no staging, no copy. The buffers live in a DEVICE_LOCAL memory
 /// type the CPU can also map, and the CPU writes VRAM directly through the
 /// PCIe BAR window. With Resizable BAR off that window (and the heap behind
-/// this type) is only 256 MiB of address space; the writes are uncached and
-/// write-combined, so they are fast to write and very slow to read back.
+/// this type) is only 256 MiB of address space; the writes are uncached
+/// (typically write-combined), so they are fast to write and very slow to read back.
 fn upload_bar(
     device: &ash::Device,
     mem: &vk::PhysicalDeviceMemoryProperties,
@@ -347,6 +348,55 @@ fn upload_bar(
     let flags = vk::MemoryPropertyFlags::DEVICE_LOCAL
         | vk::MemoryPropertyFlags::HOST_VISIBLE
         | vk::MemoryPropertyFlags::HOST_COHERENT;
+    // Both buffers come from the same small heap, and create_buffer checks one
+    // allocation at a time: check their sum before allocating anything.
+    // vkGetDeviceBufferMemoryRequirements (Vulkan 1.3) gives a buffer's
+    // requirements without creating it. The heap size is only an upper bound,
+    // not the budget: the driver and other programs use the heap too, and
+    // VK_EXT_memory_budget reports how much of it this process may use.
+    let need = |len: usize, usage| -> Result<(u32, vk::DeviceSize), Box<dyn Error>> {
+        let info = vk::BufferCreateInfo::default()
+            .size(vk::DeviceSize::try_from(len)?)
+            .usage(usage)
+            .sharing_mode(vk::SharingMode::EXCLUSIVE);
+        let mut req = vk::MemoryRequirements2::default();
+        // SAFETY: plain query on a live device; `info` outlives the call.
+        unsafe {
+            device.get_device_buffer_memory_requirements(
+                &vk::DeviceBufferMemoryRequirements::default().create_info(&info),
+                &mut req,
+            );
+        }
+        let req = req.memory_requirements;
+        let memory_type = find_type(mem, req.memory_type_bits, flags).ok_or_else(|| {
+            format!(
+                "no memory type with {} for this buffer",
+                memory_names(flags)
+            )
+        })?;
+        let heap = mem
+            .memory_types_as_slice()
+            .get(usize::try_from(memory_type)?)
+            .ok_or("memory type out of range")?
+            .heap_index;
+        Ok((heap, req.size))
+    };
+    let (vertex_heap, vertex_need) = need(vertex_data.len(), vk::BufferUsageFlags::VERTEX_BUFFER)?;
+    let (index_heap, index_need) = need(index_data.len(), vk::BufferUsageFlags::INDEX_BUFFER)?;
+    if vertex_heap == index_heap {
+        let heap_size = mem
+            .memory_heaps_as_slice()
+            .get(usize::try_from(vertex_heap)?)
+            .ok_or("memory heap out of range")?
+            .size;
+        let total = vertex_need + index_need;
+        if total > heap_size {
+            return Err(format!(
+                "vertex + index buffers need {total} bytes, but heap {vertex_heap} has only {heap_size} bytes (an upper bound, not the budget: see VK_EXT_memory_budget)"
+            )
+            .into());
+        }
+    }
     let vertex_buffer = create_buffer(
         device,
         mem,
@@ -385,6 +435,49 @@ fn upload_bar(
     Ok((vertex_buffer, index_buffer))
 }
 
+/// The objects `upload_staged` creates. Dropping it waits for the device to go
+/// idle, then destroys them: if a `?` returns early after a submit, the GPU may
+/// still use them (step 10's rule; the C++ version gets the same from its
+/// IdleGuard and RAII). On success the fences were already waited, so the wait
+/// returns at once, and `targets` is emptied first: those buffers are the
+/// result.
+struct UploadScratch<'a> {
+    device: &'a ash::Device,
+    /// The staging buffer and its memory.
+    staging: Option<(vk::Buffer, vk::DeviceMemory)>,
+    /// The vertex and index buffers, destroyed only on an error.
+    targets: Vec<(vk::Buffer, vk::DeviceMemory)>,
+    /// Command pools; destroying one frees its command buffers.
+    pools: Vec<vk::CommandPool>,
+    fences: Vec<vk::Fence>,
+    semaphores: Vec<vk::Semaphore>,
+}
+
+impl Drop for UploadScratch<'_> {
+    fn drop(&mut self) {
+        // SAFETY: after the idle wait no submitted work uses these objects;
+        // each was created on `device` and is destroyed exactly once.
+        unsafe {
+            if let Err(e) = self.device.device_wait_idle() {
+                eprintln!("device_wait_idle failed: {e}");
+            }
+            for &fence in &self.fences {
+                self.device.destroy_fence(fence, None);
+            }
+            for &semaphore in &self.semaphores {
+                self.device.destroy_semaphore(semaphore, None);
+            }
+            for &pool in &self.pools {
+                self.device.destroy_command_pool(pool, None);
+            }
+            for &(buffer, memory) in self.staging.iter().chain(&self.targets) {
+                self.device.destroy_buffer(buffer, None);
+                self.device.free_memory(memory, None);
+            }
+        }
+    }
+}
+
 /// Default and `--transfer-queue`: CPU -> staging buffer -> vkCmdCopyBuffer
 /// -> DEVICE_LOCAL buffers. `graphics` is the family and queue that will draw;
 /// `transfer` the dedicated transfer family and its queue, if used.
@@ -406,6 +499,14 @@ fn upload_staged(
             "Upload path: staging buffer + vkCmdCopyBuffer on the transfer queue (family {tf}), then an ownership transfer {tf} -> {graphics_family} (release, semaphore, acquire)"
         ),
     }
+    let mut scratch = UploadScratch {
+        device,
+        staging: None,
+        targets: Vec::new(),
+        pools: Vec::new(),
+        fences: Vec::new(),
+        semaphores: Vec::new(),
+    };
 
     // #region staging-buffer
     // The staging buffer: memory the CPU can map, used only as a copy source.
@@ -421,6 +522,7 @@ fn upload_staged(
         vk::BufferUsageFlags::TRANSFER_SRC,
         host_flags,
     )?;
+    scratch.staging = Some((staging.buffer, staging.memory));
     let cpu_start = Instant::now();
     write_mapped(
         device,
@@ -447,6 +549,9 @@ fn upload_staged(
         vk::BufferUsageFlags::VERTEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
         local,
     )?;
+    scratch
+        .targets
+        .push((vertex_buffer.buffer, vertex_buffer.memory));
     let index_buffer = create_buffer(
         device,
         mem,
@@ -454,6 +559,9 @@ fn upload_staged(
         vk::BufferUsageFlags::INDEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
         local,
     )?;
+    scratch
+        .targets
+        .push((index_buffer.buffer, index_buffer.memory));
     println!(
         "Vertex buffer: {vertex_size} bytes, VERTEX_BUFFER | TRANSFER_DST, memory type {} ({})",
         vertex_buffer.memory_type,
@@ -501,6 +609,7 @@ fn upload_staged(
         Ok(cmd)
     };
     let copy_pool = new_pool(copy_family)?;
+    scratch.pools.push(copy_pool);
     let cmd = new_cmd(copy_pool)?;
     // SAFETY: `cmd` is recording; the regions lie inside both buffers.
     unsafe {
@@ -522,9 +631,6 @@ fn upload_staged(
     // #endregion
 
     let fence_info = vk::FenceCreateInfo::default();
-    let mut fences = Vec::new();
-    let mut acquire_pool = None;
-    let mut semaphore = None;
     match transfer {
         None => {
             // #region copy-barrier
@@ -532,6 +638,14 @@ fn upload_staged(
             // (COPY stage, TRANSFER_WRITE) before every later read of vertex
             // attributes and indices on this queue, including the draws of
             // command buffers submitted later.
+            // The fence waited below does not replace it: a fence signal makes
+            // the copy's writes AVAILABLE, not VISIBLE; only a barrier like
+            // this (or a semaphore wait, whose second access scope covers all
+            // device accesses) makes them visible to vertex input. Without it
+            // nothing complains: sync validation is off by default, and a host
+            // fence wait closes the batch's hazards for it. The memory model
+            // still requires the barrier: without it the writes are never made
+            // visible to vertex input, and the draws may read stale data.
             let barrier = vk::MemoryBarrier2::default()
                 .src_stage_mask(vk::PipelineStageFlags2::COPY)
                 .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
@@ -544,7 +658,7 @@ fn upload_staged(
                 );
             // SAFETY: plain create call on a live device.
             let fence = unsafe { device.create_fence(&fence_info, None)? };
-            fences.push(fence);
+            scratch.fences.push(fence);
             let cmd_info = [vk::CommandBufferSubmitInfo::default().command_buffer(cmd)];
             let submit = vk::SubmitInfo2::default().command_buffer_infos(&cmd_info);
             // SAFETY: `cmd` is recording; the fence is new and unsignaled.
@@ -564,9 +678,19 @@ fn upload_staged(
             // family at a time. The transfer family RELEASES them to the
             // graphics family: a buffer barrier with src/dst family indices,
             // after the copy's writes (its dst stage and access are ignored).
-            // The semaphore orders release before acquire; without
-            // VK_KHR_maintenance8 ALL_COMMANDS is the only valid stage for that
-            // signal and wait (spec, "Queue Family Ownership Transfer").
+            // The semaphore orders release before acquire; its signal and wait
+            // must use ALL_COMMANDS unless the barriers set
+            // VK_DEPENDENCY_QUEUE_FAMILY_OWNERSHIP_TRANSFER_USE_ALL_STAGES_BIT_KHR
+            // (allowed only with the maintenance8 feature) (spec, "Queue Family
+            // Ownership Transfer").
+            // The semaphore wait alone already makes the copy's writes visible
+            // (its second access scope covers all device accesses), yet the
+            // release/acquire pair is still required: "If memory dependencies
+            // are correctly expressed between uses of such a resource between
+            // two queues in different families, but no ownership transfer is
+            // defined, the contents of that resource are undefined for any
+            // read accesses performed by the second queue family" (spec,
+            // "Resource Sharing Mode").
             let ownership = |buffer: vk::Buffer| {
                 vk::BufferMemoryBarrier2::default()
                     .src_queue_family_index(tf)
@@ -580,15 +704,13 @@ fn upload_staged(
                     .src_stage_mask(vk::PipelineStageFlags2::COPY)
                     .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
             });
-            // SAFETY: plain create calls on a live device.
-            let (sem, fence) = unsafe {
-                (
-                    device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None)?,
-                    device.create_fence(&fence_info, None)?,
-                )
-            };
-            semaphore = Some(sem);
-            fences.push(fence);
+            // SAFETY: plain create call on a live device.
+            let sem =
+                unsafe { device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None)? };
+            scratch.semaphores.push(sem);
+            // SAFETY: as above.
+            let fence = unsafe { device.create_fence(&fence_info, None)? };
+            scratch.fences.push(fence);
             let signal = [vk::SemaphoreSubmitInfo::default()
                 .semaphore(sem)
                 .stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)];
@@ -622,11 +744,11 @@ fn upload_staged(
                     .dst_access_mask(vk::AccessFlags2::INDEX_READ),
             ];
             let pool = new_pool(graphics_family)?;
-            acquire_pool = Some(pool);
+            scratch.pools.push(pool);
             let acquire_cmd = new_cmd(pool)?;
             // SAFETY: plain create call on a live device.
             let fence = unsafe { device.create_fence(&fence_info, None)? };
-            fences.push(fence);
+            scratch.fences.push(fence);
             let wait = [vk::SemaphoreSubmitInfo::default()
                 .semaphore(sem)
                 .stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)];
@@ -653,24 +775,16 @@ fn upload_staged(
     // block here: it keeps a staging ring and checks a fence or a timeline
     // value later (step 12), and the frame that first draws the mesh waits on
     // the upload's semaphore instead.
+    // The fences say the work is complete, so the objects may be destroyed;
+    // they make nothing visible to the draws: that is the job of the barrier
+    // (or the acquire) above.
     // SAFETY: the fences belong to this device and were submitted above.
-    unsafe { device.wait_for_fences(&fences, true, u64::MAX)? };
+    unsafe { device.wait_for_fences(&scratch.fences, true, u64::MAX)? };
     let copy = copy_start.elapsed();
-    // SAFETY: all submitted work has completed (fences); each object is destroyed once.
-    unsafe {
-        for &fence in &fences {
-            device.destroy_fence(fence, None);
-        }
-        if let Some(sem) = semaphore {
-            device.destroy_semaphore(sem, None);
-        }
-        if let Some(pool) = acquire_pool {
-            device.destroy_command_pool(pool, None);
-        }
-        device.destroy_command_pool(copy_pool, None);
-        device.destroy_buffer(staging.buffer, None);
-        device.free_memory(staging.memory, None);
-    }
+    // The vertex and index buffers are the result; `scratch` destroys the rest
+    // (fences, semaphore, pools with their command buffers, staging buffer).
+    scratch.targets.clear();
+    drop(scratch);
     println!("Upload complete (fences waited); staging buffer destroyed");
     let total = vertex_data.len() + index_data.len();
     println!(

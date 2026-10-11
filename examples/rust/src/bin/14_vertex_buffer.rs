@@ -83,6 +83,7 @@ struct Vertex {
     /// Linear RGB.
     color: [f32; 3],
 }
+const _: () = assert!(size_of::<Vertex>() == 20);
 // #endregion
 
 // #region mesh
@@ -195,9 +196,9 @@ fn create_buffer(
 }
 
 /// Copies `data` to the start of a HOST_VISIBLE | HOST_COHERENT allocation:
-/// map, memcpy, unmap. Coherent memory needs no flush, and the writes are
-/// visible to the GPU for every command submitted after this (vkQueueSubmit
-/// makes earlier host writes available to the device).
+/// map, memcpy, unmap. Coherent memory needs no flush: host writes to it are
+/// available in the host domain at once, and vkQueueSubmit makes them visible
+/// to all device accesses of every command submitted after this.
 fn write_mapped<T: Copy>(
     device: &ash::Device,
     memory: vk::DeviceMemory,

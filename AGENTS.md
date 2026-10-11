@@ -266,7 +266,8 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
   `shaders/mesh.slang` with `[[vk::location]]`, FRAMES_IN_FLIGHT = 2, `--seconds`), 15_staging (default: staging type 3
   -> DEVICE_LOCAL type 1 + vkCmdCopyBuffer on the graphics queue + global barrier COPY/TRANSFER_WRITE ->
   VERTEX_ATTRIBUTE_INPUT|INDEX_INPUT; `--transfer-queue`: dedicated family 1, release/acquire buffer barriers + binary
-  semaphore at ALL_COMMANDS (spec: the only valid stage without VK_KHR_maintenance8); `--bar`: DEVICE_LOCAL|HOST_VISIBLE|
+  semaphore at ALL_COMMANDS (spec: required unless the barriers set
+  VK_DEPENDENCY_QUEUE_FAMILY_OWNERSHIP_TRANSFER_USE_ALL_STAGES_BIT_KHR, maintenance8 feature only); `--bar`: DEVICE_LOCAL|HOST_VISIBLE|
   HOST_COHERENT type 5, heap 2; `--mib N` pads the vertex buffer; heap-size check before vkAllocateMemory =
   VUID-vkAllocateMemory-pAllocateInfo-01713, `--bar --mib 300` fails cleanly), 16_allocator (no window; `--count`,
   default 3000; raw vkAllocateMemory per buffer vs. sub-allocation). Real facts: maxMemoryAllocationCount =
@@ -283,6 +284,18 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
   ~3 us and ~2-3 us. Validation does NOT catch a missing post-copy barrier (presumably because a host fence wait sits between upload
   and draws, which sync validation treats as synchronizing; not confirmed) nor a missing acquire barrier: tried 2026-10-11, both silent - the
   barriers follow the spec and the Khronos synchronization examples, not a validation message.
+- Module 8 review fixes (2026-10-11): 13 no longer evaluates LAZILY_ALLOCATED against buffer memoryTypeBits (spec: never
+  for buffers; one stdout line points to images with TRANSIENT_ATTACHMENT, module 10); "uncached (typically
+  write-combined)"; HOST_COHERENT writes = available in the host domain, the submit makes them VISIBLE (14/15
+  write_mapped). 15: comments on fence = available not visible (the barrier/acquire makes the copy visible; validation
+  is silent because sync validation is off by default and a host fence wait closes the batch's hazards), on the
+  ownership transfer being required even though the semaphore wait already gives visibility (spec quote, "Resource
+  Sharing Mode"); `--bar` checks vertex+index together via vkGetDeviceBufferMemoryRequirements before allocating
+  (`--bar --mib 214` = heap size 224395264 exactly now fails with "vertex + index buffers need 224395300 bytes ...";
+  heap size is an upper bound, not the budget - VK_EXT_memory_budget). Rust 15 upload_staged: `UploadScratch` guard
+  (device_wait_idle + destroy on drop = C++ IdleGuard + RAII). 16: `--count` checked against the heap before
+  allocating (`--count 1000000` needs 23295976960 bytes > heap 0 12673089536 -> clean error); Rust raw and allocator
+  paths destroy what was created on an error midway (C++: RAII / release()). Rust `Vertex` has a size assert (20).
 
 ## TODO
 

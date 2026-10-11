@@ -254,9 +254,9 @@ struct Block {
 };
 
 // Copies byte blocks into a HOST_VISIBLE | HOST_COHERENT allocation, each at its
-// offset: map, memcpy, unmap. Coherent memory needs no flush, and the writes are
-// visible to the GPU for every command submitted after this (vkQueueSubmit makes
-// earlier host writes available to the device).
+// offset: map, memcpy, unmap. Coherent memory needs no flush: host writes to it
+// are available in the host domain at once, and vkQueueSubmit makes them visible
+// to all device accesses of every command submitted after this.
 void writeMapped(const vk::raii::DeviceMemory& memory, std::initializer_list<Block> blocks) {
     auto* ptr = static_cast<std::byte*>(memory.mapMemory(0, vk::WholeSize));
     for (const Block& b : blocks) {
@@ -343,14 +343,41 @@ double mbPerS(size_t bytes, Seconds time) { return static_cast<double>(bytes) / 
 // --bar: no staging, no copy. The buffers live in a DEVICE_LOCAL memory type
 // the CPU can also map, and the CPU writes VRAM directly through the PCIe BAR
 // window. With Resizable BAR off that window (and the heap behind this type) is
-// only 256 MiB of address space; the writes are uncached and write-combined, so
-// they are fast to write and very slow to read back.
+// only 256 MiB of address space; the writes are uncached (typically
+// write-combined), so they are fast to write and very slow to read back.
 std::pair<GpuBuffer, GpuBuffer> uploadBar(const vk::raii::Device& device, const vk::PhysicalDeviceMemoryProperties& mem,
                                           std::span<const std::byte> vertexData, std::span<const std::byte> indexData) {
     // #region bar-write
     std::println("Upload path: direct CPU writes into DEVICE_LOCAL | HOST_VISIBLE memory (no staging buffer, no copy)");
     using Mem                           = vk::MemoryPropertyFlagBits;
     const vk::MemoryPropertyFlags flags = Mem::eDeviceLocal | Mem::eHostVisible | Mem::eHostCoherent;
+    // Both buffers come from the same small heap, and createBuffer checks one
+    // allocation at a time: check their sum before allocating anything.
+    // vkGetDeviceBufferMemoryRequirements (Vulkan 1.3) gives a buffer's
+    // requirements without creating it. The heap size is only an upper bound,
+    // not the budget: the driver and other programs use the heap too, and
+    // VK_EXT_memory_budget reports how much of it this process may use.
+    const auto need = [&](size_t size, vk::BufferUsageFlags usage) {
+        const vk::BufferCreateInfo info{.size = size, .usage = usage, .sharingMode = vk::SharingMode::eExclusive};
+        const vk::MemoryRequirements req = device.getBufferMemoryRequirements(vk::DeviceBufferMemoryRequirements{.pCreateInfo = &info})
+                                               .memoryRequirements;
+        const auto memoryType = findType(mem, req.memoryTypeBits, flags);
+        if (!memoryType) {
+            throw std::runtime_error("no memory type with " + memoryNames(flags) + " for this buffer");
+        }
+        return std::pair{mem.memoryTypes[*memoryType].heapIndex, req.size};
+    };
+    const auto [vertexHeap, vertexNeed] = need(vertexData.size(), vk::BufferUsageFlagBits::eVertexBuffer);
+    const auto [indexHeap, indexNeed]   = need(indexData.size(), vk::BufferUsageFlagBits::eIndexBuffer);
+    if (vertexHeap == indexHeap) {
+        const vk::DeviceSize heapSize = mem.memoryHeaps[vertexHeap].size;
+        const vk::DeviceSize total    = vertexNeed + indexNeed;
+        if (total > heapSize) {
+            throw std::runtime_error(std::format("vertex + index buffers need {} bytes, but heap {} has only {} bytes (an upper bound, "
+                                                 "not the budget: see VK_EXT_memory_budget)",
+                                                 total, vertexHeap, heapSize));
+        }
+    }
     GpuBuffer vertexBuffer = createBuffer(device, mem, vertexData.size(), vk::BufferUsageFlagBits::eVertexBuffer, flags);
     GpuBuffer indexBuffer  = createBuffer(device, mem, indexData.size(), vk::BufferUsageFlagBits::eIndexBuffer, flags);
     const uint32_t heap    = mem.memoryTypes[vertexBuffer.memoryType].heapIndex;
@@ -458,6 +485,14 @@ std::pair<GpuBuffer, GpuBuffer> uploadStaged(const vk::raii::Device& device, con
         // stage, TRANSFER_WRITE) before every later read of vertex attributes and
         // indices on this queue, including the draws of command buffers
         // submitted later.
+        // The fence waited below does not replace it: a fence signal makes the
+        // copy's writes AVAILABLE, not VISIBLE; only a barrier like this (or a
+        // semaphore wait, whose second access scope covers all device accesses)
+        // makes them visible to vertex input. Without it nothing complains: sync
+        // validation is off by default, and a host fence wait closes the batch's
+        // hazards for it. The memory model still requires the barrier: without
+        // it the writes are never made visible to vertex input, and the draws
+        // may read stale data.
         const vk::MemoryBarrier2 barrier{
             .srcStageMask  = vk::PipelineStageFlagBits2::eCopy,
             .srcAccessMask = vk::AccessFlagBits2::eTransferWrite,
@@ -476,9 +511,17 @@ std::pair<GpuBuffer, GpuBuffer> uploadStaged(const vk::raii::Device& device, con
         // at a time. The transfer family RELEASES them to the graphics family: a
         // buffer barrier with src/dst family indices, after the copy's writes
         // (its dst stage and access are ignored). The semaphore orders release
-        // before acquire; without VK_KHR_maintenance8 ALL_COMMANDS is the only
-        // valid stage for that signal and wait (spec, "Queue Family Ownership
-        // Transfer").
+        // before acquire; its signal and wait must use ALL_COMMANDS unless the
+        // barriers set VK_DEPENDENCY_QUEUE_FAMILY_OWNERSHIP_TRANSFER_USE_ALL_STAGES_BIT_KHR
+        // (allowed only with the maintenance8 feature) (spec, "Queue Family
+        // Ownership Transfer").
+        // The semaphore wait alone already makes the copy's writes visible (its
+        // second access scope covers all device accesses), yet the
+        // release/acquire pair is still required: "If memory dependencies are
+        // correctly expressed between uses of such a resource between two queues
+        // in different families, but no ownership transfer is defined, the
+        // contents of that resource are undefined for any read accesses
+        // performed by the second queue family" (spec, "Resource Sharing Mode").
         const auto ownership = [&](const vk::raii::Buffer& buffer) {
             return vk::BufferMemoryBarrier2{
                 .srcQueueFamilyIndex = transfer->family,
@@ -547,6 +590,9 @@ std::pair<GpuBuffer, GpuBuffer> uploadStaged(const vk::raii::Device& device, con
     // here: it keeps a staging ring and checks a fence or a timeline value later
     // (step 12), and the frame that first draws the mesh waits on the upload's
     // semaphore instead.
+    // The fences say the work is complete, so the objects may be destroyed;
+    // they make nothing visible to the draws: that is the job of the barrier
+    // (or the acquire) above.
     std::vector<vk::Fence> handles;
     for (const vk::raii::Fence& fence : fences) {
         handles.push_back(*fence);
