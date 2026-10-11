@@ -1,5 +1,5 @@
 /**
- * Interface texts of this course's own widgets (ObjectGraph and its simulator, the source line under Step/Snippet code),
+ * Interface texts of this course's own widgets (ObjectGraph and its trainer scenario, the source line under Step/Snippet code),
  * per language. The engine's texts live in course-kit (i18n.mjs); this table only adds what the Vulkan widgets show. Placeholders `{name}` are filled with
  * the engine's `fmt`. tests/i18n.test.ts checks that every language has the same keys and placeholders.
  */
@@ -23,14 +23,13 @@ const EN = {
 	free: 'Free',
 	destroyQ: 'Destroy?',
 	progress: 'Created {n}/{total} · validation errors: {errors}',
-	startOver: 'Start over',
+	goalAll: 'Every object of this exercise exists',
 	startHint: 'Pick an object and press Create in its window. Start at the root: the instance.',
-	// Build exercise: state of the selected object, the result of the last action
+	// Build exercise: state of the selected object (engine trainer statuses: locked / ready / done / error)
 	stateAlive: 'Exists.',
 	stateReady: 'Can be created now.',
 	stateGhost: 'Cannot be created yet:',
 	stateDangling: 'Dangling: an object it was made from is gone. Any use is invalid; destroy it.',
-	lastResult: 'Last result',
 	// How a handle is obtained (node caption, badge)
 	howCreate: 'created',
 	howAllocate: 'allocated',
@@ -81,13 +80,12 @@ const RU: CourseText = {
 	free: 'Освободить',
 	destroyQ: 'Уничтожить?',
 	progress: 'Создано {n}/{total} · ошибок валидации: {errors}',
-	startOver: 'Начать заново',
+	goalAll: 'Все объекты упражнения существуют',
 	startHint: 'Выберите объект и нажмите «Создать» в его окне. Начинайте с корня — с instance.',
 	stateAlive: 'Существует.',
 	stateReady: 'Можно создать прямо сейчас.',
 	stateGhost: 'Пока нельзя создать:',
 	stateDangling: 'Висячий: объект, из которого он сделан, уничтожен. Любое использование — ошибка; уничтожьте его.',
-	lastResult: 'Последний результат',
 	howCreate: 'создаётся',
 	howAllocate: 'выделяется',
 	howEnumerate: 'перечисляется',

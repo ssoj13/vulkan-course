@@ -5,15 +5,16 @@
  *   <ObjectGraph scope={['instance', 'debug-messenger', ...]} mode="build" />   exercise on a subset
  * objects.json and its translations are validated here (bad data fails the build); texts follow the page's language.
  * Each object hangs off its FIRST parent in objects.json (the one it is made from); further parents (a descriptor set
- * also needs a layout) are dashed wires or "+ from X" notes. Colors = the stage of the object (OBJ_GROUPS order).
+ * also needs a layout) are dashed wires or "+ from X" notes. Colors = the stage of the object (OBJ_GROUPS order),
+ * from the engine palette (STAGE_COLOR).
  */
 import ObjectGraphView from './ObjectGraphView.tsx';
-import { NOTE_OVERLAYS, OBJECTS, OBJ_GROUPS, labelOf, noteOf, obj, objectErrors, overlayErrors, scopedParents } from '../lib/objects';
+import { NOTE_OVERLAYS, OBJECTS, OBJ_GROUPS, labelOf, noteOf, obj, objectErrors, overlayErrors, scopedParents, type Stage } from '../lib/objects';
 import { HOW_KEY, STAGE_KEY, courseText } from '../i18n';
 import { graphIn } from 'course-kit/lib/terms.ts';
 import { tfmt } from '../lib/text';
 import { DEFAULT_LANG, LANGUAGES, courseIn, langOf } from 'course-kit/lib/course.ts';
-import type { TreeGroup, TreeItem } from 'course-kit/components/graph/TreeView.tsx';
+import { groupColor, type TreeGroup, type TreeItem } from 'course-kit/components/graph/TreeView.tsx';
 
 interface Props {
 	mode?: 'map' | 'build';
@@ -47,7 +48,12 @@ const items: TreeItem[] = scope.map((id) => {
 		sub: t[HOW_KEY[o.how]],
 	};
 });
-const groups: TreeGroup[] = OBJ_GROUPS.map((s) => ({ id: s, label: t[STAGE_KEY[s]], color: `var(--vk-g-${s})` }));
+/**
+ * Stage -> entry of the engine's group palette (theme.css `--ck-group-N`, 0-based here): nine distinct hues; entry 5
+ * (the neutral gray) is skipped so no stage looks disabled. A site theme recolors the stages through the palette.
+ */
+const STAGE_COLOR: Record<Stage, number> = { instance: 0, devices: 1, memory: 2, pipeline: 3, sync: 4, presentation: 6, images: 7, descriptors: 8, commands: 9 };
+const groups: TreeGroup[] = OBJ_GROUPS.map((s) => ({ id: s, label: t[STAGE_KEY[s]], color: groupColor(STAGE_COLOR[s]) }));
 const termHref = Object.fromEntries(scope.flatMap((id) => (obj(id).term ? [[obj(id).term!, v.resolveLink(`term:${obj(id).term}`)!]] : [])));
 ---
 

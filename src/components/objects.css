@@ -1,138 +1,16 @@
 /*
- * ObjectGraph on the engine's concept tree (course-kit tree.css): stage colors (`--vk-g-<stage>`, light and dark),
- * build-mode card states (ghost / ready / alive / dangling) in every view, the details window content and the
- * call + validation console. Colors are global custom properties: the details window lives outside the widget.
+ * ObjectGraph details content (the facts line under an object's note). Stage colors are the engine palette
+ * (`--ck-group-N`, ObjectGraph.astro STAGE_COLOR); card statuses, the exercise controls and the console are the
+ * engine trainer's (course-kit trainer.css). Only `--ck-*` tokens: a site theme recolors this too. The details window
+ * lives outside the widget (a portal), so these classes are not scoped under it.
  */
-:root {
-	--vk-g-instance: #8a93ff;
-	--vk-g-devices: #35c39b;
-	--vk-g-presentation: #f06aa6;
-	--vk-g-memory: #e2a94a;
-	--vk-g-images: #5cb8f0;
-	--vk-g-pipeline: #f0716a;
-	--vk-g-descriptors: #bccb45;
-	--vk-g-commands: #5fd3d8;
-	--vk-g-sync: #c690f0;
-}
-:root[data-theme='light'] {
-	--vk-g-instance: #4f5bd5;
-	--vk-g-devices: #0f8a6a;
-	--vk-g-presentation: #c2417a;
-	--vk-g-memory: #b7791f;
-	--vk-g-images: #1e7fc0;
-	--vk-g-pipeline: #c2413b;
-	--vk-g-descriptors: #6f7f0e;
-	--vk-g-commands: #23878c;
-	--vk-g-sync: #8a4fc0;
-}
-
-/* Build mode: cannot be created yet, can be created now, alive, dangling (its parent was destroyed). */
-.vk-objects .ck-tc.is-ghost {
-	/* Dimmed by color, not opacity: a see-through card would show the spine line behind it. */
-	color: var(--sl-color-gray-3);
-	background: var(--sl-color-gray-6);
-	border-style: dashed;
-	border-left-style: solid;
-}
-.vk-objects .ck-tc.is-ready {
-	border-style: dashed;
-	border-color: var(--ck-c);
-	box-shadow: 0 0 0 3px color-mix(in srgb, var(--ck-c) 30%, transparent);
-	animation: vk-ready 1.6s ease-in-out infinite;
-}
-.vk-objects .ck-tc.is-alive {
-	border-color: var(--ck-c);
-	background: color-mix(in srgb, var(--ck-c) 26%, var(--sl-color-black));
-}
-.vk-objects .ck-tc.is-dangling {
-	--ck-c: var(--sl-color-red);
-	border-style: dashed;
-	border-color: var(--sl-color-red);
-}
-@keyframes vk-ready {
-	50% {
-		box-shadow: 0 0 0 6px color-mix(in srgb, var(--ck-c) 15%, transparent);
-	}
-}
-@media (prefers-reduced-motion: reduce) {
-	.vk-objects .ck-tc.is-ready {
-		animation: none;
-	}
-}
-
-/* Details window content */
 .vk-facts {
-	color: var(--sl-color-gray-2);
+	color: var(--ck-ink-2);
 	font-size: 14px;
 }
 .vk-badge {
 	font-size: 13.5px;
 	padding: 0.05rem 0.5rem;
-	border: 1px solid var(--sl-color-gray-5);
+	border: 1px solid var(--ck-line);
 	border-radius: 1rem;
-}
-.vk-state {
-	font-weight: 600;
-}
-.vk-state.is-alive {
-	color: var(--sl-color-green);
-}
-.vk-state.is-dangling {
-	color: var(--sl-color-red);
-}
-.vk-last {
-	margin: 0.8rem 0 0.2rem;
-	font-size: 13.5px;
-	color: var(--sl-color-gray-3);
-}
-.vk-actions {
-	margin: 0.5rem 0;
-}
-.vk-check {
-	display: flex;
-	align-items: center;
-	gap: 0.4rem;
-	font-size: 14px;
-}
-.vk-check input {
-	accent-color: var(--sl-color-accent);
-}
-
-/* Console under the map */
-.vk-console {
-	border-top: 1px solid var(--sl-color-gray-5);
-	padding: 0.55rem 0.9rem 0.8rem;
-}
-.vk-console-head {
-	justify-content: space-between;
-	font-size: 14px;
-	color: var(--sl-color-gray-2);
-}
-.vk-log {
-	list-style: none;
-	margin: 0.5rem 0 0;
-	padding: 0.55rem 0.75rem;
-	max-height: 14rem;
-	overflow: auto;
-	background: var(--sl-color-black);
-	border: 1px solid var(--sl-color-gray-5);
-	border-radius: 0.5rem;
-	font-family: var(--__sl-font-mono);
-	font-size: 13.5px;
-	overflow-wrap: anywhere;
-}
-.vk-log li {
-	margin: 0.15rem 0;
-}
-.vk-log .is-call {
-	color: var(--sl-color-green);
-}
-.vk-log .is-error {
-	color: var(--sl-color-red);
-}
-.vk-log .is-warn {
-	color: var(--sl-color-orange);
-}
-.vk-log .is-info {
-	color: var(--sl-color-gray-2);
 }

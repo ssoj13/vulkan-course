@@ -109,6 +109,29 @@ Module 12 in progress.
 - MemoryHeaps: heaps/types of real GPUs, allocation, staging, ReBAR.
 - DescriptorWiring: shader set/binding ↔ resources.
 
+## Trainers (engine v0.6.0): how to add one
+
+"Build it yourself" exercises (user, 2026-10-11: "это же как тренажёр, ровно то как надо всё делать") are an ENGINE
+feature: course-kit `lib/trainer.ts` (pure core) + `components/trainer/Trainer.tsx` (UI on TreeView, all four views,
+undo, start over, goals, console, run stored per page). Read course-kit AGENTS.md "Trainers" first. A new trainer here
+(frame assembly with fences/semaphores, barriers, image layouts, descriptor wiring, pipeline creation) is a scenario,
+never a new widget. The ObjectGraph build mode is the reference:
+1. Model (pure, Vulkan rules): `src/lib/<name>.ts` with its state type and functions that return calls/refusals as
+   structured lines (`src/lib/objects.ts`: `blockers`, `destroyBlockers`, `create`, `destroy`). Facts only from the spec
+   registry or real runs. VUID texts ONLY through `vuid(id)` (`src/lib/vuids.ts`); write the id, run `bun run sync:vuids`.
+2. Scenario (pure): `src/lib/<name>-trainer.ts` exporting `(ids, lang) => Scenario<State>` (`src/lib/object-trainer.ts`):
+   verbs with STABLE ids (stored in readers' browsers), `check` = model refusals mapped to entries (`entryOf`: validation
+   reports verbatim English with `ref` = VUID, simulator remarks worded with `tfmt` from `src/i18n.ts`), `apply` = model
+   transition, `status` -> locked/ready/done/error, `goals` (`allDone(text)` or custom predicates).
+3. Texts: course strings in `src/i18n.ts` (EN + RU, `tests/i18n.test.ts` parity); generic buttons/labels are the engine's.
+4. View: a React island (`client:only="react"`) that builds `TreeItem`s and `TreeGroup`s (colors `groupColor(i)`, never
+   literal colors: site themes recolor through `--ck-*` tokens) and renders `<Trainer ... />` with `body` (details),
+   `statusText`/`progressText`/`startHint` if the course words them; an .astro wrapper validates data at build time and
+   gives the text fallback (`src/components/ObjectGraph.astro` + `ObjectGraphView.tsx`).
+5. Tests: model facts (tests/objects.test.ts style) + the scenario through the engine core (`act`, `replay`, `undo`,
+   `why`, `complete`, `encode`/`decode`; tests/object-trainer.test.ts style), then `bun run lint`, `bun run check`,
+   `bun run build` and a browser pass (refusal shows the VUID, undo, reload restores the run).
+
 ## Labs (12, 2026-10-10)
 
 Interactive widgets with a full page each (`/labs/<slug>`, `/ru/labs/<slug>`; catalog and sidebar from the engine).
@@ -133,7 +156,7 @@ Files per lab `<slug>`: model `src/lib/labs/<slug>.ts` (pure, no DOM), view `src
 | messenger-filter | MessengerFilter | instance/validation |
 | device-picker | DevicePicker | devices/physical-devices |
 | queue-planner | QueuePlanner | devices/queue-families |
-| object-builder | ObjectGraph (`src/components/ObjectGraph*`, model `src/lib/objects.ts`) | devices/logical-device |
+| object-builder | ObjectGraph (`src/components/ObjectGraph*`, model `src/lib/objects.ts`, scenario `src/lib/object-trainer.ts`) | devices/logical-device |
 | queue-sync | QueueSync | sync/fences-and-semaphores (EN + RU) |
 | graphics-pipeline | GraphicsPipeline | pipeline/graphics-pipeline (EN + RU) |
 | buffer-memory | BufferMemory | memory/memory-types (EN + RU) |
@@ -169,8 +192,8 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
 
 ## State (2026-10-10)
 
-- Engine: `github:ssoj13/course-kit#v0.5.0` (public, released 2026-10-11; v0.4.1 declarations and v0.4.2 labs catalog
-  are in it). Bump the tag in package.json for engine changes, then `bun install`. node_modules/course-kit files are
+- Engine: `github:ssoj13/course-kit#v0.6.0` (public, released 2026-10-11: color tokens `--ck-*` + trainers; v0.5.0 concept
+  trees, v0.4.1 declarations and v0.4.2 labs catalog are in it). Bump the tag in package.json for engine changes, then `bun install`. node_modules/course-kit files are
   hard links into bun's cache: for local co-development delete a file before copying a new one over it.
 - Concept maps (engine v0.5.0, user-approved "D+E" + roadmap.sh design): MindMap and ObjectGraph are trees on the
   engine's TreeView with four views chosen by the reader and remembered site-wide (Spine = default, Tree + collapse,
@@ -191,10 +214,14 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
   Tree: each object hangs off its FIRST parent in objects.json; the others (descriptor set: + layout; pipeline: +
   layout, + shader module (only while creating); swapchain: + surface; image view: + image) are dashed wires or "+ from"
   notes (`scopedParents`: isA substitution for parents outside the scope). Groups/colors = stage in OBJ_GROUPS order
-  (instance, devices, presentation, memory, images, pipeline, descriptors, commands, sync; `--vk-g-<stage>` on :root,
-  light + dark); names = `stage*` texts in src/i18n.ts. Build mode: card states ghost/ready/alive/dangling in every
-  view; the details window holds note, call, parents, glossary link, state, the blocking VUID messages (ghost),
-  Create/Destroy and the last result; the console stays under the map. Map mode opens the device's children.
+  (instance, devices, presentation, memory, images, pipeline, descriptors, commands, sync), colors = engine palette
+  entries (`STAGE_COLOR` in ObjectGraph.astro -> `groupColor(i)` = `--ck-group-N`; no course color variables any more);
+  names = `stage*` texts in src/i18n.ts. Build mode (engine v0.6.0) = the engine Trainer on `src/lib/object-trainer.ts`
+  (`objectScenario(ids, lang)`): statuses locked/ready/done/error (= old ghost/ready/alive/dangling) in every view; the
+  window holds note, call, parents, glossary link (`body`), state (`state*` texts), the blocking VUID messages, the
+  primary verb (Create/Allocate/Enumerate/Get, + the VK_EXT_debug_utils checkbox on the instance) and Destroy, the last
+  result; under the map: progress (`progress` text), goal (`goalAll`), Undo, Start over, console. The reader's run is
+  stored per page and scope (localStorage) and replayed on load. Map mode opens the device's children.
 - GPU snapshot for the device/queue/memory labs: `src/data/gpu.json` (RTX 3080 Ti, driver 616.64) from `bun run sync:gpu`
   (`scripts/sync-gpu.ts`: vulkaninfo `--json=0` for device/features/limits/queues + `--text` for memory heaps/types,
   which the profile JSON lacks); `tests/gpu.test.ts` pins it to the facts the lessons quote. Rerun after a driver update.

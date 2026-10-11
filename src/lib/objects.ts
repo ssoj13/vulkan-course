@@ -218,24 +218,29 @@ function liveDescendants(state: SimState, id: string): string[] {
 	return out;
 }
 
-/** Destroys / frees object `id` under the spec's rules. */
-export function destroy(state: SimState, id: string): Step {
+/** Why `id` cannot be destroyed now (absent, not destroyed by the app, live children it may not lose); [] = it can. */
+export function destroyBlockers(state: SimState, id: string): LogLine[] {
 	const o = obj(id);
-	if (!state.alive.includes(id)) return { state, log: [{ kind: 'info', msg: 'doesNotExist', vars: { obj: labelOf(o) } }] };
+	if (!state.alive.includes(id)) return [{ kind: 'info', msg: 'doesNotExist', vars: { obj: labelOf(o) } }];
 	if (!o.destroy) {
 		const owner = labelOf(obj(o.parents[0]!.id));
 		const msg: SimMsg = o.how === 'allocate' ? 'backToPool' : 'notDestroyed';
-		return { state, log: [{ kind: 'info', msg, vars: { obj: labelOf(o), owner, call: o.call } }] };
+		return [{ kind: 'info', msg, vars: { obj: labelOf(o), owner, call: o.call } }];
 	}
-	const deps = liveDescendants(state, id);
 	// Only direct children made by the application count for "block": enumerated/retrieved handles go away with the parent.
-	const owned = deps.filter((d) => obj(d).destroy);
+	const owned = liveDescendants(state, id).filter((d) => obj(d).destroy);
 	if (o.onDestroy === 'block' && owned.length) {
-		return {
-			state,
-			log: [vuError(o.destroyVuid!, o.destroy), { kind: 'info', msg: 'stillAlive', vars: { objs: owned.map((d) => labelOf(obj(d))).join(', ') } }],
-		};
+		return [vuError(o.destroyVuid!, o.destroy), { kind: 'info', msg: 'stillAlive', vars: { objs: owned.map((d) => labelOf(obj(d))).join(', ') } }];
 	}
+	return [];
+}
+
+/** Destroys / frees object `id` under the spec's rules. */
+export function destroy(state: SimState, id: string): Step {
+	const o = obj(id);
+	const refused = destroyBlockers(state, id);
+	if (refused.length) return { state, log: refused };
+	const deps = liveDescendants(state, id);
 	const log: LogLine[] = [{ kind: 'call', text: `${o.destroy}(${labelOf(o)})` }];
 	let alive = state.alive.filter((a) => a !== id);
 	let dangling = state.dangling.filter((d) => d !== id);
