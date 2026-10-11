@@ -227,8 +227,8 @@ Graphics pipeline created (vertexUniform reads set 0, binding 0)
 Uniform buffers: 2 x 80 bytes, UNIFORM_BUFFER, memory type 3 (HOST_VISIBLE | HOST_COHERENT), persistently mapped
 ```
 
-Both paths run clean under validation with synchronization validation on (only the known `VK_LAYER_bandicam_helper`
-warning).
+Both paths run clean under validation with synchronization validation and its shader-access heuristic on
+([both variables](lesson:barriers-and-layouts#what-it-sees-and-what-it-does-not)); the only message is the known `VK_LAYER_bandicam_helper` warning.
 
 ## The map of this lesson
 

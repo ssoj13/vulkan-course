@@ -171,8 +171,9 @@ Window closed
 The first five frames print what they wait for and what they signal. The `[timing]` lines are the interesting ones:
 frame 3 waits for 1 but reads 2. "≥ 1" was satisfied, and by the time the CPU looked, the GPU had also finished frame
 2. A fence per slot could not have told us that; a counter tells everything at once. Those lines depend on the moment,
-the rest is identical in C++. With synchronization validation on (`VK_KHRONOS_VALIDATION_VALIDATE_SYNC=true`), as in
-this run, the only message is the bandicam layer warning. The once-per-second `[timing]` lines with GPU timestamps
+the rest is identical in C++. With synchronization validation on, as in
+this run (`VK_KHRONOS_VALIDATION_VALIDATE_SYNC=true` and `VK_KHRONOS_VALIDATION_SYNCVAL_SHADER_ACCESSES_HEURISTIC=true`,
+[why two variables](lesson:barriers-and-layouts#what-it-sees-and-what-it-does-not)), the only message is the bandicam layer warning. The once-per-second `[timing]` lines with GPU timestamps
 belong to the [barriers lesson](lesson:barriers-and-layouts#does-the-rendering-really-run-before-the-acquire).
 
 With one frame in flight (`--frames 1`) every frame waits for the one just before it, which is step 09's rhythm

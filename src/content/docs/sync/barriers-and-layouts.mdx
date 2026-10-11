@@ -266,8 +266,9 @@ buffer.
 ## Proof: take one stage away
 
 A barrier that is too weak usually *works* on your machine: the timing happens to be right. The Khronos validation
-layer has a mode that tracks every access and every barrier and reports hazards: **synchronization validation**,
-switched on here with the environment variable `VK_KHRONOS_VALIDATION_VALIDATE_SYNC=true`. With it, steps 10, 11 and
+layer has a mode that follows accesses and barriers across commands and submissions and reports hazards:
+**synchronization validation**, switched on here with the environment variable `VK_KHRONOS_VALIDATION_VALIDATE_SYNC=true`
+(which accesses it sees, and which need a second setting, is [below](#what-it-sees-and-what-it-does-not)). With it, steps 10, 11 and
 12 run without a single message apart from the bandicam layer's warning: both languages, step 10 with the defaults,
 step 11 with `--demo-resize` with and without present fences, step 12 with the barriers above.
 
@@ -294,6 +295,31 @@ Everything this lesson said is in that message:
   needed.
 Core validation alone does not report this: every call is valid on its own, and only synchronization validation
 tracks which access happened before which.
+
+### What it sees, and what it does not
+
+By default synchronization validation tracks the accesses it can read off the API calls themselves: copies and blits,
+the attachment reads and writes of rendering, layout transitions, vertex and index input, and the barriers and
+semaphores between them. Every access in the message above is of that kind. What a shader reads or writes through a
+descriptor (a sampled texture, a storage buffer) is not visible in the draw or dispatch call: the SPIR-V decides it.
+For those accesses the layer has a second setting, off by default and effective only together with the first:
+
+```text
+VK_KHRONOS_VALIDATION_VALIDATE_SYNC=true
+VK_KHRONOS_VALIDATION_SYNCVAL_SHADER_ACCESSES_HEURISTIC=true
+```
+
+Its own description (SDK file `VkLayer_khronos_validation.json`, key `syncval_shader_accesses_heuristic`): "Take into
+account memory accesses performed by the shader based on SPIR-V static analysis. Warning: can produce false-positives,
+can ignore certain types of accesses, does not support VK_EXT_descriptor_buffer." A heuristic, then: it may report a
+hazard that is not there, and it may still miss one. The difference is real: in step 21 ([textures](lesson:textures-and-samplers), a later module) a
+temporary edit added a layout transition of the texture right after the draw that sampled it, with source stage
+`NONE`. With both variables the layer reported "WRITE_AFTER_READ hazard detected. vkCmdPipelineBarrier2 performs image
+layout transition on the VkImage ..., which was previously read by vkCmdDrawIndexed"; with `VALIDATE_SYNC` alone it
+said nothing. Host accesses (writes through a mapped pointer, reads after a fence wait) are tracked by neither.
+
+Wherever this course says a step is clean under synchronization validation, both variables were set: steps 09-24 were
+run that way in both languages on 2026-10-11, with no message apart from the bandicam layer's warning.
 
 ## Does the rendering really run before the acquire?
 
@@ -358,8 +384,9 @@ Graphics pipeline created (triangle.spv, dynamic rendering)
   the render-output units understand; before a copy engine, a texture unit or the display reads the image, the
   transition may have to decompress it in place. `UNDEFINED` as the old layout lets the driver skip that work, because
   the old contents are declared garbage.
-- Synchronization validation does on the CPU what the spec does on paper: it keeps, for every image region, the last
-  write and the reads since, and checks each new access against the barriers in between. That is why it is slow (the
+- Synchronization validation does on the CPU what the spec does on paper: it keeps, for every buffer range and image
+  region it sees accessed, the last write and the reads since, and checks each new access against the barriers in
+  between (shader accesses through descriptors only with the [heuristic setting](#what-it-sees-and-what-it-does-not)). That is why it is slow (the
   frame rate of step 10, medians of 5 alternating release runs on a shared machine, went from 419 to 408 fps in Rust
   and from 432 to 418 in C++; small here only because the frame is dominated by a 2 ms busy loop) and why it is worth
   running regularly.

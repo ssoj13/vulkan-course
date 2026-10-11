@@ -353,8 +353,9 @@ Window closed
 [timing] 9906 frames in 4.0 s, 2473 fps
 ```
 
-Validation with synchronization validation on reports nothing but the `VK_LAYER_bandicam_helper` warning, and GPU-AV
-only its own setup warnings.
+Validation with synchronization validation and its shader-access heuristic on ([both variables](lesson:barriers-and-layouts#what-it-sees-and-what-it-does-not): without the
+heuristic the layer would not even see the shader's reads of the storage buffers) reports nothing but the
+`VK_LAYER_bandicam_helper` warning, and GPU-AV only its own setup warnings.
 
 ## The map of this lesson
 

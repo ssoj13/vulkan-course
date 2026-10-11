@@ -634,9 +634,13 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
   async-compute} (module `compute` not yet in course.json); `sync:vuids` is not needed for examples (src/ only).
 - [x] Re-run steps 09-24 with VK_KHRONOS_VALIDATION_SYNCVAL_SHADER_ACCESSES_HEURISTIC=true (2026-10-11): clean, see
   State "Sync validation re-check 09-24". Lessons not edited.
-- [ ] Lessons: barriers-and-layouts (EN ~269 "tracks every access", ~361; RU ~275, ~369) overstate what plain
-  VALIDATE_SYNC tracks: shader (descriptor) accesses need the heuristic setting. Add the qualifier and mention the second
-  env var where lessons state "clean with sync validation" (uniform-buffers, push-constants, bindless, timeline-semaphores).
+- [x] Lessons qualify what plain VALIDATE_SYNC tracks (2026-10-11, EN+RU): barriers-and-layouts has the one aside
+  `### What it sees, and what it does not` (ru `### Что она видит, а что нет`; API-visible accesses by default, shader
+  descriptor accesses only with SYNCVAL_SHADER_ACCESSES_HEURISTIC, setting text quoted, step 21 proof, host accesses
+  untracked, "clean" in the course = both variables, 09-24 re-run); the intro and Underneath bullet link to it;
+  uniform-buffers, push-constants, bindless, timeline-semaphores name both variables / link the aside. Not changed
+  (checked, correct as written): staging-uploads (copy + vertex/index input, host writes), images/depth and msaa
+  (attachments), buffer-device-address (GPU-AV only). New lesson claims of "sync-clean" must link the aside.
 - [ ] Async compute shows no gain on the RTX 3080 Ti with 2^20 particles (CPU/present bound); a lesson experiment
   could add a heavier kernel or FIFO + a GPU-bound load to show when overlap helps - measure before claiming.
 - [ ] READMEs: the "Steps 08+ use triangle.spv / mesh.spv" sentence predates steps 17-27 shaders; list all .spv files.

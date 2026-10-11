@@ -231,8 +231,8 @@ Graphics pipeline created (vertexUniform reads set 0, binding 0)
 Uniform buffers: 2 x 80 bytes, UNIFORM_BUFFER, memory type 3 (HOST_VISIBLE | HOST_COHERENT), persistently mapped
 ```
 
-Оба пути проходят валидацию с включённой синхронизационной валидацией чисто (только знакомое предупреждение
-`VK_LAYER_bandicam_helper`).
+Оба пути проходят валидацию чисто, с синхронизационной валидацией и её эвристикой для обращений шейдеров
+([обе переменные](lesson:barriers-and-layouts#что-она-видит-а-что-нет)): единственное сообщение — знакомое предупреждение `VK_LAYER_bandicam_helper`.
 
 ## Карта урока
 
