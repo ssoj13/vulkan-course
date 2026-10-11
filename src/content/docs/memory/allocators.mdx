@@ -1,0 +1,319 @@
+---
+title: Allocators and sub-allocation
+description: 'Why real programs make a few big allocations and place thousands of resources inside them: the measured cost of vkAllocateMemory, alignment rules, a linear allocator in Rust and VMA in C++.'
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import MindMap from 'course-kit/components/MindMap.astro';
+import Quiz from 'course-kit/components/Quiz.astro';
+import Step from '../../../components/Step.astro';
+
+Steps 13 to 15 gave every buffer its own `vkAllocateMemory`. For three buffers that is fine. A real scene has thousands
+of meshes, uniform buffers, textures, render targets. Why does no real renderer allocate memory once per resource, what
+does it do instead, and which allocator do our two languages use, and why not the same one?
+
+## Where this fits
+
+The last lesson of the **resources and memory** module. It goes down to the driver and the operating system (what one
+allocation costs) and back up to a library layer between the program and Vulkan (the allocator). The chain:
+
+`vkAllocateMemory (an OS-level allocation, counted against maxMemoryAllocationCount) → a few big VkDeviceMemory blocks → sub-allocation (offset, alignment, bufferImageGranularity) → each VkBuffer bound at (block, offset) → an allocator library: our linear allocator (Rust), VMA (C++)`
+
+[Sub-allocation](term:sub-allocation) is built on [VkDeviceMemory](term:vk-device-memory): one allocation is carved into
+many resources, each at an offset that satisfies its [memory requirements](term:memory-requirements) and, when buffers
+and images share a block, [bufferImageGranularity](term:buffer-image-granularity). A
+[linear allocator](term:linear-allocator) is its simplest form; [VMA](term:vma) is the general-purpose library most C++
+engines use. [Memory types](lesson:memory-types) bound two buffers into one allocation by hand; this lesson does it
+three thousand times and measures the difference. Everything later in the course (uniform buffers, textures, render
+targets) allocates through the same idea.
+
+## malloc, not VirtualAlloc
+
+The CPU world has the same two layers, and you use them every day without noticing:
+
+| CPU | Vulkan | Cost |
+|---|---|---|
+| `VirtualAlloc` / `mmap`: pages from the operating system | `vkAllocateMemory`: a block from the driver and the OS | a kernel call, page tables, bookkeeping; slow |
+| `malloc` / an arena: pieces of those pages | an allocator: pieces of those blocks | a few instructions in user space; fast |
+
+Nobody calls `VirtualAlloc` for every `std::string`. `malloc` takes big regions from the OS and hands out small pieces.
+A Vulkan allocator does the same with device memory, with two differences: the pieces must respect the alignment the
+driver asks for, and the bookkeeping lives on the CPU while the memory itself may be on the card. Or, in CG terms: a
+texture atlas. One big texture, many small ones placed at offsets, one bind instead of many.
+
+## Three reasons not to allocate per resource
+
+**1. Each allocation is expensive.** Measured below: about 130-150 µs to create, allocate and bind one buffer with its
+own allocation, about 3 µs with an allocator. The difference is the `vkAllocateMemory` and `vkFreeMemory` calls.
+
+**2. Their number is limited.** `maxMemoryAllocationCount` is how many allocations may exist at once:
+
+<Step file="16_allocator" region="allocation-limit" />
+
+```text
+maxMemoryAllocationCount: 4294967295 (the spec guarantees at least 4096)
+```
+
+This driver reports the largest 32-bit value; the spec only guarantees 4096, and exceeding the real limit is not a
+polite error: "Exceeding this limit will result in undefined behavior, and an application should not rely on the use of
+the returned error code in order to identify when the limit is reached" (`VUID-vkAllocateMemory-maxMemoryAllocationCount-04101`).
+A scene with 10 000 meshes and one allocation each is a broken program on any device that reports the minimum.
+
+**3. Allocations come in coarse sizes.** A driver hands out memory in its own granularity, and a 256-byte uniform
+buffer with an allocation of its own may occupy far more than 256 bytes of the heap. The spec does not state the
+granularity and step 16 does not measure it, but it is one more reason allocators exist.
+
+## The rules of placing
+
+An allocator may put a resource at offset *o* of a block of type *t* when:
+
+- type *t* is allowed by the resource's `memoryTypeBits` (one block per memory type, so the allocator keeps one list of
+  blocks per type);
+- *o* is a multiple of the resource's `alignment`;
+- *o* + `size` fits in the block;
+- and, if the neighbors are of the other kind (a buffer or linear image next to an optimal-tiling image), they do not
+  share a page of [bufferImageGranularity](term:buffer-image-granularity) bytes. The spec phrases it with page numbers:
+  the end of the first resource and the start of the second "must be on separate 'pages' of size
+  bufferImageGranularity". On the course GPU that page is 1024 bytes. The reason is that an optimal-tiling image may be
+  laid out and cached differently from linear data, and the driver wants a clean boundary between the two.
+
+Step 16 places buffers only, so the granularity never applies there; an allocator that mixes buffers and images
+(VMA does) checks it at every placement.
+
+## Step 16: 3000 buffers, two ways
+
+Step 16 has no window. It creates the same set of buffers twice, first with one allocation each, then through an
+allocator, and compares the counts and the time. `--count N` changes the number (default 3000, below the 4096 the spec
+guarantees, so the raw path is valid on every device):
+
+<Step file="16_allocator" region="cli" />
+
+### The buffers
+
+<Step file="16_allocator" region="test-buffers" />
+
+Three sizes in turn (256 bytes like a uniform buffer, 4 KiB, 64 KiB like a mesh chunk), all `DEVICE_LOCAL`, type 1.
+Before allocating anything, the program sums the sizes and checks them against the heap, the same check as step 15's
+BAR path. `--count 1000000` stops there:
+
+```text
+Error: "--count 1000000: the buffers need 23295976960 bytes, but heap 0 has only 12673089536 bytes (an upper bound, not the budget: see VK_EXT_memory_budget)"
+```
+
+### The raw path
+
+<Step file="16_allocator" region="raw" />
+
+Create, query, `vkAllocateMemory` exactly `size` bytes, bind at offset 0; 3000 times. Then destroy and free. Every
+handle is recorded as soon as it exists, so the cleanup also runs after an error midway.
+
+### The allocators
+
+Here the two languages part ways, deliberately. The region has the same name in both files and different content:
+
+<Step file="16_allocator" region="allocator" />
+
+**Rust: our own linear allocator.** The Rust ecosystem's allocator is `gpu-allocator`. Its latest release, 0.28.0,
+depends on `ash` 0.38 from crates.io; this course pins `ash` from git for Vulkan 1.4 (the crates.io release stops at
+Vulkan 1.3.281), and the types of two different `ash` crates do not mix: a `vk::Device` of one is not a `vk::Device` of
+the other. So step 16 contains the simplest allocator that works, and the one every allocator starts from: a
+[linear allocator](term:linear-allocator) for one memory type. It keeps big blocks (64 MiB) and an offset in the last
+one; to place a resource it rounds the offset up to the alignment and bumps it by the size, and when the block is full
+it allocates the next. A resource larger than a block gets a block of its own. What it cannot do is free one
+resource: the blocks go away together. That is exactly right for data with one lifetime (a level's meshes, one frame's
+scratch) and wrong for a general-purpose heap.
+
+**C++: VMA 3.4.0.** The [Vulkan Memory Allocator](term:vma) from AMD's GPUOpen, installed from vcpkg, is the de facto
+standard of C++ engines. One `VmaAllocator` per device reads the memory types itself, keeps blocks per type and places
+resources with the TLSF algorithm (two-level segregated fit: free ranges sorted into size classes, so finding and
+freeing a range takes constant time), so any resource can be freed alone. Step 16 sets its preferred block size to 64
+MiB to match the Rust version (VMA's default is 256 MiB) and counts VMA's own `vkAllocateMemory` calls through a
+callback.
+
+The two allocators form the start of a hierarchy every engine walks up as it grows:
+
+`linear (bump, reset all at once) → stack / ring (free in reverse or in order) → pool (fixed-size slots) → general free-list or TLSF (free anything)`, plus **dedicated allocations** for the biggest resources, which the driver may even ask for (`VkMemoryDedicatedRequirements`, core since Vulkan 1.1).
+
+### Sub-allocating
+
+<Step file="16_allocator" region="sub-allocate" />
+
+Rust: create, query, `allocator.alloc`, bind at the returned block and offset. C++: one `vmaCreateBuffer` call does the
+four manual steps of step 13: create, find a type (here required `DEVICE_LOCAL`), sub-allocate, bind.
+
+## What the program prints
+
+Rust, release:
+
+```text
+maxMemoryAllocationCount: 4294967295 (the spec guarantees at least 4096)
+Buffers: 3000, sizes 256 / 4096 / 65536 bytes in turn, usage VERTEX_BUFFER | INDEX_BUFFER | TRANSFER_DST, DEVICE_LOCAL (memory type 1)
+
+Raw: one vkAllocateMemory per buffer
+Raw: 3000 buffers, 3000 vkAllocateMemory calls = 3000 VkDeviceMemory objects, 69888000 bytes requested
+[timing] raw: create + allocate + bind 448.91 ms (149.64 us per buffer), destroy + free 1020.00 ms (340.00 us per buffer)
+
+Allocator: buffers bound at offsets inside big blocks
+Allocator: 3000 buffers in memory type 1, 69888000 bytes requested
+[lib] own linear allocator, block size 64 MiB: 2 vkAllocateMemory call(s), 2 block(s) totalling 134217728 bytes, 69888000 bytes used (incl. alignment padding)
+[lib] first buffers at offsets 0, 256, 4352, 69888
+[timing] allocator: create + allocate + bind 8.49 ms (2.83 us per buffer), destroy + free 5.62 ms (1.87 us per buffer)
+
+All buffers destroyed, all memory freed
+```
+
+C++, the lines that differ (`[lib]` and `[timing]`; every other line is identical):
+
+```text
+[timing] raw: create + allocate + bind 380.37 ms (126.79 us per buffer), destroy + free 1104.97 ms (368.32 us per buffer)
+[lib] VMA 3.4.0, preferred block size 64 MiB: 4 vkAllocateMemory call(s), 4 block(s) totalling 125829120 bytes, 3000 allocations of 69888000 bytes
+[lib] first buffers at offsets 0, 256, 4352, 69888
+[timing] allocator: create + allocate + bind 14.53 ms (4.84 us per buffer), destroy + free 11.27 ms (3.76 us per buffer)
+```
+
+### The `[lib]` lines differ by design
+
+The 3000 buffers ask for 69 888 000 bytes, about 66.7 MiB: a little more than one 64 MiB block.
+
+- The **linear allocator** fills a 64 MiB block and starts a second one: 2 blocks, 134 217 728 bytes.
+- **VMA** does not start with a full block. While smaller ones suffice, it makes its first blocks 1/8, 1/4 and 1/2 of
+  the preferred size: 8 + 16 + 32 = 56 MiB, not enough, so the fourth block is a full 64 MiB. Total 120 MiB =
+  125 829 120 bytes, 4 blocks. Less memory reserved, for two more allocation calls.
+
+Both place the first buffers at the same offsets, 0, 256, 4352, 69888: each size is a multiple of the alignment 16, so
+the buffers pack without gaps (256 + 4096 = 4352, 4352 + 65536 = 69888). Different policies, same rules.
+
+### The cost of an allocation
+
+All runs of 2026-10-11: release builds, validation layer on, synchronization validation off, three runs per language
+alternating, on a shared machine; lowest and highest of the six:
+
+| 3000 buffers | create + allocate + bind | destroy + free |
+|---|---|---|
+| one `vkAllocateMemory` each | 127-150 µs per buffer | 316-368 µs per buffer |
+| allocator (linear or VMA) | 2.8-4.8 µs per buffer | 1.9-3.8 µs per buffer |
+
+Both paths create, query and bind every buffer; only the raw one also allocates and frees per buffer. So about 125-145
+µs of every raw buffer is `vkAllocateMemory`, and over 300 µs is `vkFreeMemory`: freeing is even slower than
+allocating. At those prices, 10 000 meshes allocated one by one cost well over a second to create and three seconds to
+tear down, on a driver that does not even limit their number. The validation layer adds its own cost per call to both
+paths, so the absolute numbers are higher than in a release program without it; the ratio is the lesson.
+
+## The map of this lesson
+
+<MindMap />
+
+## Underneath
+
+- **Why an allocation is slow.** On Windows, `vkAllocateMemory` goes from the user-mode driver into the kernel-mode
+  driver and the operating system's video memory manager: it reserves physical memory in the heap, enters it into the
+  GPU's page tables, maps it into the GPU's virtual address space and registers it for residency tracking (which
+  allocations must be in VRAM when a submission runs). `vkFreeMemory` undoes all of it, and must also make sure the GPU
+  no longer uses the pages. None of that is per byte; it is per allocation.
+- **Residency works per allocation too.** When VRAM is overcommitted, the OS moves whole allocations between VRAM and
+  system RAM. Fewer, larger allocations mean less bookkeeping, and an allocator that groups resources by lifetime keeps
+  what is used together in the same blocks.
+- **What an allocator owns is CPU memory.** VMA's TLSF free lists, the linear allocator's offset: all of it is ordinary
+  CPU bookkeeping about ranges of device memory. Placing a buffer never touches the GPU; only binding it tells the
+  driver where the buffer's bytes are.
+- **Big allocators do more.** VMA also tracks budgets through `VK_EXT_memory_budget`, keeps memory persistently mapped,
+  defragments, and creates dedicated allocations when the driver prefers them. On the Rust side, `gpu-allocator`
+  offers a free-list allocator and dedicated blocks with an API close to VMA's; this course will switch to it once a
+  release supports the `ash` that Vulkan 1.4 needs.
+
+<Quiz
+	questions={[
+		{
+			q: 'The course driver reports maxMemoryAllocationCount = 4294967295. Is one vkAllocateMemory per buffer therefore fine for a scene with 10 000 buffers?',
+			options: [
+				{
+					text: 'Yes, the limit is far away and allocations are as cheap as buffer creation',
+					why: 'Measured, an allocation plus its free costs hundreds of microseconds, 40 times more than placing a buffer in a block.',
+				},
+				{
+					text: 'Yes on this driver; the limit only matters on other GPUs',
+					why: 'The cost remains on this driver too: about 0.13-0.15 ms to allocate and over 0.3 ms to free each one.',
+				},
+				{
+					text: 'No: allocations are slow everywhere, and the spec only guarantees 4096',
+					why: 'Right: a portable program plans for 4096, and even where the limit is huge, each allocation costs a kernel round trip.',
+				},
+				{
+					text: 'No, because VkDeviceMemory objects cannot be bound to buffers smaller than 64 MiB',
+					why: 'An allocation can be any size up to its heap; steps 13-15 bound buffers of 36 bytes to allocations of their own.',
+				},
+			],
+			answer: 2,
+			ref: '#three-reasons-not-to-allocate-per-resource',
+		},
+		{
+			q: 'Why do the [lib] lines of step 16 differ between Rust (2 blocks, 134217728 bytes) and C++ (4 blocks, 125829120 bytes)?',
+			options: [
+				{
+					text: 'VMA\'s first blocks are smaller (8, 16, 32 MiB); the linear allocator\'s are all 64 MiB',
+					why: 'Right: 8 + 16 + 32 MiB is too little for 66.7 MiB, so VMA adds a full 64 MiB block; the linear allocator needs two full ones.',
+				},
+				{
+					text: 'C++ and Rust see different memory types on the same GPU',
+					why: 'Both print memory type 1 and identical requirements; the difference is the allocator\'s policy.',
+				},
+				{
+					text: 'VMA pads every buffer to a 64-byte boundary internally, so the same buffers need more blocks',
+					why: 'Both place the first buffers at the same offsets, 0, 256, 4352, 69888: no extra padding.',
+				},
+				{
+					text: 'The Rust run asked for more bytes',
+					why: 'Both request 69888000 bytes for the same 3000 buffers.',
+				},
+			],
+			answer: 0,
+			ref: '#the-lib-lines-differ-by-design',
+		},
+		{
+			q: 'Why does the Rust step contain its own allocator instead of using gpu-allocator?',
+			options: [
+				{
+					text: 'gpu-allocator cannot sub-allocate buffers, only images',
+					why: 'It sub-allocates both; the problem is not what it does but which ash it is built for.',
+				},
+				{
+					text: 'Because a linear allocator is always faster than any general-purpose allocator such as gpu-allocator',
+					why: 'It is simpler, not a replacement: it cannot free one resource. The reason is a dependency conflict.',
+				},
+				{
+					text: 'It is built on crates.io ash 0.38, a different crate from the course\'s git ash',
+					why: 'Right: two different ash crates have incompatible types, and ash 0.38 stops at Vulkan 1.3.281.',
+				},
+				{
+					text: 'Rust forbids calling vkAllocateMemory from a library',
+					why: 'Any crate can call Vulkan through ash; there is no such restriction.',
+				},
+			],
+			answer: 2,
+			ref: '#the-allocators',
+		},
+		{
+			q: 'An allocator wants to place a vertex buffer right after an optimal-tiling texture in the same block, on the course GPU. What extra rule applies besides the buffer\'s alignment?',
+			options: [
+				{
+					text: 'None: alignment is the only rule inside one block',
+					why: 'Between linear and non-linear resources there is a second one, bufferImageGranularity.',
+				},
+				{
+					text: 'They must not share a 1024-byte page: bufferImageGranularity',
+					why: 'Right: the end of the texture and the start of the buffer must lie on different pages of bufferImageGranularity bytes.',
+				},
+				{
+					text: 'The buffer must start at a multiple of 64 MiB',
+					why: 'That is the block size the step chose, not a placement rule.',
+				},
+				{
+					text: 'The two must use different memory types',
+					why: 'They may share a type when both masks allow it; that is the whole point of one block.',
+				},
+			],
+			answer: 1,
+			ref: '#the-rules-of-placing',
+		},
+	]}
+/>

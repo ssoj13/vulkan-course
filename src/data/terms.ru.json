@@ -367,6 +367,116 @@
       "label": "Present fence",
       "aka": ["VK_KHR_swapchain_maintenance1", "VkSwapchainPresentFenceInfoKHR"],
       "def": "Fence, переданный в vkQueuePresentKHR (VK_KHR_swapchain_maintenance1): он сигналит, когда операции очереди этого показа завершились и presentation engine забрал всё, что ему нужно. После этого семафоры ожидания показа можно использовать снова, а swapchain, у всех показов которого fence просигналили, можно уничтожить."
+    },
+    "memory-heap": {
+      "label": "Куча памяти",
+      "aka": ["VkMemoryHeap", "heap", "VK_MEMORY_HEAP_DEVICE_LOCAL_BIT"],
+      "def": "Физический запас памяти, которым может пользоваться устройство, как его описывает vkGetPhysicalDeviceMemoryProperties: размер и признак device-local. У дискретного GPU это обычно VRAM, доля системной памяти, доступная GPU, и окно VRAM, которое видит CPU."
+    },
+    "memory-type": {
+      "label": "Тип памяти",
+      "aka": ["VkMemoryType", "memoryTypeIndex", "memory type"],
+      "def": "Один из способов пользоваться кучей: запись в списке типов устройства, которая указывает на одну кучу и несёт флаги свойств (DEVICE_LOCAL, HOST_VISIBLE и т. д.). Каждое выделение памяти делается ровно из одного типа."
+    },
+    "device-local": {
+      "label": "DEVICE_LOCAL",
+      "aka": ["VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT", "device-local", "локальная память устройства"],
+      "def": "Флаг свойств памяти: такая память самая эффективная для доступа со стороны устройства. Стоит ровно тогда, когда куча этого типа device-local, то есть у дискретного GPU это VRAM."
+    },
+    "host-visible": {
+      "label": "HOST_VISIBLE",
+      "aka": ["VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT", "vkMapMemory", "отображаемая память"],
+      "def": "Флаг свойств памяти: память этого типа можно отобразить (vkMapMemory) и получить на CPU указатель прямо в неё."
+    },
+    "host-coherent": {
+      "label": "HOST_COHERENT",
+      "aka": ["VK_MEMORY_PROPERTY_HOST_COHERENT_BIT", "vkFlushMappedMemoryRanges", "vkInvalidateMappedMemoryRanges"],
+      "def": "Флаг свойств памяти: не нужны ни vkFlushMappedMemoryRanges, ни vkInvalidateMappedMemoryRanges. Записи CPU сами становятся доступными в домене хоста, а отправка в очередь делает их видимыми для устройства."
+    },
+    "host-cached": {
+      "label": "HOST_CACHED",
+      "aka": ["VK_MEMORY_PROPERTY_HOST_CACHED_BIT", "память для чтения обратно"],
+      "def": "Флаг свойств памяти: CPU обращается к этой памяти через свои кэши, поэтому читать из неё быстро. Некэшируемая HOST_VISIBLE-память (обычно write-combined) хороша для записи и медленна для чтения."
+    },
+    "lazily-allocated": {
+      "label": "LAZILY_ALLOCATED",
+      "aka": ["VK_MEMORY_PROPERTY_LAZILY_ALLOCATED_BIT", "transient attachment"],
+      "def": "Флаг свойств памяти: память только для устройства, физические страницы под которую реализация может выделять лениво. Её могут использовать лишь изображения с usage TRANSIENT_ATTACHMENT, буферы — никогда. Типична для тайловых GPU; у GPU курса такого типа нет."
+    },
+    "bar": {
+      "label": "BAR / Resizable BAR",
+      "aka": ["ReBAR", "окно BAR", "PCIe BAR", "Base Address Register"],
+      "def": "Окно в VRAM, к которому CPU может обращаться по шине PCIe. Без Resizable BAR оно 256 MiB, с ним — вся VRAM. Vulkan показывает его как маленькую DEVICE_LOCAL-кучу с типом DEVICE_LOCAL | HOST_VISIBLE (214 MiB на машине курса, где ReBAR выключен)."
+    },
+    "vk-device-memory": {
+      "label": "VkDeviceMemory",
+      "aka": ["vkAllocateMemory", "vkFreeMemory", "выделение памяти"],
+      "def": "Один блок памяти, выделенный из одного типа памяти вызовом vkAllocateMemory. Буферы и изображения привязываются к нему по смещениям."
+    },
+    "vk-buffer": {
+      "label": "VkBuffer",
+      "aka": ["vkCreateBuffer", "vkBindBufferMemory", "VkBufferUsageFlags", "буфер"],
+      "def": "Линейный массив байтов с размером и флагами usage (вершины, индексы, uniform, storage, источник или приёмник копирования). Создаётся без памяти; пользоваться им можно, когда к нему привязана память (vkBindBufferMemory)."
+    },
+    "memory-requirements": {
+      "label": "Требования к памяти",
+      "aka": ["VkMemoryRequirements", "vkGetBufferMemoryRequirements", "alignment", "выравнивание"],
+      "def": "Что ресурсу нужно от памяти, по словам драйвера: сколько байт выделить, на сколько выровнять смещение привязки и memoryTypeBits — в каких типах памяти ресурс может жить."
+    },
+    "memory-type-bits": {
+      "label": "memoryTypeBits",
+      "aka": ["правило выбора типа памяти", "findProperties"],
+      "def": "Часть требований к памяти со списком разрешённых типов: если бит i установлен, тип i может хранить ресурс. Тип выбирают по правилу из спецификации: первый по порядку индексов тип, который разрешён и имеет все нужные флаги."
+    },
+    "vertex-buffer": {
+      "label": "Буфер вершин",
+      "aka": ["vertex buffer", "VK_BUFFER_USAGE_VERTEX_BUFFER_BIT", "vkCmdBindVertexBuffers"],
+      "def": "VkBuffer с usage VERTEX_BUFFER, привязанный к привязке входа вершин командой vkCmdBindVertexBuffers: из него выбираются атрибуты каждой вершины, которую использует отрисовка."
+    },
+    "index-buffer": {
+      "label": "Индексный буфер",
+      "aka": ["index buffer", "VK_BUFFER_USAGE_INDEX_BUFFER_BIT", "vkCmdBindIndexBuffer", "vkCmdDrawIndexed", "VK_INDEX_TYPE_UINT16"],
+      "def": "VkBuffer с индексами вершин (по 8, 16 или 32 бита), привязанный командой vkCmdBindIndexBuffer. vkCmdDrawIndexed читает его, чтобы выбрать вершину для каждого угла каждого примитива, поэтому вершина, общая для нескольких треугольников, хранится один раз."
+    },
+    "vertex-input-binding": {
+      "label": "Привязка входа вершин",
+      "aka": ["vertex input binding", "VkVertexInputBindingDescription", "stride", "шаг", "input rate"],
+      "def": "Пронумерованный слот входа вершин пайплайна, к которому привязывается буфер вершин: со своим шагом (stride — сколько байт от одной вершины до следующей) и частотой (на вершину или на экземпляр)."
+    },
+    "vertex-input-attribute": {
+      "label": "Атрибут входа вершин",
+      "aka": ["vertex input attribute", "VkVertexInputAttributeDescription", "location", "vk::location"],
+      "def": "Один вход вершинного шейдера, как его описывает пайплайн: какой Location шейдера он питает, из какой привязки читает, в каком формате лежат данные и с каким смещением внутри вершины."
+    },
+    "staging-buffer": {
+      "label": "Staging-буфер",
+      "aka": ["staging buffer", "буфер загрузки", "TRANSFER_SRC", "vkCmdCopyBuffer"],
+      "def": "Буфер в HOST_VISIBLE-памяти: CPU заполняет его, а GPU копирует из него (vkCmdCopyBuffer) в device-local-память, которую CPU отобразить не может."
+    },
+    "queue-family-ownership-transfer": {
+      "label": "Передача владения между семействами очередей",
+      "aka": ["queue family ownership transfer", "release", "acquire", "VK_SHARING_MODE_EXCLUSIVE", "srcQueueFamilyIndex", "dstQueueFamilyIndex"],
+      "def": "Передача EXCLUSIVE-ресурса от одного семейства очередей другому: барьер release в очереди исходного семейства и парный барьер acquire в очереди целевого, упорядоченные семафором. Без неё содержимое ресурса для чтения вторым семейством не определено."
+    },
+    "sub-allocation": {
+      "label": "Суб-аллокация",
+      "aka": ["sub-allocation", "suballocation", "блок памяти", "maxMemoryAllocationCount"],
+      "def": "Размещение множества ресурсов внутри нескольких больших блоков VkDeviceMemory, каждого по своему выровненному смещению, вместо отдельного vkAllocateMemory на каждый ресурс: выделения медленные, и их одновременное число ограничено."
+    },
+    "linear-allocator": {
+      "label": "Линейный аллокатор",
+      "aka": ["linear allocator", "bump allocator", "арена"],
+      "def": "Простейший суб-аллокатор: смещение движется по блоку вперёд, округляясь вверх до выравнивания каждого ресурса. По одному ничего не освобождается — блок сбрасывают или освобождают целиком. Такой аллокатор в шаге курса на Rust."
+    },
+    "vma": {
+      "label": "VMA (Vulkan Memory Allocator)",
+      "aka": ["Vulkan Memory Allocator", "vk_mem_alloc.h", "vmaCreateBuffer"],
+      "def": "Открытая библиотека AMD на C/C++ для памяти Vulkan: выбирает типы памяти, держит блоки для каждого типа, размещает в них ресурсы алгоритмом TLSF и освобождает их по одному. В шаге курса на C++ — версия 3.4.0."
+    },
+    "buffer-image-granularity": {
+      "label": "bufferImageGranularity",
+      "aka": ["Buffer-Image Granularity"],
+      "def": "Лимит устройства: линейные ресурсы (буферы, линейные изображения) и изображения с optimal tiling, лежащие рядом в одном VkDeviceMemory, не должны делить «страницу» такого размера в байтах (1024 у GPU курса)."
     }
   },
   "edges": {
@@ -473,6 +583,27 @@
     "frames-in-flight|uses|vk-command-buffer": "по одному на кадр",
     "swapchain-recreation|built-on|vk-swapchain": "пересоздаёт",
     "swapchain-recreation|uses|old-swapchain": "списывает",
-    "swapchain-recreation|uses|present-fence": "ждёт"
+    "swapchain-recreation|uses|present-fence": "ждёт",
+    "memory-heap|built-on|vram": "VRAM или системная память",
+    "memory-type|built-on|memory-heap": "указывает на одну",
+    "host-coherent|related|availability-visibility": "обеспечивает на стороне хоста",
+    "bar|built-on|vram": "окно CPU в",
+    "bar|related|memory-heap": "видно как маленькая",
+    "vk-device-memory|built-on|memory-type": "выделяется из одного",
+    "vk-device-memory|built-on|vk-device": "создаётся из",
+    "vk-buffer|built-on|vk-device": "создаётся из",
+    "vk-buffer|uses|vk-device-memory": "привязан по смещению к",
+    "memory-requirements|related|vk-buffer": "сообщаются для",
+    "memory-type-bits|uses|memory-type": "разрешает",
+    "vertex-input-binding|uses|vertex-buffer": "слот для",
+    "vertex-input-attribute|built-on|vertex-input-binding": "читает из",
+    "vertex-input-attribute|related|shader": "питает Location",
+    "staging-buffer|uses|host-visible": "живёт в",
+    "queue-family-ownership-transfer|built-on|pipeline-barrier": "release и acquire",
+    "queue-family-ownership-transfer|uses|vk-semaphore": "упорядочивается",
+    "queue-family-ownership-transfer|related|queue-family": "переносит ресурс между",
+    "sub-allocation|built-on|vk-device-memory": "нарезает",
+    "vma|uses|sub-allocation": "реализует",
+    "buffer-image-granularity|related|sub-allocation": "правило зазоров при"
   }
 }

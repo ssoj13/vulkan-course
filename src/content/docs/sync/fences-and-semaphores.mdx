@@ -70,7 +70,7 @@ you also know where it breaks:
 
 | CPU tool | Closest Vulkan tool | Where the analogy breaks |
 |---|---|---|
-| `future.wait()`; a manual-reset event (Win32 `SetEvent` / `ResetEvent` + `WaitForSingleObject`) | fence | Not `join`: nothing ends when a fence is signaled, and the same fence is reused, by resetting it. Only the device side sets it (a submission, or a present); the host waits on it and resets it, but never signals it. And the wait does not make GPU writes visible to the host by itself (that needs a memory dependency of its own, module 8). |
+| `future.wait()`; a manual-reset event (Win32 `SetEvent` / `ResetEvent` + `WaitForSingleObject`) | fence | Not `join`: nothing ends when a fence is signaled, and the same fence is reused, by resetting it. Only the device side sets it (a submission, or a present); the host waits on it and resets it, but never signals it. And the wait does not make GPU writes visible to the host by itself (that needs a memory dependency of its own, see [available is not visible](lesson:staging-uploads#available-is-not-visible)). |
 | `std::binary_semaphore`, as a comparison only | binary semaphore | What it is: a GPU→GPU "ready" signal between submits, one queue operation telling another. Where `std::binary_semaphore` breaks: only queue operations (and the presentation engine, at an acquire) signal and wait, never the host; every signal must be consumed by exactly one wait; and the wait must be submitted after its signal. |
 | `std::atomic<uint64_t>` + "wait until it reaches N" | timeline semaphore | Close, including host waits and host signals; the value may only grow ([its own lesson](lesson:timeline-semaphores)). |
 | `std::atomic_thread_fence` (release / acquire) | pipeline barrier | Only one of a barrier's three parts. A barrier is a rendezvous of pipeline stages (the chosen stages of earlier commands finish before the chosen stages of later ones start), memory visibility (the release / acquire part), and, for an image, a layout transition. It acts on one queue's command stream, not on threads. |
@@ -99,7 +99,8 @@ A fence is one-shot until you reset it, and its rules follow from that:
 
 Like a sticky note on the render farm's job: "tell me when you are done". What it does *not* do is make the GPU's
 writes readable by the CPU: the spec notes that the access scope of a fence covers only device access, so reading GPU
-results through mapped memory needs a memory dependency as well. That comes with buffers in module 8.
+results through mapped memory needs a memory dependency as well: a barrier to the host, shown in
+[staging uploads](lesson:staging-uploads#available-is-not-visible).
 
 ## Semaphores: one queue operation tells another
 

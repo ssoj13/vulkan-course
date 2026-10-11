@@ -71,13 +71,13 @@
       "note": "How to look at an image: which format, mip levels and layers. Shaders and rendering use views, not images."
     },
     {
-      "id": "device-memory", "handle": "VkDeviceMemory", "stage": "memory",
+      "id": "device-memory", "handle": "VkDeviceMemory", "term": "vk-device-memory", "stage": "memory",
       "how": "allocate", "call": "vkAllocateMemory", "destroy": "vkFreeMemory",
       "parents": [{ "id": "device", "param": "device", "vuid": "VUID-vkAllocateMemory-device-parameter" }],
       "note": "A raw block of GPU-visible memory from one memory type. Buffers and images are bound into it."
     },
     {
-      "id": "buffer", "handle": "VkBuffer", "stage": "memory",
+      "id": "buffer", "handle": "VkBuffer", "term": "vk-buffer", "stage": "memory",
       "how": "create", "call": "vkCreateBuffer", "destroy": "vkDestroyBuffer",
       "parents": [{ "id": "device", "param": "device", "vuid": "VUID-vkCreateBuffer-device-parameter" }],
       "note": "A linear array of bytes (vertices, indices, uniforms). Needs memory bound to it before use."

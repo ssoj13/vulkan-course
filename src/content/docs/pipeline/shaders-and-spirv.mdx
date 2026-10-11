@@ -78,7 +78,7 @@ One file holds both stages:
 What to notice:
 
 - **No vertex buffer.** The three corners and colors are constant arrays in the shader; the vertex shader picks one
-  by its index. Vertex buffers are module 8.
+  by its index. Vertex buffers come in [vertex and index buffers](lesson:vertex-and-index-buffers).
 - **Clip space has +Y down.** Unlike OpenGL, Vulkan's clip space points Y downwards, so `y = -0.5` is the *top*
   corner. Seen on screen the order top → bottom-right → bottom-left is clockwise; the pipeline will declare clockwise
   as the front face.

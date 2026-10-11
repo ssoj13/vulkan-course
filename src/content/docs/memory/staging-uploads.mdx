@@ -1,0 +1,450 @@
+---
+title: Staging uploads
+description: 'Three ways into VRAM - a copy on the graphics queue, a copy on the transfer queue with an ownership transfer, a direct write through the BAR window - with measured costs, and why a fence does not make a copy visible.'
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import MindMap from 'course-kit/components/MindMap.astro';
+import Quiz from 'course-kit/components/Quiz.astro';
+import Step from '../../../components/Step.astro';
+
+The previous lesson left the mesh in system RAM, read by the GPU over PCIe on every draw. Its proper home is
+`DEVICE_LOCAL` memory, VRAM, and the CPU usually cannot map that. So how do the bytes get there? There are three ways,
+each with its own synchronization and its own cost, and one subtle trap that no validation message points at: a copy
+that has *finished* is not yet a copy whose result the draws can *see*.
+
+## Where this fits
+
+The third lesson of the **resources and memory** module, where memory meets the synchronization module. Layers: the
+API (copy commands, barriers, queue family ownership), the memory model underneath them (availability and
+visibility), and the hardware (copy engines, PCIe, the BAR window). The chain of the main path:
+
+`CPU memcpy → staging buffer (HOST_VISIBLE) → submit → vkCmdCopyBuffer → DEVICE_LOCAL buffer → barrier (or release / semaphore / acquire) → vertex input`
+
+A [staging buffer](term:staging-buffer) is a [VkBuffer](term:vk-buffer) in [HOST_VISIBLE](term:host-visible) memory that
+the GPU copies from; the copy's result reaches the draws through a [memory dependency](term:memory-dependency): a
+[pipeline barrier](term:pipeline-barrier) on one queue, or, across queue families, a
+[queue family ownership transfer](term:queue-family-ownership-transfer) ordered by a [semaphore](term:vk-semaphore). The
+third path skips all of it through the [BAR window](term:bar). Before: [memory types](lesson:memory-types) (where the
+types come from), [vertex and index buffers](lesson:vertex-and-index-buffers) (what is uploaded),
+[barriers](lesson:barriers-and-layouts) (availability and visibility). After: [allocators](lesson:allocators), and the
+textures of module 10, which arrive the same way.
+
+## Three roads into VRAM
+
+On a render farm, the scenes live on a file server and every render node has fast local scratch. Before a render, a
+data mover copies the cache files from the server to the node's scratch, and the renderer reads them locally at full
+speed. Or, for a small file, you write it straight onto the node over a network mount: no extra copy, but every byte
+crosses the slow link while you wait for it. Step 15 implements both, plus a variant of the first:
+
+| Path | Where the bytes go | Who moves them across PCIe | What orders it before the draws |
+|---|---|---|---|
+| default | CPU → staging (type 3) → `vkCmdCopyBuffer` on the **graphics** queue → VRAM (type 1) | the GPU, during the copy | one pipeline barrier |
+| `--transfer-queue` | the same, but the copy runs on the **dedicated transfer** queue | the GPU's copy engine | release barrier, semaphore, acquire barrier |
+| `--bar` | CPU → VRAM directly (type 5) | the CPU, during its writes | nothing beyond the submit |
+
+`--mib N` pads the vertex buffer with zeros to N MiB, so that the timings show bandwidth and not only latency (only the
+7 real vertices are drawn):
+
+<Step file="15_staging" region="cli" />
+
+<Step file="15_staging" region="mesh-bytes" />
+
+The vertex struct, the mesh, the pipeline and the frame loop are step 14's; `create_buffer` is too, and `write_mapped`
+now takes several `(offset, bytes)` pieces so that one staging buffer can hold vertices and indices.
+
+## Path 1: a copy on the graphics queue
+
+### The staging buffer
+
+<Step file="15_staging" region="staging-buffer" />
+
+One buffer of 176 bytes (vertices at offset 0, indices at offset 140), usage `TRANSFER_SRC`, in type 3: the plainest
+`HOST_VISIBLE | HOST_COHERENT` type, ordinary system RAM. A copy source must have that usage
+(`VUID-vkCmdCopyBuffer-srcBuffer-00118`).
+
+### The real buffers
+
+<Step file="15_staging" region="device-local-buffers" />
+
+The vertex and the index buffer in type 1, `DEVICE_LOCAL`, with `TRANSFER_DST` added to their usage: without it a copy
+may not write them (`VUID-vkCmdCopyBuffer-dstBuffer-00120`). The CPU cannot map type 1; the only way in is a command.
+
+### Recording the copy
+
+<Step file="15_staging" region="record-copy" />
+
+A one-time command buffer from a `TRANSIENT` pool of the family that will run the copy, and two copy regions:
+`[0, 140)` of the staging buffer to the vertex buffer, `[140, 176)` to the index buffer.
+
+Notice what is *not* there: a barrier for the CPU's writes into the staging buffer. The spec's "host write ordering
+guarantee" covers them: a queue submission "defines a memory dependency with prior host operations", its first access
+scope is "all host writes to mappable device memory that are available to the host memory domain" (coherent memory
+makes them so by itself), and its second access scope is "all memory access performed by the device". Write, then
+submit: the copy sees the bytes.
+
+### The barrier after the copy
+
+<Step file="15_staging" region="copy-barrier" />
+
+One global memory barrier at the end of the copy's command buffer:
+
+- **source**: stage `COPY`, access `TRANSFER_WRITE`, the copy's writes;
+- **destination**: stages `VERTEX_ATTRIBUTE_INPUT | INDEX_INPUT`, accesses `VERTEX_ATTRIBUTE_READ | INDEX_READ`, the
+  reads of the draws.
+
+Its second scope reaches commands that are later **in submission order on this queue**, so it covers the draws of every
+frame's command buffer submitted afterwards, as the [barriers lesson](lesson:barriers-and-layouts#stage-masks-which-work-waits-for-which)
+showed for images. A buffer memory barrier naming the two buffers would do the same job; for buffers a global barrier
+is the simpler form and is what the Khronos synchronization examples use for a copy followed by vertex reads.
+
+### Waiting, then cleaning up
+
+<Step file="15_staging" region="finish-upload" />
+
+The CPU waits on the fence; only then may the staging buffer be destroyed, because the copy reads it until it is done.
+A real engine would not block here: it would keep a ring of staging memory, check a fence or a
+[timeline value](lesson:timeline-semaphores) later, and let the first frame that draws the mesh wait for the upload on
+the GPU. Waiting keeps the step simple and makes the copy measurable.
+
+## Available is not visible
+
+Read the comments of the last two regions again: the fence says the copy is **complete**, and the program waits for it
+before the first draw is even recorded. So why is the barrier needed at all? Because "complete" is an execution
+statement, and the draws need a memory statement. The [barriers lesson](lesson:barriers-and-layouts#why-order-alone-is-not-enough)
+split a memory dependency into two halves: **availability** (the writes are pushed out of the writer's caches into a
+memory domain) and **visibility** (the readers' view of that memory is refreshed). Now look at what the spec gives a
+fence signal:
+
+> The first access scope includes all memory access performed by the device.
+> The second access scope is empty.
+
+The first half: the copy's writes become **available**. The second half: visible to **nobody**. And waiting on the
+fence on the host adds no device access scope either. So after the fence wait the copy's results sit in memory,
+available, and nothing has made them visible to the vertex input stage. That is the barrier's job: its destination
+access scope, `VERTEX_ATTRIBUTE_READ | INDEX_READ`, is exactly the visibility the draws need. A semaphore wait would do
+it too: its second access scope is "all memory access performed by the device".
+
+The whole ladder of who makes what available and visible, for this module's uploads:
+
+| Operation | Makes available | Makes visible to |
+|---|---|---|
+| CPU writes to `HOST_COHERENT` memory | the writes, in the host domain (by themselves) | (nothing yet) |
+| a queue submission | host writes made before it, host domain → device domain | all device accesses of that submission and later |
+| fence signal | all device writes before it | **nothing** |
+| pipeline barrier | the writes of its source access scope | the accesses of its destination access scope |
+| semaphore signal → wait | all device writes before the signal | all device accesses after the wait |
+| barrier with destination `HOST` / `HOST_READ` | device writes, device domain → host domain | host reads of coherent memory |
+
+The last row is the answer to a promise from the [fences lesson](lesson:fences-and-semaphores#fences-the-gpu-tells-the-host):
+to read GPU results on the CPU, record a barrier from the writer's stage and access to `HOST` / `HOST_READ` *before*
+the fence's submission ends, then wait on the fence, then read (and, for non-coherent memory, call
+`vkInvalidateMappedMemoryRanges` first). The spec says it in a note under the fence wait: "Signaling a fence and
+waiting on the host does not guarantee that the results of memory accesses will be visible to the host, as the access
+scope of a memory dependency defined by a fence only includes device access. A memory barrier or other memory
+dependency must be used to guarantee this."
+
+<Aside type="caution" title="Why nothing complains when the barrier is missing">
+Delete the barrier and step 15 still draws the right hexagon, and the validation layer stays silent. Two reasons. Core
+validation checks each call against its valid usage, and every call is still valid; only **synchronization
+validation** tracks which access happened before which, and it is off by default (enable it with
+`VK_KHRONOS_VALIDATION_VALIDATE_SYNC=true`, as in the [barriers lesson](lesson:barriers-and-layouts#proof-take-one-stage-away)).
+And even with it on, we tried on 2026-10-11, removing the copy barrier and, on the transfer path, the acquire barrier:
+both silent. The likely reason is the host wait: the layer treats the CPU's wait on the fence as the end of the copy's
+accesses, so when the draws are submitted later it has no earlier write left to compare them with. That is the layer's
+bookkeeping, not the memory model: by the spec the draws read memory that was never made visible to them, and on a GPU
+whose vertex fetch reads through a cache that still holds stale lines, they would read stale data. The barriers in
+step 15 follow the spec and the Khronos synchronization examples, not a validation message.
+</Aside>
+
+## Path 2: the dedicated transfer queue
+
+A discrete GPU has copy engines, DMA units that move memory without occupying the shader cores, and on NVIDIA they are
+exposed as a queue family with `TRANSFER` but neither `GRAPHICS` nor `COMPUTE`
+([queue families](lesson:queue-families)). On the course GPU that is family 1, with two queues:
+
+<Step file="15_staging" region="transfer-family" />
+
+A copy there runs **beside** the graphics queue: a level can stream in while the current one renders. The price is
+that the buffers now cross a boundary between queue families.
+
+### Why ownership has to be transferred
+
+The buffers are created with `VK_SHARING_MODE_EXCLUSIVE`, the default: at any time they belong to **one** queue family.
+The spec: such resources "must have their ownership explicitly transferred from one queue family to another in order to
+access their content in a well-defined manner on a queue in a different queue family". Why should a buffer care which
+family touches it? Because the hardware behind two families may keep data differently (caches, compression of images),
+and the transfer is where the driver may convert. The alternative, `VK_SHARING_MODE_CONCURRENT`, lists several families
+up front and needs no transfers, but "may result in lower performance access".
+
+A [queue family ownership transfer](term:queue-family-ownership-transfer) has two halves, two barriers with the same
+buffer range and the same pair of family indices:
+
+- a **release** on a queue of the source family (transfer, 1 → 0): its source scope covers the copy's writes; its
+  destination stage and access are ignored;
+- an **acquire** on a queue of the destination family (graphics, 1 → 0): its source stage and access are ignored; its
+  destination scope covers the reads that follow;
+- and between them an execution dependency, "e.g. using a semaphore": the release must happen-before the acquire.
+
+### The release
+
+<Step file="15_staging" region="release-ownership" />
+
+The copy, then the release barrier in the same command buffer, submitted to the transfer queue with a semaphore signal
+and a fence. The semaphore's signal stage is `ALL_COMMANDS`, and that is not laziness. The spec: "Prior to the
+introduction of `VK_DEPENDENCY_QUEUE_FAMILY_OWNERSHIP_TRANSFER_USE_ALL_STAGES_BIT_KHR`, `VK_PIPELINE_STAGE_ALL_COMMANDS_BIT`
+is the only valid stage to wait on or wait for these operations, as the acquire and release operations do not occur in
+a defined stage."
+
+**The exception.** With that flag set in the barriers' `dependencyFlags`, the stages a release or acquire would
+otherwise ignore take part in the synchronization, so the semaphore could name precise stages and avoid a full
+pipeline stall. The flag belongs to `VK_KHR_maintenance8` and may be used only when its `maintenance8` feature is
+enabled (`VUID-vkCmdPipelineBarrier-maintenance8-10206`). The course GPU supports the feature (vulkaninfo:
+`maintenance8 = true`); step 15 sticks to Vulkan 1.4 core and uses `ALL_COMMANDS`.
+
+### The acquire
+
+<Step file="15_staging" region="acquire-ownership" />
+
+A second command buffer, from a pool of the graphics family, containing only the acquire barriers, submitted to the
+graphics queue with a wait on the semaphore (again at `ALL_COMMANDS`). Its destination scopes are per buffer:
+`VERTEX_ATTRIBUTE_INPUT` / `VERTEX_ATTRIBUTE_READ` for the vertex buffer, `INDEX_INPUT` / `INDEX_READ` for the index
+buffer.
+
+Here the memory model holds a second surprise. The semaphore wait alone already makes the copy's writes **visible** to
+all device accesses after it. So, memory-wise, the acquire adds nothing, and yet it is required: "If memory
+dependencies are correctly expressed between uses of such a resource between two queues in different families, but no
+ownership transfer is defined, the contents of that resource are undefined for any read accesses performed by the
+second queue family." Visibility answers "can the reader see the bytes?"; ownership answers "are the bytes in a form the
+reader's family understands?". Both must hold.
+
+## Path 3: straight through the BAR window
+
+<Step file="15_staging" region="bar-write" />
+
+No staging buffer, no copy, no command buffer: both buffers are created in a `DEVICE_LOCAL | HOST_VISIBLE |
+HOST_COHERENT` type, type 5 on heap 2, mapped, and written by the CPU. The writes cross PCIe as they happen and land in
+VRAM; the next submission makes them visible to the draws, as for any coherent host write. It is the shortest path,
+with two limits:
+
+- **size**: heap 2 is 214 MiB with Resizable BAR off. The program asks for both buffers' requirements *before*
+  creating them (`vkGetDeviceBufferMemoryRequirements`, Vulkan 1.3) and checks their sum against the heap: an allocation
+  larger than its heap is invalid (`VUID-vkAllocateMemory-pAllocateInfo-01713`), and two allocations that each fit can
+  still overflow it together. With `--bar --mib 300`:
+
+  ```text
+  Error: "vertex + index buffers need 314572836 bytes, but heap 2 has only 224395264 bytes (an upper bound, not the budget: see VK_EXT_memory_budget)"
+  ```
+
+- **CPU time**: the CPU does the moving, at the speed of uncached writes over the bus (measured below).
+
+With ReBAR on, heap 2 should grow to about the size of VRAM (not measured on the course machine yet) (see the check in [memory types](lesson:memory-types#types-how-a-heap-can-be-used));
+the CPU-time limit stays.
+
+## What each road costs
+
+Measured on the course machine (RTX 3080 Ti on PCIe 4.0 x16, Ryzen 9 5900X, Windows 11, driver 616.64), 2026-10-11:
+release builds of both languages, validation layer on, synchronization validation off, three runs per language
+alternating Rust and C++, on a machine shared with other work. The ranges are the lowest and highest of the six runs.
+"GPU copy" is measured on the CPU from recording to the end of the fence wait, so it includes the submission and the
+wake-up, not just the copy.
+
+| Upload | CPU writes | GPU copy (record + submit + wait) |
+|---|---|---|
+| 64 MiB via staging, graphics queue | 6.2-9.8 ms (6.9-10.8 GB/s) into type 3 | 5.3-6.7 ms (10.0-12.6 GB/s) |
+| 64 MiB via staging, transfer queue | 5.9-7.4 ms (9.1-11.5 GB/s) into type 3 | 5.1-6.1 ms (11.0-13.1 GB/s) |
+| 64 MiB through the BAR | 13.0-16.0 ms (4.2-5.2 GB/s) into type 5 | none |
+| 176 bytes via staging, graphics queue | 0.012-0.019 ms | 0.83-0.98 ms |
+| 176 bytes via staging, transfer queue | 0.010-0.023 ms | 1.19-1.74 ms |
+| 176 bytes through the BAR | 0.017-0.027 ms | none |
+
+One of the runs, verbatim (Rust, `--transfer-queue --mib 64`):
+
+```text
+Mesh: hexagon, 7 vertices + 18 indices; vertex buffer 67108864 bytes (padded with --mib), index buffer 36 bytes
+Upload path: staging buffer + vkCmdCopyBuffer on the transfer queue (family 1), then an ownership transfer 1 -> 0 (release, semaphore, acquire)
+Staging buffer: 67108900 bytes, TRANSFER_SRC, memory type 3 (HOST_VISIBLE | HOST_COHERENT); vertices at offset 0, indices at offset 67108864
+Vertex buffer: 67108864 bytes, VERTEX_BUFFER | TRANSFER_DST, memory type 1 (DEVICE_LOCAL)
+Index buffer: 36 bytes, INDEX_BUFFER | TRANSFER_DST, memory type 1 (DEVICE_LOCAL)
+Upload complete (fences waited); staging buffer destroyed
+[timing] upload of 67108900 bytes: CPU writes 6.381 ms (10516 MB/s), GPU copy 6.102 ms (10999 MB/s; record + submit + wait)
+```
+
+and the BAR path with the same padding:
+
+```text
+Upload path: direct CPU writes into DEVICE_LOCAL | HOST_VISIBLE memory (no staging buffer, no copy)
+Vertex + index buffers: memory type 5 (DEVICE_LOCAL | HOST_VISIBLE | HOST_COHERENT), heap 2
+[timing] upload of 67108900 bytes: CPU writes 13.014 ms (5157 MB/s) straight into VRAM, no copy
+```
+
+What the numbers say, and what they do not:
+
+- **For bulk data the two roads cost about the same in total**, 11-17 ms for 64 MiB, but they spend different
+  resources. The staging road spends twice the memory traffic and a copy on the GPU, and the CPU is free after its fast
+  `memcpy` into RAM. The BAR road spends no GPU time and no extra RAM, but keeps the CPU busy up to twice as long, writing
+  across the bus at 4-5 GB/s.
+- **The two queues copy equally fast** here: the copy itself is limited by the link (about 11-13 GB/s measured,
+  against a nominal 32 GB/s), not by which engine runs it. What the transfer queue buys is concurrency with rendering,
+  which a one-time upload before the first frame cannot show, and it costs an extra submission and a semaphore: its
+  176-byte round trip is the slowest.
+- **For small data the BAR wins by a factor of 30 or more**: 0.02 ms against 0.8-1.7 ms. The 176-byte "copy" is all
+  latency (record, submit, the GPU picks it up, the fence wakes the CPU), not bandwidth. This is why per-frame data,
+  such as the uniforms of the next module, belongs in the BAR heap when it fits.
+- **We did not find why** the BAR writes run at 4-5 GB/s when the link carries 11-13 GB/s for the copy engines; the
+  write-combining path of the CPU is the usual suspect. Treat the ratio as this machine's, not a law.
+- **Synchronization validation changes the picture**: with `VK_KHRONOS_VALIDATION_VALIDATE_SYNC=true` the same 64 MiB of
+  host writes took 68-89 ms in earlier runs, in either memory type. Never measure with it on.
+
+## What the program prints
+
+Step 15 with no options (Rust, release, `--seconds 1`; the C++ build prints the same lines apart from `[timing]`):
+
+```text
+Window: 800x600 pixels
+Found 1 GPU(s)
+GPU 0: NVIDIA GeForce RTX 3080 Ti
+
+Picked: NVIDIA GeForce RTX 3080 Ti
+Graphics + present family: 0
+Dedicated transfer family: 1
+VkDevice created with VK_KHR_swapchain and 1 queue(s)
+Swapchain: 800x600 B8G8R8A8_SRGB, MAILBOX, 3 images
+
+SPIR-V: 900 bytes (mesh.spv), entry points vertexMain, fragmentMain
+Vertex input: binding 0, stride 20 bytes, per vertex
+  location 0: R32G32_SFLOAT at offset 0
+  location 1: R32G32B32_SFLOAT at offset 8
+Graphics pipeline created (vertex input from binding 0)
+2 frames in flight
+
+Mesh: hexagon, 7 vertices + 18 indices; vertex buffer 140 bytes, index buffer 36 bytes
+Upload path: staging buffer + vkCmdCopyBuffer on the graphics queue (family 0), then a pipeline barrier
+Staging buffer: 176 bytes, TRANSFER_SRC, memory type 3 (HOST_VISIBLE | HOST_COHERENT); vertices at offset 0, indices at offset 140
+Vertex buffer: 140 bytes, VERTEX_BUFFER | TRANSFER_DST, memory type 1 (DEVICE_LOCAL)
+Index buffer: 36 bytes, INDEX_BUFFER | TRANSFER_DST, memory type 1 (DEVICE_LOCAL)
+Upload complete (fences waited); staging buffer destroyed
+[timing] upload of 176 bytes: CPU writes 0.013 ms (13 MB/s), GPU copy 0.916 ms (0 MB/s; record + submit + wait)
+Rendering. Close the window to exit.
+Window closed
+[timing] 2915 frames in 1.0 s, 2900 fps
+```
+
+The device has one queue by default and two with `--transfer-queue` ("VkDevice created with VK_KHR_swapchain and 2
+queue(s)"): queues exist only if they are requested when the device is created.
+
+## The map of this lesson
+
+<MindMap />
+
+## Underneath
+
+- **A copy engine** is a DMA unit: it reads from one address range and writes to another, in large bursts, without
+  shader cores. Reading the staging buffer means PCIe read requests into system RAM; for that, drivers typically keep
+  host-visible system memory pinned (page-locked), so the operating system never moves it while the GPU may read it.
+- **BAR writes** are CPU stores to an address range that belongs to the card. The CPU maps such memory as
+  write-combining: stores are collected in a few write-combining buffers and leave in bursts. That is why writing
+  sequentially is fast enough and reading back is very slow: every read is a round trip to the card.
+- **A queue family ownership transfer** is where a driver may convert a resource between the representations two
+  hardware engines use. For a plain buffer on this GPU it is probably close to free; for compressed images it can be a
+  real decompression. Vulkan does not promise either way, which is why the API makes it explicit.
+- **The barrier after a copy** becomes cache maintenance at the end of the copy: making sure the copy's writes leave the
+  engine's buffers and that the caches the vertex fetch reads through hold no stale lines. Which caches, and whether any
+  work is needed at all, is the driver's knowledge, not ours; our part is to say who writes and who reads.
+
+<Quiz
+	questions={[
+		{
+			q: 'Step 15 waits on the copy\'s fence before it records the first draw. Why does the copy\'s command buffer still end with a barrier to VERTEX_ATTRIBUTE_INPUT / VERTEX_ATTRIBUTE_READ?',
+			options: [
+				{
+					text: 'The fence makes the writes available, not visible; the barrier makes them visible to vertex input',
+					why: 'Right: a fence signal\'s second access scope is empty. Visibility for the draws comes from the barrier (or a semaphore wait).',
+				},
+				{
+					text: 'Because a fence signal only waits for the copy to start executing on the queue, not for it to finish',
+					why: 'A fence signal covers the completion of all the batch\'s work; the copy is done when the wait returns.',
+				},
+				{
+					text: 'Because validation reports an error without it',
+					why: 'It does not: core validation sees valid calls, and even sync validation stayed silent here. The rule comes from the memory model.',
+				},
+				{
+					text: 'To transition the buffers into a layout for vertex input',
+					why: 'Buffers have no layouts; only images do. The barrier is purely a memory dependency.',
+				},
+			],
+			answer: 0,
+			ref: '#available-is-not-visible',
+		},
+		{
+			q: 'The release on the transfer queue signals a semaphore, and the acquire on the graphics queue waits on it. Which stage mask may they use in Vulkan 1.4 core?',
+			options: [
+				{
+					text: 'COPY for the signal, VERTEX_ATTRIBUTE_INPUT for the wait',
+					why: 'Release and acquire happen in no defined stage, so precise stages are allowed only with the maintenance8 flag.',
+				},
+				{
+					text: 'ALL_COMMANDS on both sides',
+					why: 'Right: without VK_DEPENDENCY_QUEUE_FAMILY_OWNERSHIP_TRANSFER_USE_ALL_STAGES_BIT_KHR, ALL_COMMANDS is the only valid stage.',
+				},
+				{
+					text: 'Any stage, since semaphores ignore the stages of barriers',
+					why: 'The semaphore orders the release before the acquire; it has to wait for operations that sit in no particular stage.',
+				},
+				{
+					text: 'NONE for the signal, because the release has no writes of its own',
+					why: 'A NONE signal scope would wait for nothing at all, and the acquire could run before the release.',
+				},
+			],
+			answer: 1,
+			ref: '#the-release',
+		},
+		{
+			q: 'A program copies into an EXCLUSIVE buffer on the transfer queue and orders the draws after it with a semaphore, but records no release and no acquire. What does the spec say about the draws\' reads?',
+			options: [
+				{
+					text: 'They are fine: the semaphore wait already made the copy\'s writes visible to all device accesses',
+					why: 'Visibility is not enough: without an ownership transfer the contents are undefined for the second family.',
+				},
+				{
+					text: 'They read zeros until the next vkQueueWaitIdle',
+					why: 'Nothing defines zeros; the spec leaves the contents undefined, whatever they happen to be on one GPU.',
+				},
+				{
+					text: 'The contents of the buffer are undefined for the graphics family',
+					why: 'Right: correctly expressed memory dependencies without an ownership transfer leave the contents undefined for reads by the second family.',
+				},
+				{
+					text: 'The semaphore wait fails with VK_ERROR_DEVICE_LOST',
+					why: 'Nothing fails at run time; the reads are simply not guaranteed to see the copy.',
+				},
+			],
+			answer: 2,
+			ref: '#the-acquire',
+		},
+		{
+			q: 'Uploading 176 bytes took about 0.02 ms through the BAR and about 1 ms through a staging copy on the course machine. Where does the copy\'s time go?',
+			options: [
+				{
+					text: 'Into latency: recording, submitting, the GPU picking up the work and the fence waking the CPU',
+					why: 'Right: 176 bytes are nothing for the bus; the round trip of a submission dominates.',
+				},
+				{
+					text: 'Into the PCIe transfer of 176 bytes, which is slower for the copy engine than for the CPU',
+					why: 'At the measured 11-13 GB/s, 176 bytes take far less than a microsecond; bandwidth is not the cost here.',
+				},
+				{
+					text: 'Into the barrier, which flushes all the GPU\'s caches',
+					why: 'A barrier is cheap compared with a submission round trip, and it does not flush everything.',
+				},
+				{
+					text: 'Into the staging buffer\'s memcpy',
+					why: 'The CPU part took 0.01-0.02 ms, the same as the BAR writes.',
+				},
+			],
+			answer: 0,
+			ref: '#what-each-road-costs',
+		},
+	]}
+/>

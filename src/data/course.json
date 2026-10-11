@@ -75,6 +75,17 @@
         { "slug": "timeline-semaphores", "title": "Timeline semaphores", "summary": "One 64-bit counter that only grows replaces a fence per frame; why acquire and present still need binary semaphores." },
         { "slug": "swapchain-recreation", "title": "Swapchain recreation", "summary": "Resizing and minimizing the window: OUT_OF_DATE and SUBOPTIMAL, oldSwapchain, and knowing when the old swapchain is free - present fences or vkDeviceWaitIdle." }
       ]
+    },
+    {
+      "slug": "memory",
+      "title": "Resources and memory",
+      "summary": "Where the bytes of a buffer live: heaps and memory types, vertex and index buffers, three ways to upload data into VRAM, and allocators that place thousands of resources in a few blocks.",
+      "lessons": [
+        { "slug": "memory-types", "title": "Memory heaps and memory types", "short": "Memory types", "summary": "A buffer and its memory are two objects: the heaps and types a GPU reports, memory requirements and memoryTypeBits, and the rule that picks a type." },
+        { "slug": "vertex-and-index-buffers", "title": "Vertex and index buffers", "summary": "Vertices from memory instead of shader constants: bindings, attributes and Slang locations, an index buffer that stores each vertex once, and the simplest placement in mappable memory." },
+        { "slug": "staging-uploads", "title": "Staging uploads", "summary": "Three ways into VRAM - a copy on the graphics queue, a copy on the transfer queue with an ownership transfer, a direct write through the BAR window - with measured costs, and why a fence does not make a copy visible." },
+        { "slug": "allocators", "title": "Allocators and sub-allocation", "short": "Allocators", "summary": "Why real programs make a few big allocations and place thousands of resources inside them: the measured cost of vkAllocateMemory, alignment rules, a linear allocator in Rust and VMA in C++." }
+      ]
     }
   ],
   "labs": [
@@ -89,6 +100,6 @@
     { "slug": "object-builder", "lesson": "logical-device", "title": "Build the object tree", "summary": "Create and destroy Vulkan objects in any order; the simulator answers with the real validation rules." },
     { "slug": "queue-sync", "lesson": "fences-and-semaphores", "title": "Queues, semaphores and fences", "summary": "Submit batches to several queues with wait and signal semaphores and a fence: see what overlaps, what waits and where a race appears." },
     { "slug": "graphics-pipeline", "lesson": "graphics-pipeline", "title": "The graphics pipeline", "summary": "Walk the stages from vertex input to color output, and see which state is baked into a pipeline and which is dynamic in Vulkan 1.4." },
-    { "slug": "buffer-memory", "title": "Buffers and memory", "summary": "From buffer usage to memory requirements to a memory type of the real course GPU, and a staging upload or a direct write through the BAR window." }
+    { "slug": "buffer-memory", "lesson": "memory-types", "title":"Buffers and memory", "summary": "From buffer usage to memory requirements to a memory type of the real course GPU, and a staging upload or a direct write through the BAR window." }
   ]
 }

@@ -131,7 +131,7 @@ Files per lab `<slug>`: model `src/lib/labs/<slug>.ts` (pure, no DOM), view `src
 | object-builder | ObjectGraph (`src/components/ObjectGraph*`, model `src/lib/objects.ts`) | devices/logical-device |
 | queue-sync | QueueSync | sync/fences-and-semaphores (EN + RU) |
 | graphics-pipeline | GraphicsPipeline | pipeline/graphics-pipeline (EN + RU) |
-| buffer-memory | BufferMemory | none yet (module 8) |
+| buffer-memory | BufferMemory | memory/memory-types (EN; RU lesson is a placeholder) |
 
 Widget texts: fill placeholders ONLY with `tfmt(lang, text, vars)` from `src/lib/text.ts` (never the engine `fmt`).
 Counts use ICU-style plural placeholders `{n|# очередь|# очереди|# очередей}` (ru: one/few/many, en: one/other, `#` =
@@ -290,7 +290,7 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
   write_mapped). 15: comments on fence = available not visible (the barrier/acquire makes the copy visible; validation
   is silent because sync validation is off by default and a host fence wait closes the batch's hazards), on the
   ownership transfer being required even though the semaphore wait already gives visibility (spec quote, "Resource
-  Sharing Mode"); `--bar` checks vertex+index together via vkGetDeviceBufferMemoryRequirements before allocating
+  Sharing Mode"; corrected 2026-10-11 in both comments to "Queue Family Ownership Transfer", where the sentence really is); `--bar` checks vertex+index together via vkGetDeviceBufferMemoryRequirements before allocating
   (`--bar --mib 214` = heap size 224395264 exactly now fails with "vertex + index buffers need 224395300 bytes ...";
   heap size is an upper bound, not the budget - VK_EXT_memory_budget). Rust 15 upload_staged: `UploadScratch` guard
   (device_wait_idle + destroy on drop = C++ IdleGuard + RAII). 16: `--count` checked against the heap before
@@ -329,8 +329,25 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
   "examples 13-16". Logs: scratchpad m8/ (session-local).
 - [ ] Screenshots of 14/15: NOT taken - on 2026-10-11 (module 8 session) the capture of the 14 window was white again (same as
   10-12). Retake `examples/screenshots/{14_vertex_buffer,15_staging}.png` when the desktop shows Vulkan windows.
-- [ ] Module 8: independent reviews of 13-16 (code vs spec), then the EN lessons memory/{memory-types,
-  vertex-and-index-buffers, staging-uploads, allocators}; embed the buffer-memory lab in memory-types.
+- [x] Module 8 EN lessons (2026-10-11): memory/{memory-types (embeds BufferMemory + RebarCheck, ObjectGraph build with
+  device-memory/buffer), vertex-and-index-buffers, staging-uploads, allocators}; RU pages are placeholders («Русская
+  версия урока готовится.»). Regions shown once: 13 all; 14 vertex/mesh/vertex-input/create-buffer/vertex-buffer/
+  index-buffer/bind-and-draw (+ `<Snippet src="shaders/mesh.slang">`); 15 cli/mesh-bytes/staging-buffer/
+  device-local-buffers/record-copy/copy-barrier/finish-upload/transfer-family/release-ownership/acquire-ownership/
+  bar-write; 16 allocation-limit/cli/test-buffers/raw/allocator/sub-allocate. Not shown: 14/15 regions identical to
+  09/10 (frame loop), 15 find-memory-type/create-buffer/vertex/mesh/vertex-input (= 14), 16 cleanup. 22 terms added
+  (memory-heap, memory-type, device-local, host-visible, host-coherent, host-cached, lazily-allocated, bar,
+  vk-device-memory, vk-buffer, memory-requirements, memory-type-bits, vertex-buffer, index-buffer,
+  vertex-input-binding, vertex-input-attribute, staging-buffer, queue-family-ownership-transfer, sub-allocation,
+  linear-allocator, vma, buffer-image-granularity) + RU overlay; objects.json device-memory/buffer got `term`.
+  Older EN lessons now link here instead of "module 8" (fences-and-semaphores x2, shaders-and-spirv, barriers).
+  Lesson measurements (scratchpad m8lesson/, session-local; release, validation on, sync off, 3 runs per language
+  alternating): 15 --mib 64 staging CPU 5.9-9.8 ms, GPU copy 5.1-6.7 ms (graphics 5.3-6.7, transfer 5.1-6.1), BAR
+  13.0-16.0 ms (4.2-5.2 GB/s); 176 B: graphics copy 0.83-0.98 ms, transfer 1.19-1.74 ms, BAR 0.017-0.027 ms;
+  16: raw 127-150 us create / 316-368 us destroy per buffer, allocator 2.8-4.8 / 1.9-3.8 us. 14 vs 15 fps (Rust,
+  2 s x3): 2903-2999 vs 2907-2936 (no measurable difference for 176 bytes). vulkaninfo 2026-10-11: type 2 "usable
+  for" no image either; heap budgets quoted in memory-types. Heap 1 = exactly half of the 68630528000 bytes of RAM.
+- [ ] Module 8: independent review of the EN lessons (facts vs spec/runs, quizzes), then the RU lessons.
 
 - [x] Stage 1: course-kit engine; [x] site on the kit; [x] examples 01-05 both languages; [x] lessons 1-10
 - [x] ObjectGraph map + build modes; [x] two reviewers, findings fixed; [x] CI (tests, clippy/fmt, Pages)
@@ -338,7 +355,7 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
   reviewed by independent readers, built, screenshots in both languages, deployed
 - [x] 12 labs (2026-10-10); consolidation: tools/vk-probe, VUID single source, shared find-memory-type rule, astro check clean
 - [ ] Release course-kit v0.4.1 (declarations), bump the tag here, then add `bun run check` to the CI test job
-- [ ] Embed queue-sync and buffer-memory in their lessons once modules 7/8 exist ([x] graphics-pipeline, EN)
+- [x] Embed queue-sync and buffer-memory in their lessons (EN: fences-and-semaphores, memory-types; RU pending for buffer-memory)
 - [x] RU lessons of modules 4-6 incl. GraphicsPipeline in ru/pipeline/graphics-pipeline
 - [ ] labs/graphics-pipeline.mdx (EN+RU) still says it previews the pipeline module: reword now that the lesson exists
 - [ ] C++ examples in CI (needs Vulkan SDK headers 1.4.341 with vulkan_raii.hpp on the runner)

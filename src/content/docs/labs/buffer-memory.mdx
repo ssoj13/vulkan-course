@@ -7,9 +7,10 @@ import RebarCheck from '../../../components/RebarCheck.astro';
 
 In Vulkan a buffer and its memory are two objects. `vkCreateBuffer` only describes the buffer; the driver then says
 what memory it needs, you pick a memory type, allocate a block and bind the two. This lab answers **how a buffer finds
-its memory, and how data gets into memory the CPU cannot see.** It previews the memory module; why the choice matters
-at all (VRAM vs system RAM over PCIe) is in [what a GPU is](lesson:gpu#its-own-memory) and
-[where the data lives](lab:memory-path).
+its memory, and how data gets into memory the CPU cannot see.** Its lesson is
+[memory heaps and memory types](lesson:memory-types); the copy and the BAR write are measured in
+[staging uploads](lesson:staging-uploads). Why the choice matters at all (VRAM vs system RAM over PCIe) is in
+[what a GPU is](lesson:gpu#its-own-memory) and [where the data lives](lab:memory-path).
 
 Pick usage flags, a size and where the buffer should live, then scrub through the steps. Every number is real: the
 heaps and types come from vulkaninfo on the course GPU, and the memory requirements (size, alignment,

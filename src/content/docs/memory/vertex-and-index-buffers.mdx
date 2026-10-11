@@ -1,0 +1,333 @@
+---
+title: Vertex and index buffers
+description: 'Vertices from memory instead of shader constants: bindings, attributes and Slang locations, an index buffer that stores each vertex once, and the simplest placement in mappable memory.'
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import MindMap from 'course-kit/components/MindMap.astro';
+import Quiz from 'course-kit/components/Quiz.astro';
+import Snippet from 'course-kit/components/Snippet.astro';
+import Step from '../../../components/Step.astro';
+
+The first triangle kept its three corners as constants inside the shader. A real mesh has thousands of vertices, and
+they come from a file, not from shader source. How does the GPU find the vertices in a buffer, what tells it where
+each attribute lies inside one vertex, how does an index buffer let a vertex shared by six triangles be stored once,
+and what does the simplest placement, in memory the CPU can map, cost?
+
+## Where this fits
+
+The second lesson of the **resources and memory** module, on the API layer with a look at the hardware unit that
+reads vertices. [Memory types](lesson:memory-types) gave us buffers and the memory behind them; here two buffers get
+their first real job. The chain from bytes to a shader input:
+
+`Vertex struct → vertex buffer (VERTEX_BUFFER) → vertex input binding (slot, stride, rate) → vertex input attribute (location, format, offset) → [[vk::location]] in Slang → vertex shader`
+
+and next to it the index path: `index buffer (UINT16) → vkCmdDrawIndexed → which vertex each corner uses`.
+
+A [vertex buffer](term:vertex-buffer) is a [VkBuffer](term:vk-buffer) with `VERTEX_BUFFER` usage; a
+[vertex input binding](term:vertex-input-binding) is a slot of the [pipeline](term:vk-pipeline) that a vertex buffer is
+bound to; a [vertex input attribute](term:vertex-input-attribute) is one [shader](term:shader) input, read from a
+binding at an offset; an [index buffer](term:index-buffer) is a buffer of vertex numbers that a draw walks through.
+The [graphics pipeline lesson](lesson:graphics-pipeline) left the vertex input stage empty; this lesson fills it.
+
+## Points, vertices and indices
+
+Houdini users already know the model, under different names. Houdini keeps **points** (positions and point
+attributes) and **primitives** that refer to points through their **vertices**. A cube has 8 points and 24 vertices:
+every corner point is shared by three faces.
+
+Vulkan's split is the same idea:
+
+| Houdini | Vulkan | Stored where |
+|---|---|---|
+| point (position, `Cd`, `N`, `uv` as point attributes) | **vertex**: one element of the vertex buffer | vertex buffer |
+| vertex (a primitive's reference to a point) | **index**: a number in the index buffer | index buffer |
+| primitive (polygon) | primitive of the topology: here every 3 indices = 1 triangle | implied by `TRIANGLE_LIST` |
+
+Where the analogy breaks: a Houdini vertex can carry attributes of its own (vertex UVs, vertex normals for hard
+edges). A Vulkan index carries nothing but a number. So a corner with different normals on two faces, or a UV seam,
+needs **two vertices** in the buffer; exporters split them ("vertex splitting") when they write a mesh for real-time
+use.
+
+Step 14 draws a hexagon: 7 vertices (the center and six corners) and 6 triangles, each `(center, corner i, corner i+1)`.
+Without an index buffer it would need 18 vertices; with one, 7 vertices and 18 small indices.
+
+## 1. One vertex in memory
+
+<Step file="14_vertex_buffer" region="vertex" />
+
+Two floats of position and three of color, 20 bytes, no padding. The struct layout is a contract with two other
+places: the pipeline's vertex input state will repeat its offsets (0 and 8) and its size (the stride, 20), and the
+shader will declare the same two inputs. `repr(C)` in Rust and a standard-layout struct in C++ pin the field order; the
+size assertion in both languages catches a change that would break the contract silently.
+
+## 2. The mesh
+
+<Step file="14_vertex_buffer" region="mesh" />
+
+Two details worth noticing. The x coordinates are scaled by 600/800, because clip space is stretched to the 800x600
+window and a regular hexagon would otherwise come out wide. And the winding: angles grow from +x towards +y, which in
+Vulkan's clip space points *down* the screen, so each triangle is clockwise on screen, the front face the pipeline
+declares (back faces are culled, as in step 08).
+
+## 3. The shader side: locations
+
+<Snippet src="shaders/mesh.slang" />
+
+`[[vk::location(0)]]` and `[[vk::location(1)]]` become SPIR-V `Location` decorations on the vertex shader's inputs.
+The semantic names after the colon, `POSITION` and `COLOR`, mean nothing to Vulkan: they are HLSL heritage, and the
+pipeline only ever matches **locations**. Unlike `triangle.slang`, the vertex shader no longer looks at a vertex index
+at all; it receives its inputs already fetched.
+
+## 4. Bindings and attributes
+
+The pipeline describes the vertex layout in two lists:
+
+<Step file="14_vertex_buffer" region="vertex-input" />
+
+```text
+Vertex input: binding 0, stride 20 bytes, per vertex
+  location 0: R32G32_SFLOAT at offset 0
+  location 1: R32G32B32_SFLOAT at offset 8
+```
+
+A [binding](term:vertex-input-binding) is a **slot** for a buffer: its number, the **stride** (bytes from one vertex to
+the next) and the **input rate** (advance per vertex, or per instance for instanced drawing). An
+[attribute](term:vertex-input-attribute) is **one shader input**: the location it feeds, the binding it reads from, the
+format of the data (`R32G32_SFLOAT` is two 32-bit floats, Slang's `float2`) and the offset inside one vertex. The spec
+spells the address of an attribute as one line of arithmetic (simplified for the per-vertex rate):
+
+```c
+attribAddress = bufferBindingAddress + vertexIndex * stride + attribDesc.offset;
+```
+
+where `bufferBindingAddress` is the buffer bound to that slot plus its bind offset. The hierarchy is
+`binding (where the bytes are) → attributes (how to read them)`, and it allows other layouts with the same shader:
+everything **interleaved** in one binding, as here, or each attribute in a binding of its own (positions in one buffer,
+colors in another), which helps when a depth-only pass needs positions alone. This GPU allows 32 bindings and 32
+attributes, a stride up to 2048 bytes and an attribute offset up to 2047 (`maxVertexInputBindings`,
+`maxVertexInputAttributes`, `maxVertexInputBindingStride`, `maxVertexInputAttributeOffset`).
+
+The rules that tie the three places together are in the spec's valid usage:
+
+- every attribute names a binding that exists (`VUID-VkPipelineVertexInputStateCreateInfo-binding-00615`);
+- every vertex shader input with a location has an attribute with that location
+  (`VUID-VkGraphicsPipelineCreateInfo-Input-07904`, unless one of two newer features relaxes it);
+- the numeric type of the shader input matches the attribute's format (`VUID-VkGraphicsPipelineCreateInfo-Input-08733`):
+  a float input fed from a float format, an integer one from an integer format.
+
+## 5. A buffer the CPU can write
+
+Step 14 creates its buffers with step 13's manual path, wrapped in a helper:
+
+<Step file="14_vertex_buffer" region="create-buffer" />
+
+`create_buffer` is create, requirements, first type with the flags, allocate, bind. `write_mapped` is map, `memcpy`,
+unmap; the type is coherent, so the submit that follows makes the bytes visible to the GPU, as the
+[memory types lesson](lesson:memory-types#4-allocate-bind-map) explained. The vertex buffer:
+
+<Step file="14_vertex_buffer" region="vertex-buffer" />
+
+and the index buffer, identical except for its usage:
+
+<Step file="14_vertex_buffer" region="index-buffer" />
+
+```text
+Mesh: hexagon, 7 vertices x 20 bytes = 140 bytes, 18 indices x 2 bytes (UINT16) = 36 bytes (non-indexed: 18 vertices = 360 bytes)
+Vertex buffer: 140 bytes, VERTEX_BUFFER, memory type 3 (HOST_VISIBLE | HOST_COHERENT), written through a mapped pointer
+Index buffer: 36 bytes, INDEX_BUFFER, memory type 3 (HOST_VISIBLE | HOST_COHERENT), written through a mapped pointer
+```
+
+176 bytes in total instead of 360: indexing pays off even on a hexagon, and on a real mesh, where a vertex is shared
+by about six triangles, much more.
+
+## Why this placement is the simple one, not the fast one
+
+Memory type 3 is **system RAM**. The CPU writes it once; the GPU reads it on **every draw**, across PCIe, because a
+vertex buffer is not copied anywhere when it is bound: the vertex fetch reads the bound memory where it lies. Recall the
+numbers from [what a GPU is](lesson:gpu#its-own-memory): about 912 GB/s from VRAM, about 32 GB/s nominal over the
+PCIe 4.0 x16 link, and every fetch from system RAM also waits for the round trip through the CPU's memory controller.
+
+Does it show? For this hexagon, no. Three 2-second Rust release runs of step 14 (vertices in system RAM) drew 2903,
+2914 and 2999 fps; the same runs of step 15 (vertices in VRAM, next lesson) drew 2907, 2915 and 2936 fps. 176 bytes
+fit in a corner of the GPU's caches, and the frame is dominated by everything else. The cost grows with the data that
+crosses the bus every frame: a 64 MiB mesh would have to cross the link on every draw, and step 15 measured a 64 MiB
+copy over the same link at 5-7 ms, which is a third of a 60 fps frame spent on bus traffic before any shading. That
+is an estimate from our copy, not a measurement of a draw; the [where the data lives](lab:memory-path) interactive
+puts such numbers side by side.
+
+So system RAM is the right home for data the CPU rewrites every frame and the GPU reads once (and even that has a
+better home, the BAR heap, shown next lesson), and the wrong home for a mesh drawn every frame for minutes. Moving it
+into `DEVICE_LOCAL` memory, which the CPU usually cannot map, is the subject of [staging uploads](lesson:staging-uploads).
+
+## 6. Bind and draw
+
+<Step file="14_vertex_buffer" region="bind-and-draw" />
+
+Two binds and one draw, recorded inside the dynamic rendering of step 09:
+
+- `vkCmdBindVertexBuffers(cmd, firstBinding 0, [buffer], [offset 0])` puts the vertex buffer in slot 0. The buffer
+  must have `VERTEX_BUFFER` usage (`VUID-vkCmdBindVertexBuffers-pBuffers-00627`);
+- `vkCmdBindIndexBuffer(cmd, buffer, offset 0, UINT16)`: the index buffer and the size of one index. It needs
+  `INDEX_BUFFER` usage (`VUID-vkCmdBindIndexBuffer-buffer-08784`), and the offset plus the buffer's address in memory
+  must be a multiple of the index size (`VUID-vkCmdBindIndexBuffer-offset-08783`): with 32-bit indices that is 4, the
+  alignment the index buffer reported;
+- `vkCmdDrawIndexed(cmd, indexCount 18, instanceCount 1, firstIndex 0, vertexOffset 0, firstInstance 0)`. For each of
+  the 18 indices the vertex index is `index + vertexOffset`; a non-zero `vertexOffset` lets several meshes share one
+  vertex buffer while their indices still start at 0.
+
+**Index types.** `UINT16` covers 65 536 vertices with 2 bytes per index; `UINT32` covers the rest with 4. Vulkan 1.4
+also has `UINT8` (the `indexTypeUint8` feature, supported on this GPU), for tiny meshes. Choose the smallest that fits:
+index bytes are read on every draw too.
+
+**Shared vertices are not always shaded once.** The spec allows, but does not promise, reuse: "the implementation may
+reuse the results of vertex shading if it can statically determine that the vertex shader invocations will produce
+identical results", and "it is implementation-dependent when and if results of vertex shading are reused". GPUs keep a
+small cache of recently shaded vertices, which is why mesh optimizers reorder indices for locality.
+
+## What the program prints
+
+Step 14, Rust, release, closed after 2 seconds with `--seconds 2` (C++ prints the same lines apart from `[timing]`):
+
+```text
+Window: 800x600 pixels
+Found 1 GPU(s)
+GPU 0: NVIDIA GeForce RTX 3080 Ti
+
+Picked: NVIDIA GeForce RTX 3080 Ti
+Graphics + present family: 0
+VkDevice created with VK_KHR_swapchain
+Swapchain: 800x600 B8G8R8A8_SRGB, MAILBOX, 3 images
+
+SPIR-V: 900 bytes (mesh.spv), entry points vertexMain, fragmentMain
+Vertex input: binding 0, stride 20 bytes, per vertex
+  location 0: R32G32_SFLOAT at offset 0
+  location 1: R32G32B32_SFLOAT at offset 8
+Graphics pipeline created (vertex input from binding 0)
+
+Mesh: hexagon, 7 vertices x 20 bytes = 140 bytes, 18 indices x 2 bytes (UINT16) = 36 bytes (non-indexed: 18 vertices = 360 bytes)
+Vertex buffer: 140 bytes, VERTEX_BUFFER, memory type 3 (HOST_VISIBLE | HOST_COHERENT), written through a mapped pointer
+Index buffer: 36 bytes, INDEX_BUFFER, memory type 3 (HOST_VISIBLE | HOST_COHERENT), written through a mapped pointer
+
+2 frames in flight
+Rendering. Close the window to exit.
+Window closed
+[timing] 6013 frames in 2.0 s, 2999 fps
+```
+
+The rest of the program is step 10's frame loop with two frames in flight: wait for the slot's fence, acquire, record,
+submit, present. The window shows a hexagon with a white center and the six corner colors blended across each
+triangle by the rasterizer's interpolation.
+
+## The map of this lesson
+
+<MindMap />
+
+## Underneath
+
+- **Vertex fetch** is the first thing a draw does. Depending on the GPU it is a fixed-function unit, or load
+  instructions the driver puts at the start of the vertex shader (AMD documents such a "fetch shader" for its GCN
+  generation). Either way the attribute descriptions are compiled into the pipeline: the formats, offsets and stride are
+  known when the pipeline is built, which is one reason vertex input state is part of it.
+- **Reads from system RAM** leave the GPU as PCIe read requests, travel through the CPU's root complex to its memory
+  controller, and come back. Reads are slower than writes on the bus because each one waits for its answer; the GPU
+  hides some of that by keeping many requests in flight and by caching what it fetched in its L2.
+- **The index buffer** is read by the same front end before vertex fetch: it turns indices into vertex addresses with
+  the formula above, and checks its small cache of shaded vertices before launching new vertex shader work.
+
+<Quiz
+	questions={[
+		{
+			q: 'The vertex shader declares [[vk::location(1)]] float3 color : COLOR. What does the pipeline use to connect it to the right bytes in the vertex buffer?',
+			options: [
+				{
+					text: 'The semantic name COLOR, matched against the names of the pipeline\'s attributes',
+					why: 'Vulkan attributes have no names; the semantic is HLSL heritage and is ignored for vertex input.',
+				},
+				{
+					text: 'The order of the fields in the Slang struct',
+					why: 'Field order says nothing to Vulkan; two different structs could feed the same locations.',
+				},
+				{
+					text: 'The attribute with location 1, its binding, format and offset',
+					why: 'Right: the attribute with the same location says where (binding, offset) and how (format) to read the input.',
+				},
+				{
+					text: 'The stride of binding 0, divided by the number of inputs',
+					why: 'The stride says how far apart vertices are, not where each input lies inside one; that is the attribute offset.',
+				},
+			],
+			answer: 2,
+			ref: '#4-bindings-and-attributes',
+		},
+		{
+			q: 'A cube is exported for real-time use with flat shading: each face has its own normal. How many vertices does its vertex buffer need, with an index buffer?',
+			options: [
+				{
+					text: '8, one per corner, since indices let faces share them',
+					why: 'An index carries no attributes of its own: a corner with three different face normals needs three vertices.',
+				},
+				{
+					text: '24: four per face, because the normals differ',
+					why: 'Right: every corner is split into one vertex per face that uses it, 6 faces x 4 corners; the indices then reuse them within a face.',
+				},
+				{
+					text: '36: three per triangle, indexing cannot help a hard-edged cube',
+					why: 'Within one face the two triangles still share two vertices; 36 is the non-indexed count.',
+				},
+				{
+					text: '12, one per triangle, holding the face normal',
+					why: 'Vertices are per corner, not per triangle; each triangle still needs three vertices with positions.',
+				},
+			],
+			answer: 1,
+			ref: '#points-vertices-and-indices',
+		},
+		{
+			q: 'Step 14 keeps its vertices in memory type 3, HOST_VISIBLE | HOST_COHERENT system RAM. What does that cost?',
+			options: [
+				{
+					text: 'Nothing: binding the buffer copies it into VRAM once',
+					why: 'Binding copies nothing; the vertex fetch reads the bound memory where it lies, on every draw.',
+				},
+				{
+					text: 'A flush of the mapped range before every draw',
+					why: 'The type is coherent, and the bytes never change; the submission already makes the one-time writes visible.',
+				},
+				{
+					text: 'Every draw reads the vertices across PCIe; invisible for a hexagon, large for big meshes',
+					why: 'Right: system RAM is reached over the bus on each draw; 176 bytes do not show in the frame rate, megabytes per frame would.',
+				},
+				{
+					text: 'The vertex shader runs on the CPU instead, because the CPU can map this memory and the GPU cannot',
+					why: 'Shaders always run on the GPU; only the place the vertex fetch reads from changes.',
+				},
+			],
+			answer: 2,
+			ref: '#why-this-placement-is-the-simple-one-not-the-fast-one',
+		},
+		{
+			q: 'Two meshes share one vertex buffer: mesh B starts at vertex 1000, and its indices start at 0. How does a draw of mesh B find its vertices?',
+			options: [
+				{
+					text: 'vkCmdDrawIndexed with vertexOffset 1000, which is added to every index',
+					why: 'Right: the vertex index is index + vertexOffset, so B\'s indices stay 0-based.',
+				},
+				{
+					text: 'Rewrite mesh B\'s indices on the CPU so that they start at 1000, before each draw',
+					why: 'That works but is unnecessary; vertexOffset exists exactly to avoid rewriting indices.',
+				},
+				{
+					text: 'Use firstIndex 1000',
+					why: 'firstIndex selects where to start reading the index buffer, not which vertices the indices refer to.',
+				},
+				{
+					text: 'Bind the vertex buffer at offset 1000',
+					why: 'The bind offset is in bytes, not vertices: it would need 1000 x 20 = 20000 bytes, and vertexOffset is the direct way.',
+				},
+			],
+			answer: 0,
+			ref: '#6-bind-and-draw',
+		},
+	]}
+/>

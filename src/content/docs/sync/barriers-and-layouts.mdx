@@ -145,8 +145,8 @@ Step 12 renders the triangle into a 400x300 **offscreen** image and then **blits
 
 Our first image that does not come from a swapchain. Its usage says what it will be: `COLOR_ATTACHMENT` (rendered
 into) and `TRANSFER_SRC` (blitted from); its format must support rendering and blitting on optimal tiling. Unlike a
-swapchain image it has no memory of its own, so the program allocates video memory and binds it; memory types are
-module 8 material, here it is just "the first `DEVICE_LOCAL` type the image accepts" (memory
+swapchain image it has no memory of its own, so the program allocates video memory and binds it; how a memory type is
+chosen is the subject of [memory types](lesson:memory-types); here it is just "the first `DEVICE_LOCAL` type the image accepts" (memory
 type 1 on the course GPU). The swapchain images, in turn, need `TRANSFER_DST` to be a blit destination; that and a
 surprising second usage flag are shown in [swapchain recreation](lesson:swapchain-recreation#who-else-uses-the-swapchain-images).
 

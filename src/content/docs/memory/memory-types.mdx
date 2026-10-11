@@ -1,0 +1,458 @@
+---
+title: Memory heaps and memory types
+description: 'A buffer and its memory are two objects: the heaps and types a GPU reports, memory requirements and memoryTypeBits, and the rule that picks a type.'
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import MindMap from 'course-kit/components/MindMap.astro';
+import Quiz from 'course-kit/components/Quiz.astro';
+import Step from '../../../components/Step.astro';
+import ObjectGraph from '../../../components/ObjectGraph.astro';
+import BufferMemory from '../../../components/labs/BufferMemory.astro';
+import RebarCheck from '../../../components/RebarCheck.astro';
+
+So far every byte the GPU touched came with an object that owned it: the swapchain images brought their own memory,
+and the triangle's corners were constants inside the shader. From now on the data is ours: vertices, indices, later
+uniforms and textures. Where do those bytes live, who decides where, and how does a program choose the right memory
+out of the list a GPU reports?
+
+## Where this fits
+
+The first lesson of the **resources and memory** module. It runs through every layer of the course at once: the
+hardware (VRAM, system RAM, the PCIe bus between them), what the driver reports about it, and the API objects that a
+program builds on top. Two chains carry the whole module:
+
+`VRAM / system RAM → memory heap → memory type (property flags) → VkDeviceMemory → VkBuffer bound at an offset`
+
+`vkCreateBuffer → memory requirements (size, alignment, memoryTypeBits) → find-memory-type rule → vkAllocateMemory → vkBindBufferMemory → vkMapMemory`
+
+A [memory heap](term:memory-heap) is a physical pool of memory; a [memory type](term:memory-type) is one way of using a
+heap, described by property flags such as [DEVICE_LOCAL](term:device-local) and [HOST_VISIBLE](term:host-visible); a
+[VkDeviceMemory](term:vk-device-memory) is an allocation from one type; a [VkBuffer](term:vk-buffer) is bound into it,
+after the driver has stated its [memory requirements](term:memory-requirements), among them
+[memoryTypeBits](term:memory-type-bits). The [barriers lesson](lesson:barriers-and-layouts#1-the-offscreen-image) already
+allocated memory for an image with "the first `DEVICE_LOCAL` type the image accepts"; this lesson explains that phrase.
+The next lessons build on it: [vertex and index buffers](lesson:vertex-and-index-buffers),
+[staging uploads](lesson:staging-uploads) and [allocators](lesson:allocators).
+
+## A buffer is only a description
+
+In a compositor, a node that says "1920x1080, half float, RGBA" is not the image. The pixels live in a frame cache
+somewhere, and the node points at them. Vulkan splits a buffer the same way, into two objects:
+
+- a [VkBuffer](term:vk-buffer) is the description: a size and **usage flags** (vertex data, index data, uniforms, copy
+  source or destination...). `vkCreateBuffer` allocates no memory for its contents;
+- a [VkDeviceMemory](term:vk-device-memory) is the storage: a block of bytes of one memory type, made by
+  `vkAllocateMemory`.
+
+`vkBindBufferMemory(buffer, memory, offset)` connects them, once and for good: the buffer's bytes are from then on the
+range `[offset, offset + size)` of that block. Why not just one call that does it all, as `glBufferData` did? Because the
+two decisions belong to different people. Only the driver knows what a buffer with this usage needs from memory; only
+the program knows how the data will be used, how many buffers there will be, and which of them may share a block.
+Splitting them lets the driver state its constraints and the program make the choice, and it lets thousands of
+buffers share a few blocks, which the [allocators lesson](lesson:allocators) shows to be essential.
+
+## Heaps: the physical pools
+
+`vkGetPhysicalDeviceMemoryProperties` returns two lists. The first is the **heaps**: each a size and a flag saying
+whether it is device-local. Step 13 prints them for the course GPU:
+
+```text
+Memory heaps: 3
+  heap 0: 12673089536 bytes = 12086.0 MiB, DEVICE_LOCAL
+  heap 1: 34315264000 bytes = 32725.6 MiB, (none)
+  heap 2: 224395264 bytes = 214.0 MiB, DEVICE_LOCAL
+```
+
+- **Heap 0** is the card's VRAM: the 12 GB of GDDR6X from [what a GPU is](lesson:gpu#its-own-memory), a little less
+  than 12 GiB.
+- **Heap 1** is system RAM that the GPU may use. Not all of it: Windows reports 68630528000 bytes of RAM on this machine,
+  and the heap is exactly half of that. The GPU reaches it over PCIe.
+- **Heap 2** is VRAM again, but a special 214 MiB of it: the part the CPU can address through the PCIe **BAR** window.
+
+A heap is a pool, not a promise. Its size is an upper bound: the operating system, the driver and other programs use
+the same memory. `vulkaninfo` shows the difference, because it enables `VK_EXT_memory_budget` (run 2026-10-11, shortened):
+
+```text
+memoryHeaps[0]:
+	size   = 12673089536 (0x2f3600000) (11.80 GiB)
+	budget = 11867783168 (0x2c3600000) (11.05 GiB)
+memoryHeaps[2]:
+	size   = 224395264 (0x0d600000) (214.00 MiB)
+	budget = 223043584 (0x0d4b6000) (212.71 MiB)
+	usage  = 1351680 (0x0014a000) (1.29 MiB)
+```
+
+The budget is "how much this process can use without trouble right now", and it changes while the program runs. The
+course programs check the heap size only, and say so in their error messages.
+
+## Types: how a heap can be used
+
+The second list is the **memory types**. Each type points at one heap and carries **property flags**; several types may
+share a heap. The same machine:
+
+```text
+Memory types: 6
+  type 0: heap 1, (none)
+  type 1: heap 0, DEVICE_LOCAL
+  type 2: heap 0, DEVICE_LOCAL
+  type 3: heap 1, HOST_VISIBLE | HOST_COHERENT
+  type 4: heap 1, HOST_VISIBLE | HOST_COHERENT | HOST_CACHED
+  type 5: heap 2, DEVICE_LOCAL | HOST_VISIBLE | HOST_COHERENT
+```
+
+The flags are a small vocabulary, and they stack into a ladder. On the GPU side there is one rung; on the CPU side three,
+each built on the one below:
+
+| Flag | The spec's meaning | What it means in practice |
+|---|---|---|
+| [DEVICE_LOCAL](term:device-local) | "the most efficient for device access"; set exactly when the heap is device-local | VRAM on a discrete GPU: where the GPU wants its data |
+| [HOST_VISIBLE](term:host-visible) | "can be mapped for host access using `vkMapMemory`" | the CPU can get a pointer into it |
+| [HOST_COHERENT](term:host-coherent) | the flush and invalidate commands "are not needed to manage availability and visibility on the host" | CPU writes need no explicit flush |
+| [HOST_CACHED](term:host-cached) | "cached on the host"; "uncached memory is always host coherent" | CPU **reads** go through the CPU caches: fast readback |
+| [LAZILY_ALLOCATED](term:lazily-allocated) | "only allows device access"; backing may be provided lazily | transient attachments on tile-based GPUs; no type has it here |
+
+The last row deserves a sentence of its own: a lazily allocated type is for images created with
+`TRANSIENT_ATTACHMENT` usage (an MSAA or depth attachment that lives only during a render pass on a tile-based GPU, material of
+module 10). The spec rules it out for buffers in so many
+words: "lazily allocated memory is disallowed for buffers in all cases". There are a few more flags (`PROTECTED` for
+protected content, two AMD and one NVIDIA vendor flag); none of them appear on the course GPU.
+
+Read the six types with the flags in mind:
+
+- **type 0**, system RAM without `HOST_VISIBLE`: the GPU can use it, the CPU cannot map it. Rarely chosen on purpose;
+- **types 1 and 2**, VRAM: two types with identical flags on the same heap. Why two is the subject of
+  [a section below](#memorytypebits--59-and-the-missing-type-2);
+- **type 3**, system RAM the CPU can map, coherent and *uncached*: on x86 such memory is typically write-combined,
+  meaning CPU writes are gathered and sent over the bus in bursts, and CPU reads are slow. The natural home of a
+  [staging buffer](term:staging-buffer);
+- **type 4**, the same RAM, also `HOST_CACHED`: the type for data the GPU writes and the CPU reads back;
+- **type 5**, VRAM the CPU can map: the [BAR window](term:bar). The CPU writes go over PCIe straight into video memory.
+
+<RebarCheck />
+
+## Step 13: asking the driver
+
+Step 13 has no window. It creates a device as step 05 did and then asks memory questions only, in order: what memory
+exists, which limits apply, what different buffers need, which type each kind of data should use, and finally the
+full manual path for one buffer.
+
+### 1. Heaps and types
+
+<Step file="13_memory_types" region="memory-properties" />
+
+Two loops over the two arrays of `VkPhysicalDeviceMemoryProperties`; the flag names are printed from a table so that
+both languages print the same text. The output is the two listings above.
+
+### 2. Limits that matter for memory
+
+<Step file="13_memory_types" region="memory-limits" />
+
+```text
+Limits: maxMemoryAllocationCount 4294967295, minMemoryMapAlignment 64, nonCoherentAtomSize 64, bufferImageGranularity 1024
+```
+
+- `maxMemoryAllocationCount` is how many `VkDeviceMemory` objects may exist at the same time. This driver reports
+  4294967295, the largest 32-bit value. The spec only guarantees 4096, and that is the number a portable program plans
+  for: a program that gives each of its 10 000 buffers its own allocation breaks on a driver that reports the minimum.
+  The [allocators lesson](lesson:allocators) measures why you would not want to anyway;
+- `minMemoryMapAlignment`: a pointer from `vkMapMemory` is aligned to at least 64 bytes;
+- `nonCoherentAtomSize`: the granularity of flushes and invalidates of *non-coherent* memory. Every `HOST_VISIBLE`
+  type on this GPU is also `HOST_COHERENT`, so it does not apply here, but it does on GPUs with a cached, non-coherent
+  type;
+- `bufferImageGranularity`: how far apart buffers and optimal-tiling images must stay when they share an allocation
+  (also in the allocators lesson).
+
+### 3. What a buffer needs: memory requirements
+
+<Step file="13_memory_types" region="requirements" />
+
+A buffer is created without memory, then `vkGetBufferMemoryRequirements` returns its
+[memory requirements](term:memory-requirements). The six sample buffers:
+
+```text
+Buffer requirements (vkGetBufferMemoryRequirements):
+  vertex                VERTEX_BUFFER, 1000 bytes -> size 1008, alignment 16, memoryTypeBits 0b111011 (types 0, 1, 3, 4, 5)
+  index                 INDEX_BUFFER, 100 bytes -> size 100, alignment 4, memoryTypeBits 0b111011 (types 0, 1, 3, 4, 5)
+  uniform               UNIFORM_BUFFER, 100 bytes -> size 128, alignment 64, memoryTypeBits 0b111011 (types 0, 1, 3, 4, 5)
+  storage               STORAGE_BUFFER, 1000 bytes -> size 1008, alignment 16, memoryTypeBits 0b111011 (types 0, 1, 3, 4, 5)
+  staging               TRANSFER_SRC, 65536 bytes -> size 65536, alignment 16, memoryTypeBits 0b111011 (types 0, 1, 3, 4, 5)
+  vertex (copy target)  TRANSFER_DST | VERTEX_BUFFER, 65536 bytes -> size 65536, alignment 16, memoryTypeBits 0b111011 (types 0, 1, 3, 4, 5)
+```
+
+Three numbers per buffer:
+
+- **size**: how many bytes to allocate. It may be more than requested: 1000 bytes become 1008, a multiple of the
+  alignment 16;
+- **alignment**: the offset the buffer is bound at must be a multiple of it. It depends on the usage: 4 for an index
+  buffer, 16 for most, 64 as soon as `UNIFORM_BUFFER` is set. That 64 is not arbitrary: the spec requires the alignment
+  to satisfy the descriptor offset rules of the usage, and `minUniformBufferOffsetAlignment` is 64 on this GPU;
+- **memoryTypeBits**: which memory types may hold the buffer. Bit *i* set means type *i* is allowed.
+
+## memoryTypeBits = 59 and the missing type 2
+
+`0b111011` is 59: bits 0, 1, 3, 4 and 5. Every buffer here reports the same mask, and that is not a coincidence of six
+samples: the course's capture tool asked for all 63 combinations of the six usage flags at five sizes
+(`src/data/buffer-requirements.json`), and every answer is 59. The spec guarantees some of that shape:
+
+- the mask is identical for all buffers with the same usage and create flags;
+- a normal buffer always allows at least one `HOST_VISIBLE | HOST_COHERENT` type ("mappable coherent memory can always
+  be attached") and at least one `DEVICE_LOCAL` type;
+- it never contains a `LAZILY_ALLOCATED` type.
+
+What the spec does not say is that every type of the device must be allowed for buffers, and here one is not: **type 2
+is never allowed for a buffer**, although it has exactly the flags of type 1. Is it for images, then? `vulkaninfo`
+lists which images each type can hold, and for type 2 the answer is "none" as well (2026-10-11, shortened):
+
+```text
+	memoryTypes[1]:
+		heapIndex     = 0
+		propertyFlags = 0x0001: count = 1
+			MEMORY_PROPERTY_DEVICE_LOCAL_BIT
+		usable for:
+			IMAGE_TILING_OPTIMAL:
+				color images
+				FORMAT_D16_UNORM
+				...
+	memoryTypes[2]:
+		heapIndex     = 0
+		propertyFlags = 0x0001: count = 1
+			MEMORY_PROPERTY_DEVICE_LOCAL_BIT
+		usable for:
+			IMAGE_TILING_OPTIMAL:
+				None
+			IMAGE_TILING_LINEAR:
+				None
+```
+
+So type 2 serves something neither probe covers, and neither the spec nor the driver says what. The honest answer is
+"we do not know, and we do not need to". The lesson is the rule itself: the flags of a type tell you what it **is**,
+`memoryTypeBits` tells you whether **this resource** may use it. A program that hardcodes "type 1 is VRAM" or picks a
+type by flags alone, without the mask, will one day bind memory the resource does not allow
+(`VUID-vkBindBufferMemory-memory-01035`).
+
+## The find-memory-type rule
+
+With a mask and a wish ("I want `DEVICE_LOCAL`"), which type? The spec answers with a loop of five lines in its "Device
+Memory" chapter, and it works because of an ordering rule that every driver must follow: for two types X and Y, X comes
+first if "the set of bit flags returned in the propertyFlags member of X is a strict subset of the set of bit flags
+returned in the propertyFlags member of Y", or if the flags are equal and X's heap is faster. Thanks to it, **the first
+type in index order that is allowed and has every wanted flag** is also the plainest one that fits. Step 13's version:
+
+<Step file="13_memory_types" region="find-memory-type" />
+
+`find_type` is the spec's loop; `choose_type` runs it twice, as the spec's sample does: first with the required plus
+the preferred flags, then, if no type has them all, with the required ones alone. The interactive labs of this course
+use the same rule (`findType` in `src/lib/labs/memory.ts`). Step 13 then asks it for four kinds of data:
+
+<Step file="13_memory_types" region="choose-types" />
+
+```text
+Choosing memory types for memoryTypeBits 0b111011 (first type in index order with the flags; preferred flags tried first):
+  GPU-only mesh         required DEVICE_LOCAL, preferred (none) -> type 1 (heap 0)
+  staging upload        required HOST_VISIBLE | HOST_COHERENT, preferred (none) -> type 3 (heap 1)
+  readback              required HOST_VISIBLE, preferred HOST_CACHED -> type 4 (heap 1)
+  per-frame data        required HOST_VISIBLE | HOST_COHERENT, preferred DEVICE_LOCAL -> type 5 (heap 2)
+  (LAZILY_ALLOCATED: never for buffers, only for images with TRANSIENT_ATTACHMENT usage, module 10)
+```
+
+Each answer is worth a sentence:
+
+- **GPU-only mesh → type 1.** Types 1, 2 and 5 are all `DEVICE_LOCAL`; type 2 is not allowed, and type 1 comes before
+  type 5 because its flags are a strict subset of type 5's. Without the ordering rule, a naive loop could land in the
+  small BAR heap and fill it with meshes;
+- **staging → type 3**, not 4 or 5: the plainest `HOST_VISIBLE | HOST_COHERENT` type, ordinary system RAM;
+- **readback → type 4.** `HOST_CACHED` was only preferred; the first pass finds it, so the CPU will read through its
+  caches;
+- **per-frame data → type 5**: small data the CPU rewrites every frame, preferably in VRAM. The heap behind it is only
+  214 MiB here, which is why the next lessons treat it as a precious resource.
+
+A real engine phrases the same wishes in its own words (VMA, for example, has usage hints such as "prefer device") and
+weighs them with a more elaborate search, but over the same two inputs: the resource's `memoryTypeBits` and the
+types' flags.
+
+### 4. Allocate, bind, map
+
+The full manual path for one buffer the CPU writes:
+
+<Step file="13_memory_types" region="allocate-and-bind" />
+
+Create, query, choose, allocate `requirements.size` bytes of that type, bind at offset 0 (always a multiple of any
+alignment). Then the CPU gets a pointer:
+
+<Step file="13_memory_types" region="map" />
+
+```text
+Upload buffer: 4096 bytes (TRANSFER_SRC), memory type 3, allocation 4096 bytes, bound at offset 0
+Mapped: pointer aligned to minMemoryMapAlignment (64): yes
+Wrote 1024 floats through the pointer, read back: sum 523776 (expected 523776)
+Unmapped (HOST_COHERENT: no flush was needed)
+```
+
+`vkMapMemory` requires a `HOST_VISIBLE` type (`VUID-vkMapMemory-memory-00682`) and returns a plain pointer: from here
+on it is `memcpy` territory. Two properties of type 3 decide what else is needed:
+
+- it is **coherent**, so the writes need no `vkFlushMappedMemoryRanges`. The spec's chain of custody: coherent host
+  writes are "automatically made available to the host domain", and every queue submission performs a "domain operation
+  from host to device" for the writes made before it, making them visible to the device. In short: write, then submit,
+  done;
+- it is **uncached**, so the read-back sum works but is slow. Reading is fine for a check of 4 KiB; for real readback
+  the program would pick type 4.
+
+### 5. Two buffers, one allocation
+
+<Step file="13_memory_types" region="two-buffers-one-allocation" />
+
+```text
+One allocation, two buffers: memory type 1, 1108 bytes; vertex buffer (1008 bytes) at offset 0, index buffer (100 bytes) at offset 1008 (alignment 4)
+```
+
+Nothing ties a buffer to an allocation of its own. Two buffers share a block when the type is allowed by **both**
+masks (their AND), and each sits at a multiple of its own alignment: 1008 is already a multiple of 4. This little
+experiment is the whole idea of an allocator, done by hand.
+
+The cleanup destroys the buffers and frees the memory (`vkFreeMemory` also unmaps a mapped block):
+
+<Step file="13_memory_types" region="cleanup" />
+
+## Try it: buffers and memory
+
+The [buffers and memory interactive](lab:buffer-memory) runs the same path on the same GPU data: pick usage flags, a
+size and where the buffer should live, and scrub through create, requirements, choose, allocate, bind and map. Every
+requirement it shows was measured on the course GPU. Things to try now:
+
+- turn on `UNIFORM_BUFFER`: the alignment jumps from 16 to 64;
+- look at the type row for any usage: type 2 is never allowed;
+- choose "GPU writes, CPU reads back": the pick moves to type 4, the `HOST_CACHED` one;
+- choose "GPU only" and turn off `TRANSFER_DST`: the data can no longer arrive, which is the subject of the
+  [staging lesson](lesson:staging-uploads).
+
+<BufferMemory />
+
+## Build it yourself
+
+Memory and buffers are created from the device and need nothing else; the binding between them is a call, not a
+parent.
+
+<ObjectGraph
+	mode="build"
+	scope={['instance', 'physical-device', 'device', 'device-memory', 'buffer']}
+	caption="VkDeviceMemory and VkBuffer both hang off the device. vkBindBufferMemory connects them later, at an offset."
+/>
+
+## The map of this lesson
+
+<MindMap />
+
+## Underneath
+
+- **Heap 0** is GDDR6X on the card, wired to the GPU's memory controllers. **Heap 1** is ordinary DDR4 on the
+  motherboard; when the GPU reads it, each access travels over PCIe and through the CPU's memory controller. That the
+  heap is half the RAM matches Windows' default limit for the GPU's "shared memory".
+- **The BAR** (Base Address Register) is how PCIe devices expose memory to the CPU: a range of physical addresses that
+  the CPU's PCIe root complex forwards to the card. A 256 MiB BAR is the classic size; with Resizable BAR the range can cover all of
+  VRAM. Mapping a type-5 allocation hands the CPU a pointer into that range: each write becomes a PCIe transaction to
+  the card, which is why such memory is uncached and write-combined.
+- **An allocation is an operating-system event.** On Windows the driver's kernel part and the OS video memory manager
+  create the allocation, map it into the GPU's page tables and track whether it is resident. That is why
+  `vkAllocateMemory` is slow and why its count is limited, and why the [allocators lesson](lesson:allocators) exists.
+- **The driver's choice of types** encodes what its hardware can do: a type is not "a kind of RAM" but "a kind of
+  mapping": which heap, cached or not, visible to the CPU or not. Two types with the same flags on the same heap, like 1
+  and 2 here, can differ in things Vulkan has no flag for.
+
+<Quiz
+	questions={[
+		{
+			q: 'A buffer reports memoryTypeBits = 0b111011 on the course GPU. Which memory types may back it?',
+			options: [
+				{
+					text: 'Types 0, 1, 3, 4 and 5',
+					why: 'Right: bit i set means type i is allowed; 0b111011 has bits 0, 1, 3, 4 and 5 set, and bit 2 clear.',
+				},
+				{
+					text: 'Types 1 and 2, the DEVICE_LOCAL ones',
+					why: 'The mask is not about flags: it lists allowed types by index, and here bit 2 is 0, so type 2 is excluded although it is DEVICE_LOCAL.',
+				},
+				{
+					text: 'Any type, as long as it has the flags the program wants',
+					why: 'Flags alone are not enough; binding memory of a type outside the mask breaks VUID-vkBindBufferMemory-memory-01035.',
+				},
+				{
+					text: 'Only type 59, since 0b111011 is 59 in decimal',
+					why: '59 is the value of the whole mask, not a type index; the course GPU has six types, 0 to 5.',
+				},
+			],
+			answer: 0,
+			ref: '#memorytypebits--59-and-the-missing-type-2',
+		},
+		{
+			q: 'Why does "the first allowed type with the wanted flags" pick type 1, not type 5, for a GPU-only mesh?',
+			options: [
+				{
+					text: 'Type 5 is not allowed for buffers on this GPU',
+					why: 'It is allowed: bit 5 of the mask is set. Type 2 is the one that is excluded.',
+				},
+				{
+					text: 'Type 1 has the larger heap, and the loop compares heap sizes',
+					why: 'The loop never looks at sizes. It relies on the order of the types, which the driver must choose by a rule.',
+				},
+				{
+					text: 'The spec makes drivers list a type before any type whose flags are a strict superset of its own',
+					why: 'Right: DEVICE_LOCAL is a strict subset of DEVICE_LOCAL | HOST_VISIBLE | HOST_COHERENT, so type 1 comes first, and the first match is the plainest fit.',
+				},
+				{
+					text: 'Type 5 is HOST_VISIBLE, and HOST_VISIBLE memory cannot hold vertices',
+					why: 'It can: any allowed type can hold a vertex buffer; step 14 keeps its vertices in HOST_VISIBLE type 3.',
+				},
+			],
+			answer: 2,
+			ref: '#the-find-memory-type-rule',
+		},
+		{
+			q: 'The CPU memcpys vertices into a mapped HOST_VISIBLE | HOST_COHERENT allocation and then submits a draw that reads them. What else must it do for the GPU to see the bytes?',
+			options: [
+				{
+					text: 'Call vkFlushMappedMemoryRanges over the written range',
+					why: 'That is for memory without HOST_COHERENT; coherent writes are available in the host domain by themselves.',
+				},
+				{
+					text: 'Nothing: the submission makes earlier host writes visible to the device',
+					why: 'Right: every queue submission performs a host-to-device domain operation for host writes made before it.',
+				},
+				{
+					text: 'Unmap the memory before submitting',
+					why: 'Mapping does not hide writes from the device; memory may even stay mapped while the GPU uses it.',
+				},
+				{
+					text: 'Record a pipeline barrier with srcAccessMask HOST_WRITE before the draw, in the same command buffer',
+					why: 'Only needed in the rare case where no submission happens between the write and the read; here the submit does it.',
+				},
+			],
+			answer: 1,
+			ref: '#4-allocate-bind-map',
+		},
+		{
+			q: 'Which memory type could a VkBuffer never use on any Vulkan device?',
+			options: [
+				{
+					text: 'A type that is DEVICE_LOCAL but not HOST_VISIBLE',
+					why: 'That is the usual home of meshes and other GPU-only buffers; it just needs a copy to fill it.',
+				},
+				{
+					text: 'A HOST_CACHED type',
+					why: 'Cached host memory is allowed and is the best choice for buffers the CPU reads back.',
+				},
+				{
+					text: 'A type on a heap that is not device-local',
+					why: 'System RAM types are fine for buffers; staging buffers live there.',
+				},
+				{
+					text: 'A LAZILY_ALLOCATED type',
+					why: 'Right: the spec forbids it outright, lazily allocated memory is only for images with TRANSIENT_ATTACHMENT usage.',
+				},
+			],
+			answer: 3,
+			ref: '#types-how-a-heap-can-be-used',
+		},
+	]}
+/>

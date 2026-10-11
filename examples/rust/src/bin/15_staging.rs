@@ -690,7 +690,7 @@ fn upload_staged(
             // two queues in different families, but no ownership transfer is
             // defined, the contents of that resource are undefined for any
             // read accesses performed by the second queue family" (spec,
-            // "Resource Sharing Mode").
+            // "Queue Family Ownership Transfer").
             let ownership = |buffer: vk::Buffer| {
                 vk::BufferMemoryBarrier2::default()
                     .src_queue_family_index(tf)

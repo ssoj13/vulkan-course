@@ -521,7 +521,8 @@ std::pair<GpuBuffer, GpuBuffer> uploadStaged(const vk::raii::Device& device, con
         // correctly expressed between uses of such a resource between two queues
         // in different families, but no ownership transfer is defined, the
         // contents of that resource are undefined for any read accesses
-        // performed by the second queue family" (spec, "Resource Sharing Mode").
+        // performed by the second queue family" (spec, "Queue Family Ownership
+        // Transfer").
         const auto ownership = [&](const vk::raii::Buffer& buffer) {
             return vk::BufferMemoryBarrier2{
                 .srcQueueFamilyIndex = transfer->family,
