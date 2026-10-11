@@ -95,7 +95,8 @@ rendering, the draw - is the subject of [the first triangle](lesson:first-triang
 - **command buffers** to execute, in order;
 - **wait semaphores**, each with a *stage mask*: the GPU work of this batch may run up to that stage before the
   semaphore is signaled, but not past it;
-- **signal semaphores**, signaled when the batch's work has reached the given stage;
+- **signal semaphores**, each with a stage mask too: signaled once all work of the batch in that stage and in the
+  logically earlier stages has completed;
 - and for the whole call, an optional **fence**, signaled when everything submitted has completed.
 
 In our frame the batch waits for the acquired swapchain image only at `COLOR_ATTACHMENT_OUTPUT`: the vertex shader may

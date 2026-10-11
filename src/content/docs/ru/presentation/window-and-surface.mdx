@@ -3,4 +3,378 @@ title: 'Окно и его surface'
 description: 'Vulkan не знает про окна: расширения WSI, VkSurfaceKHR и вопрос к GPU, что он может показать в нашем окне.'
 ---
 
-Русская версия урока готовится.
+import { Aside } from '@astrojs/starlight/components';
+import MindMap from 'course-kit/components/MindMap.astro';
+import Quiz from 'course-kit/components/Quiz.astro';
+import Step from '../../../../components/Step.astro';
+import ObjectGraph from '../../../../components/ObjectGraph.astro';
+
+Vulkan рисует в изображения, которые лежат в памяти GPU, а ядро Vulkan понятия не имеет, что такое окно. Как же
+отрендеренная картинка оказывается в обычном окне на рабочем столе? Урок строит первую половину этого моста: окно, его
+**surface** (`VkSurfaceKHR`) и вопросы, которые мы задаём GPU про этот surface.
+
+## Место в курсе
+
+С этого урока начинается модуль «Вывод на экран». Здесь слой Vulkan API впервые встречается с операционной системой, а
+отвечать на наши вопросы будет слой загрузчика и драйвера вместе с оконной системой ОС. До сих пор у нас была цельная
+цепочка до самого железа: instance, физическое устройство, логическое устройство, очередь. Всё это уже умеет
+рендерить, но только в память. Модуль добавляет дорогу наружу, на экран:
+
+`окно ОС (HWND) → VkSurfaceKHR → «может ли это семейство очередей показывать в него?» → VkSwapchainKHR → изображения swapchain → image views`
+
+[Surface](term:vk-surface) построен на двух вещах: на **instance** (это объект уровня instance, он появляется ещё до
+выбора GPU) и на **родном окне** ОС. В этом уроке мы создаём surface и читаем, что он разрешает. Следующий,
+[урок о swapchain](lesson:swapchain), превратит эти ответы в кольцо изображений, а
+[урок об image view](lesson:image-views) сделает их пригодными для рисования.
+
+## Vulkan не знает про окна
+
+Вспомните офлайн-рендер. Karma или Arnold считает кадр в буфер в памяти, а показывает его отдельная программа —
+MPlay или render view. Сам рендерер с монитором не разговаривает никогда.
+
+Ядро Vulkan в этой картине — рендерер. Показ изображений вынесен в набор расширений
+[WSI](term:wsi) (window system integration, интеграция с оконной системой). Они образуют небольшую иерархию:
+
+- **`VK_KHR_surface`** — переносимая часть: сам хэндл `VkSurfaceKHR` и вопросы к нему (форматы, режимы показа,
+  возможности). Расширение *instance*.
+- **Одно платформенное расширение**, которое делает surface из родного окна: `VK_KHR_win32_surface` в Windows (из
+  `HWND`), `VK_KHR_xlib_surface` или `VK_KHR_wayland_surface` в Linux, `VK_EXT_metal_surface` в macOS. Тоже
+  расширения *instance*.
+- **`VK_KHR_swapchain`** — изображения, которые показываются в surface. Это расширение *устройства*, потому что
+  изображения лежат в памяти одного конкретного GPU. О нём следующий урок.
+
+Surface — это «окно глазами Vulkan». Почему он принадлежит instance, а не устройству? Потому что окно появляется
+раньше, чем мы решаем, какой GPU будет в него рисовать. Имея surface на руках, можно спросить *каждый* GPU и каждое
+семейство очередей каждого GPU, умеет ли оно показывать туда изображения, и выбрать GPU по ответу.
+
+## 1. Окно
+
+<Step file="06_window_surface" region="create-window" />
+
+Версия на Rust берёт **winit**, версия на C++ — **GLFW**: два популярных способа получить родное окно, не трогая
+Win32 руками. Делают они здесь одно и то же: окно 800x600 физических пикселей, размер которого менять нельзя. Новый
+размер окна сделал бы негодным swapchain, который мы построим дальше, а пересоздавать swapchain мы научимся только в
+модуле 7. Поэтому пока размер зафиксирован.
+
+GLFW нужна одна лишняя подсказка, `GLFW_NO_API`: по умолчанию GLFW создаёт для окна контекст OpenGL, а Vulkan он
+только мешает. winit графических контекстов не создаёт вообще.
+
+## 2. Расширения для surface
+
+<Step file="06_window_surface" region="surface-extensions" />
+
+Набор расширений для surface зависит от ОС, поэтому мы спрашиваем у оконной библиотеки: и ash-window (Rust), и GLFW
+(C++) знают, что нужно текущей платформе. На машине курса ответ такой: `VK_KHR_surface, VK_KHR_win32_surface`.
+Добавляем `VK_EXT_debug_utils` для сообщений из [урока о валидации](lesson:validation) и отдаём весь список в
+`vkCreateInstance`.
+
+Здесь важен порядок: расширения instance фиксируются в момент его создания. Если их забыть, функции
+`vkCreateWin32SurfaceKHR` для этого instance просто не существует, и добавить расширение задним числом нельзя.
+
+## 3. Создаём surface
+
+<Step file="06_window_surface" region="create-surface" />
+
+В Windows surface создаётся из двух хэндлов: `HWND` самого окна и `HINSTANCE` модуля, которому окно принадлежит. Обе
+библиотеки кладут их в `VkWin32SurfaceCreateInfoKHR` и вызывают `vkCreateWin32SurfaceKHR` — один и тот же вызов
+Vulkan за двумя разными обёртками.
+
+Из того, что такое surface, следует одно правило: **окно должно жить дольше surface**. Surface только ссылается на
+окно ОС; если окно уничтожить первым, surface будет указывать в пустоту. В Rust окно — последнее поле `Vk`, поэтому
+оно освобождается уже после того, как `destroy` уничтожил surface. В C++ окно объявлено раньше surface, и RAII
+уничтожает его позже.
+
+## 4. Кто умеет показывать?
+
+<Step file="06_window_surface" region="present-family" />
+
+Показать изображение — это **операция очереди**: `vkQueuePresentKHR` принимает `VkQueue`. Значит, вопрос «может ли
+этот GPU показывать в моё окно?» на самом деле задаётся для пары «семейство очередей + surface»:
+`vkGetPhysicalDeviceSurfaceSupportKHR(physicalDevice, familyIndex, surface)`. GPU, не подключённый к дисплею, на
+котором находится окно, или семейство без доступа к пути показа ответит «нет».
+
+Добавляем это требование к выбору GPU из [шага 03](lesson:physical-devices): нам нужно одно семейство, которое и
+рисует (`GRAPHICS`), и показывает. Тогда одна и та же очередь отрендерит кадр и сама отдаст его экрану. Два разных
+семейства для этих двух работ допустимы, но обходятся дороже: изображение придётся передавать из семейства в семейство
+или делать общим для обоих. На GPU курса одно семейство умеет и то и другое, что видно из таблицы ниже.
+
+<Step file="06_window_surface" region="family-table" />
+
+Настоящий ответ GPU курса (номера семейств те же, что в уроке [о семействах очередей](lesson:queue-families)):
+
+```text
+  family 0: graphics yes, present yes
+  family 1: graphics no, present no
+  family 2: graphics no, present yes
+  family 3: graphics no, present no
+  family 4: graphics no, present no
+  family 5: graphics no, present no
+Graphics + present family: 0
+```
+
+Побеждает семейство 0, универсальное графическое. Любопытна строка семейства 2, async compute: рисовать оно не умеет,
+а показывать — умеет. Семейства только для копирования и для видео не умеют. Спецификация не обещает ни того, ни
+другого ответа, поэтому мы и спрашиваем.
+
+## 5. Что разрешает surface
+
+<Step file="06_window_surface" region="surface-capabilities" />
+
+[Возможности surface](term:surface-capabilities) — это правила оконной системы для изображений, которые мы можем
+показывать в этом surface на этом GPU:
+
+```text
+Surface capabilities:
+  image count: min 2, max 8
+  current extent: 800x600
+  extent range: 800x600 .. 800x600
+  max array layers: 1
+  supported transforms: IDENTITY
+  current transform: IDENTITY
+  composite alpha: OPAQUE | PRE_MULTIPLIED
+  image usage: TRANSFER_SRC | TRANSFER_DST | SAMPLED | STORAGE | COLOR_ATTACHMENT | INPUT_ATTACHMENT
+```
+
+- **Число изображений**: swapchain на этом surface должен иметь не меньше 2 и не больше 8 изображений (`max 0`
+  означало бы «без верхней границы»).
+- **Размер (extent)**: в Windows изображения обязаны точно совпадать с клиентской областью окна, поэтому диапазон
+  схлопывается в один размер, 800x600. В Wayland текущий размер равен особому значению `0xFFFFFFFF`: там, наоборот,
+  окно берёт размер у swapchain.
+- **Повороты (transforms)**: телефоны поворачивают экран, и presentation engine умеет повернуть изображение за вас.
+  Десктоп ничего не поворачивает, поэтому есть только `IDENTITY`.
+- **Composite alpha**: как альфа окна смешивается с рабочим столом под ним. `OPAQUE` альфу игнорирует;
+  `PRE_MULTIPLIED` позволило бы сделать окно частично прозрачным.
+- **Usage изображений**: для чего ещё, кроме рисования в них, можно использовать показываемые изображения:
+  копировать, читать как текстуру, писать в них из compute-шейдера (`STORAGE`).
+
+## 6. Форматы и цветовые пространства
+
+<Step file="06_window_surface" region="surface-formats" />
+
+[Формат surface](term:surface-format) — это пара. Если вы настраивали Write-ноду в Nuke или дисплей в OCIO, обе
+половины вам знакомы:
+
+- **формат** говорит, как пиксель *хранится*: `B8G8R8A8_UNORM` — 8 бит на канал, читаются как 0..1,
+  `R16G16B16A16_SFLOAT` — half float;
+- **цветовое пространство** говорит, как дисплей *понимает* эти значения: `SRGB_NONLINEAR` — обычный sRGB-монитор,
+  `HDR10_ST2084_EXT` — HDR10 с кривой PQ, `EXTENDED_SRGB_LINEAR_EXT` — линейный scRGB для HDR.
+
+GPU курса предлагает семь пар:
+
+```text
+Surface formats (7):
+  B8G8R8A8_UNORM + SRGB_NONLINEAR
+  B8G8R8A8_SRGB + SRGB_NONLINEAR
+  R8G8B8A8_UNORM + SRGB_NONLINEAR
+  R8G8B8A8_SRGB + SRGB_NONLINEAR
+  R16G16B16A16_SFLOAT + EXTENDED_SRGB_LINEAR_EXT
+  A2B10G10R10_UNORM_PACK32 + HDR10_ST2084_EXT
+  A2B10G10R10_UNORM_PACK32 + SRGB_NONLINEAR
+```
+
+Обратите внимание на близнецов `_UNORM` и `_SRGB` с одним и тем же цветовым пространством. Оба показываются на
+sRGB-мониторе, а разница в том, кто накладывает кривую sRGB. С `_SRGB` это делает железо: линейный вывод шейдера
+кодируется в sRGB при каждой записи (и декодируется при каждом чтении), так что шейдеры и смешивание работают в
+линейном свете, как в нормальном композе. С `_UNORM` значения пишутся как есть, и кривую пришлось бы накладывать
+самому шейдеру. Следующий урок выберет `B8G8R8A8_SRGB`.
+
+## 7. Режимы показа
+
+<Step file="06_window_surface" region="present-modes" />
+
+```text
+Present modes (5): FIFO, FIFO_RELAXED, MAILBOX, IMMEDIATE, FIFO_LATEST_READY
+```
+
+[Режим показа](term:present-mode) (present mode) решает, как готовые изображения сменяют друг друга на экране: ждать
+ли вертикального обратного хода дисплея (vblank), чтобы не было разрывов, и что делать с кадром, который пришёл, пока
+предыдущий ещё ждёт своей очереди. `FIFO` — единственный режим, который обязана поддерживать любая реализация.
+[Урок о swapchain](lesson:swapchain#4-выбираем-present-mode) сравнивает режимы и выбирает один. Про последний пункт
+списка: `FIFO_LATEST_READY` приходит из расширения, и swapchain может им пользоваться, только если на устройстве
+включена возможность `presentModeFifoLatestReady`
+(`VUID-VkSwapchainCreateInfoKHR-presentModeFifoLatestReady-10161`). Surface перечисляет то, что умеет presentation
+engine, а не то, что включено на вашем устройстве.
+
+## 8. Цикл событий и уборка
+
+<Step file="06_window_surface" region="event-loop" />
+
+Две библиотеки ведут программу по-разному. Начиная с winit 0.30 программа не крутит цикл сама: она отдаёт
+`ApplicationHandler` в `run_app`, а winit вызывает `resumed` (момент, когда уже можно создавать окна — поэтому вся
+настройка Vulkan живёт в `Vk::new`, который вызывается оттуда) и `window_event`. GLFW — классический цикл: ждём
+события, пока кнопка закрытия не выставит флаг. В обоих случаях пока ничего не рисуется: окно показывает то, что ОС
+рисует в пустом окне.
+
+<Step file="06_window_surface" region="cleanup" />
+
+Surface — дочерний объект instance, поэтому уничтожается раньше instance. Уничтожить instance при живом surface —
+ошибка (`VUID-vkDestroyInstance-instance-00629`), как и с любым другим потомком.
+
+## Что печатает программа
+
+Полный запуск на машине курса (RTX 3080 Ti; предупреждение bandicam в stderr — тот самый неявный слой из
+[урока о валидации](lesson:validation)):
+
+```text
+Window: 800x600 pixels
+Surface extensions: VK_KHR_surface, VK_KHR_win32_surface
+Surface created
+Found 1 GPU(s)
+GPU 0: NVIDIA GeForce RTX 3080 Ti
+
+Picked: NVIDIA GeForce RTX 3080 Ti
+  family 0: graphics yes, present yes
+  family 1: graphics no, present no
+  family 2: graphics no, present yes
+  family 3: graphics no, present no
+  family 4: graphics no, present no
+  family 5: graphics no, present no
+Graphics + present family: 0
+
+Surface capabilities:
+  image count: min 2, max 8
+  current extent: 800x600
+  extent range: 800x600 .. 800x600
+  max array layers: 1
+  supported transforms: IDENTITY
+  current transform: IDENTITY
+  composite alpha: OPAQUE | PRE_MULTIPLIED
+  image usage: TRANSFER_SRC | TRANSFER_DST | SAMPLED | STORAGE | COLOR_ATTACHMENT | INPUT_ATTACHMENT
+Surface formats (7):
+  B8G8R8A8_UNORM + SRGB_NONLINEAR
+  B8G8R8A8_SRGB + SRGB_NONLINEAR
+  R8G8B8A8_UNORM + SRGB_NONLINEAR
+  R8G8B8A8_SRGB + SRGB_NONLINEAR
+  R16G16B16A16_SFLOAT + EXTENDED_SRGB_LINEAR_EXT
+  A2B10G10R10_UNORM_PACK32 + HDR10_ST2084_EXT
+  A2B10G10R10_UNORM_PACK32 + SRGB_NONLINEAR
+Present modes (5): FIFO, FIFO_RELAXED, MAILBOX, IMMEDIATE, FIFO_LATEST_READY
+
+Close the window to exit.
+Window closed
+```
+
+Версия на C++ печатает те же строки.
+
+## Собери сам
+
+Surface висит на instance рядом с физическим устройством, а не под ним. Создайте четыре объекта, а потом попробуйте
+уничтожить instance, пока surface жив, и прочитайте сообщение.
+
+<ObjectGraph
+	mode="build"
+	scope={['instance', 'surface', 'physical-device', 'device']}
+	caption="Щёлкните по объекту, затем «Создать» или «Уничтожить». Surface нужен только instance, устройству нужно физическое устройство."
+/>
+
+## Карта урока
+
+<MindMap />
+
+## Что под капотом
+
+- `vkCreateWin32SurfaceKHR` — вызов уровня instance, поэтому он проходит через загрузчик и включённые слои так же, как
+  `vkCreateInstance`. Возвращённый surface запоминает платформенные хэндлы (`HINSTANCE`, `HWND`), и любой драйвер
+  потом может найти по нему окно. Именно поэтому про один surface можно спрашивать несколько GPU.
+- На вопросы разделов 4–7 драйвер отвечает вместе с ОС. В Windows окна на рабочем столе собирает в одну картинку
+  Desktop Window Manager; умеет ли семейство показывать, какие форматы и режимы предложены — всё это заявление
+  драйвера о его пути к этому композитору и к дисплею.
+- В `VK_KHR_win32_surface` есть ещё `vkGetPhysicalDeviceWin32PresentationSupportKHR`: она спрашивает о поддержке
+  показа ещё до того, как появилось окно. Нам она не нужна — окно у нас создаётся первым.
+
+<Quiz
+	questions={[
+		{
+			q: 'Почему VkSurfaceKHR создаётся из instance, а не из устройства?',
+			options: [
+				{
+					text: 'Surface появился в спецификации Vulkan раньше устройств',
+					why: 'История тут ни при чём. Причина в порядке решений: окно существует раньше, чем выбран GPU.',
+				},
+				{
+					text: 'Чтобы каждый GPU можно было спросить, показывает ли он в это окно',
+					why: 'Верно: окно есть ещё до выбора GPU, и surface уровня instance позволяет спросить о нём каждое физическое устройство и каждое семейство очередей, а потом выбрать.',
+				},
+				{
+					text: 'Потому что surface владеет изображениями, которые видит экран',
+					why: 'Изображения принадлежат swapchain, а это объект устройства. Surface только представляет окно.',
+				},
+				{
+					text: 'Без surface устройство не может пользоваться расширениями instance',
+					why: 'Расширения instance от surface не зависят. Surface — просто первый объект на пути к экрану, и GPU ему пока не нужен.',
+				},
+			],
+			answer: 1,
+			ref: '#vulkan-не-знает-про-окна',
+		},
+		{
+			q: 'Вы забыли VK_KHR_win32_surface в vkCreateInstance. Что можно сделать, когда instance уже создан?',
+			options: [
+				{
+					text: 'Включить его позже отдельным вызовом на instance',
+					why: 'Такого вызова нет: набор расширений instance фиксируется в vkCreateInstance.',
+				},
+				{
+					text: 'Включить его на логическом устройстве',
+					why: 'Это расширение instance; устройство принимает только расширения устройства вроде VK_KHR_swapchain.',
+				},
+				{
+					text: 'Ничего: создать instance заново, уже с расширением',
+					why: 'Верно: расширения instance выбираются один раз, при создании. Без него vkCreateWin32SurfaceKHR для этого instance не существует.',
+				},
+				{
+					text: 'Всё равно вызвать vkCreateWin32SurfaceKHR, загрузчик сам включит расширение',
+					why: 'Загрузчик ничего не включает за вашей спиной: функции невключённого расширения недоступны.',
+				},
+			],
+			answer: 2,
+			ref: '#2-расширения-для-surface',
+		},
+		{
+			q: 'Как узнать, может ли GPU показывать изображения в ваше окно?',
+			options: [
+				{
+					text: 'Проверить флаг GRAPHICS у каждого из его семейств очередей',
+					why: 'GRAPHICS значит, что семейство умеет рисовать, а не показывать. На GPU курса показывать умеет и compute-семейство 2, хотя графическим оно не является.',
+				},
+				{
+					text: 'Через vkGetPhysicalDeviceSurfaceSupportKHR, по семействам',
+					why: 'Верно: показ — операция очереди, поэтому поддержка — это свойство пары «семейство очередей + конкретный surface».',
+				},
+				{
+					text: 'Прочитать это в VkPhysicalDeviceProperties',
+					why: 'Свойства устройства ничего не знают об окнах. Поддержка зависит от surface, поэтому спрашивают, уже имея его на руках.',
+				},
+				{
+					text: 'Создать swapchain и посмотреть, не упадёт ли',
+					why: 'Swapchain для surface, который устройство не поддерживает, — нарушение правил (VUID-VkSwapchainCreateInfoKHR-surface-01270), а не проверка. Сначала спросите.',
+				},
+			],
+			answer: 1,
+			ref: '#4-кто-умеет-показывать',
+		},
+		{
+			q: 'B8G8R8A8_SRGB и B8G8R8A8_UNORM предложены с одним и тем же SRGB_NONLINEAR. В чём разница?',
+			options: [
+				{
+					text: 'SRGB для HDR-мониторов, а UNORM для обычных',
+					why: 'Оба показываются на обычном sRGB-мониторе; HDR-пары на этом GPU — 10-битный формат и half float.',
+				},
+				{
+					text: 'Изображения в формате UNORM вообще нельзя показать на экране',
+					why: 'Оба формата пригодны для показа, поэтому surface их и перечисляет. Различаются они тем, как пишутся значения.',
+				},
+				{
+					text: 'SRGB хранит больше бит на канал',
+					why: 'Оба хранят по 8 бит на канал. Разница в кривой, которая применяется при записи и чтении.',
+				},
+				{
+					text: 'С SRGB кривую sRGB при записи накладывает железо',
+					why: 'Верно: шейдер выдаёт линейные значения, а железо кодирует их в sRGB при записи; с UNORM значения сохраняются как есть.',
+				},
+			],
+			answer: 3,
+			ref: '#6-форматы-и-цветовые-пространства',
+		},
+	]}
+/>

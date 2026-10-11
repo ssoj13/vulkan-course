@@ -1,6 +1,6 @@
 ---
 title: The swapchain and present modes
-description: 'A ring of images owned by the presentation engine: format, present mode, size and image count.'
+description: 'A ring of images that the swapchain owns and the presentation engine shows: format, present mode, size and image count.'
 ---
 
 import { Aside } from '@astrojs/starlight/components';
@@ -31,9 +31,9 @@ Picture a playback system for a render: frames are written into a fixed set of b
 one after another, in step with the monitor. While one buffer is on screen, the next one is being filled. Nobody
 allocates a new buffer per frame; the same few are reused in a circle.
 
-A [swapchain](term:vk-swapchain) is exactly that ring. Its images belong to the
-[presentation engine](term:presentation-engine) - the OS compositor together with the display driver - and the
-application borrows them one at a time:
+A [swapchain](term:vk-swapchain) is exactly that ring. Its images are owned by the swapchain, created and destroyed
+together with it, and used by the [presentation engine](term:presentation-engine) - the OS compositor together with
+the display driver - which lends them to the application one at a time:
 
 1. **acquire**: "give me an image I may draw into" (`vkAcquireNextImageKHR`) returns an index into the ring;
 2. **render** into that image;
@@ -111,7 +111,7 @@ our window cannot be resized until module 7 teaches recreating the swapchain.
 
 <Step file="07_swapchain" region="choose-image-count" />
 
-`minImageCount` (2 here) is the number of images the presentation engine needs to work in this mode. Asking for one
+`minImageCount` (2 here) is the number of images the presentation engine needs to work. Asking for one
 more gives the application an image to render into while the others are on screen or waiting for their vblank: three
 images, the classic triple buffering. The maximum (8 here) caps the request; `0` would mean no cap.
 
@@ -198,7 +198,7 @@ wrong moves: destroy the surface while the swapchain lives, and destroy the devi
 				},
 				{
 					text: 'The swapchain; the application borrows them via acquire and present',
-					why: 'Right: the presentation engine owns the ring; acquire lends an image to the application and present returns it.',
+					why: 'Right: the swapchain creates its images and destroys them with itself; the presentation engine uses them, acquire lends one to the application and present hands it back.',
 				},
 				{
 					text: 'The surface, which hands them to the swapchain',

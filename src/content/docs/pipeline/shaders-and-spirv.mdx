@@ -134,8 +134,9 @@ on the rest of the pipeline state (which attachment formats, which vertex layout
 
 <Aside title="Vulkan 1.4 can skip the module">
 With the `maintenance5` feature (core in Vulkan 1.4, but like every feature it must be enabled on the device) a
-pipeline stage may carry a `VkShaderModuleCreateInfo` in its `pNext` chain instead of a module handle
-(`VUID-VkPipelineShaderStageCreateInfo-stage-06845`). Our device does not enable `maintenance5`, and the explicit
+pipeline stage may carry a `VkShaderModuleCreateInfo` in its `pNext` chain instead of a module handle. Without
+`maintenance5` or `graphicsPipelineLibrary` enabled, `module` must be a valid handle
+(`VUID-VkPipelineShaderStageCreateInfo-stage-08771`). Our device does not enable `maintenance5`, and the explicit
 module keeps the steps visible, so the course creates one.
 </Aside>
 

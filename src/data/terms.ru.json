@@ -157,7 +157,7 @@
     "presentation-engine": {
       "label": "Presentation engine",
       "aka": ["движок показа", "композитор", "compositor"],
-      "def": "Механизм платформы, который выводит готовые изображения на дисплей (в Windows — композитор рабочего стола вместе с драйвером дисплея); изображения swapchain принадлежат ему, приложению он их только одалживает."
+      "def": "Механизм платформы, который выводит готовые изображения на дисплей (в Windows — композитор рабочего стола вместе с драйвером дисплея); он использует изображения swapchain (владеет ими сам swapchain) и по одному одалживает их приложению."
     },
     "vk-swapchain": {
       "label": "VkSwapchainKHR",
@@ -286,12 +286,17 @@
     "vk-semaphore": {
       "label": "VkSemaphore",
       "aka": ["семафор", "semaphore", "бинарный семафор"],
-      "def": "Сигнал между операциями очередей на GPU: одна операция его сигналит, другая ждёт (получение изображения, потом рендеринг, потом показ)."
+      "def": "Сигнал на стороне GPU: его сигналит пакет команд (batch) или presentation engine (когда полученное изображение освободилось), а ждёт пакет команд или показ; CPU в этом не участвует."
     },
     "image-layout": {
       "label": "Layout изображения",
       "aka": ["VkImageLayout", "image layout", "переход layout"],
       "def": "Раскладка памяти изображения под один вид использования (color attachment, показ, выборка в шейдере...); переводит изображение из одного layout в другой барьер."
+    },
+    "pipeline-barrier": {
+      "label": "Барьер конвейера",
+      "aka": ["барьер", "pipeline barrier", "vkCmdPipelineBarrier2", "image barrier"],
+      "def": "Команда в command buffer (vkCmdPipelineBarrier2), которая упорядочивает команды до неё (в порядке отправки) относительно команд после неё: их работа в исходных стадиях (source stages) завершается, а их записи исходными видами доступа (source accesses) становятся доступными и видимыми для целевых видов доступа (destination accesses) раньше, чем начнётся последующая работа в целевых стадиях; барьер для изображения может заодно перевести его layout."
     },
     "frame-loop": {
       "label": "Цикл кадра",
@@ -335,13 +340,14 @@
     "presentation-engine|related|driver": "работает вместе с",
     "vk-swapchain|built-on|vk-surface": "показывает в",
     "vk-swapchain|built-on|vk-device": "создаётся из",
-    "vk-swapchain|built-on|presentation-engine": "принадлежит",
+    "vk-swapchain|built-on|presentation-engine": "показывается через",
     "surface-format|built-on|vk-surface": "предлагается",
     "present-mode|built-on|vk-surface": "предлагается",
     "vk-swapchain|uses|surface-format": "выбирает",
     "vk-swapchain|uses|present-mode": "выбирает",
     "vk-image|built-on|vk-device": "принадлежит",
     "vk-image-view|built-on|vk-image": "смотрит на",
+    "vk-image-view|built-on|vk-device": "создаётся из",
     "shader|built-on|shader-core": "исполняется на",
     "spirv|built-on|shader": "кодирует",
     "slang|uses|spirv": "компилируется в",
@@ -378,6 +384,8 @@
     "submission|uses|vk-fence": "сигналит",
     "submission|uses|vk-semaphore": "ждёт и сигналит",
     "recording|uses|image-layout": "переводит",
+    "pipeline-barrier|built-on|vk-command-buffer": "записывается в",
+    "pipeline-barrier|uses|image-layout": "переводит",
     "frame-loop|built-on|submission": "отправляет",
     "frame-loop|built-on|vk-swapchain": "получает и показывает",
     "frame-loop|uses|vk-fence": "ждёт",

@@ -28,6 +28,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <exception>
 #include <filesystem>
@@ -114,6 +115,21 @@ struct Glfw {
     Glfw& operator=(const Glfw&) = delete;
 };
 using WindowPtr = std::unique_ptr<GLFWwindow, decltype(&glfwDestroyWindow)>;
+
+// Waits for the device to go idle when it leaves scope. Declared after the
+// last object the frames use, it is destroyed first, so even when a frame
+// throws, RAII never destroys an object the GPU may still be using (the Rust
+// version waits in Vk::destroy, which runs after an error too).
+struct IdleGuard {
+    const vk::raii::Device& device;
+    ~IdleGuard() {
+        // A destructor must not throw: call the C function, which returns the
+        // error instead, and report it.
+        if (const VkResult r = device.getDispatcher()->vkDeviceWaitIdle(*device); r != VK_SUCCESS) {
+            std::fprintf(stderr, "vkDeviceWaitIdle failed: %s\n", string_VkResult(r));
+        }
+    }
+};
 
 int main()
 try {
@@ -707,6 +723,8 @@ try {
     // glfwPollEvents handles the window's messages without blocking (step 06
     // waited for them), then one frame is rendered. The fence wait and the
     // present mode (MAILBOX/FIFO) pace the loop.
+    // From here on the GPU runs our frames: wait for it on every way out.
+    const IdleGuard idleGuard{device};
     std::println("\nRendering. Close the window to exit.");
     while (glfwWindowShouldClose(window.get()) == GLFW_FALSE) {
         glfwPollEvents();
@@ -720,9 +738,16 @@ try {
     // #endregion
 
     // #region cleanup
-    // First wait until the GPU is idle: the last frame may still be rendering or
-    // waiting to be presented, and nothing it uses may be destroyed before. Then
-    // RAII destroys in reverse order of declaration: fence, semaphores, command
+    // First wait until the GPU is idle: the last frame may still be rendering,
+    // and nothing it uses may be destroyed before. The wait covers all work
+    // submitted to the queues, which is what destroying the swapchain needs
+    // (VUID-vkDestroySwapchainKHR-swapchain-01282); it does not wait for the
+    // presentation engine to finish showing the last image. Knowing when a
+    // present released its semaphore takes present fences
+    // (VK_KHR_swapchain_maintenance1), module 7. This explicit wait reports an
+    // error as an exception; idleGuard (declared before the loop) also waits on
+    // its way out, which covers the paths where a frame threw. Then RAII
+    // destroys in reverse order of declaration: fence, semaphores, command
     // buffer, pool, queue handle, then everything from steps 07-08.
     device.waitIdle();
     // #endregion

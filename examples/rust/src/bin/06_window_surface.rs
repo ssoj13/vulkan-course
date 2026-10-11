@@ -208,10 +208,10 @@ impl Vk {
             // #region present-family
             // Presenting is a queue operation (vkQueuePresentKHR), so "can this
             // GPU show images in this window?" is asked per queue family AND per
-            // surface: a GPU without a display connection, or a compute-only
-            // family, answers no. We want one family that does both graphics and
-            // present, so one queue can render and then present (on desktop GPUs
-            // the graphics family always can).
+            // surface. A GPU without a display connection answers no, and any
+            // family may answer either way (on the course GPU even the compute
+            // family can present), so we ask. We want one family that does both
+            // graphics and present, so one queue can render and then present.
             // SAFETY: `pd` was enumerated from this instance.
             let families = unsafe { instance.get_physical_device_queue_family_properties(pd) };
             let mut family = None;

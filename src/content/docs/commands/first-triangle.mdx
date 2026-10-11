@@ -40,13 +40,15 @@ Nobody may use an image or a command buffer while another party still does. Vulk
 of "wait until":
 
 - a [fence](term:vk-fence) - **GPU → CPU**: a submission signals it when its work completes, and the CPU waits on it;
-- a [semaphore](term:vk-semaphore) - **GPU → GPU**: one queue operation (acquire, a batch, present) signals it, another
-  waits on it, and the CPU is not involved;
-- a **pipeline barrier** - **inside a command buffer**: orders commands before it against commands after it, and can
-  change an image's layout on the way.
+- a [semaphore](term:vk-semaphore) - **GPU → GPU**: something on the device side signals it and a queue operation waits
+  on it, and the CPU is not involved. In our frame the presentation engine signals `image_available` when an acquired
+  image is really free (the acquire itself is a host call, not a queue operation), the batch waits on it and signals
+  `render_finished`, and the present waits on that and signals nothing;
+- a [pipeline barrier](term:pipeline-barrier) - **inside a command buffer**: orders commands before it against
+  commands after it, and can change an image's layout on the way.
 
 These form a hierarchy from coarse to fine: the fence orders whole submissions against the CPU, the semaphore orders
-queue operations against each other, the barrier orders individual commands. (The [queue-sync](lab:queue-sync)
+GPU-side operations against each other, the barrier orders individual commands. (The [queue-sync](lab:queue-sync)
 interactive lets you play with the first two.) One frame then goes like this:
 
 1. **wait** for the fence of the previous frame: its command buffer is free again;
@@ -85,12 +87,15 @@ fence, the next frame would wait on a fence that nothing will ever signal.
 
 `vkAcquireNextImageKHR` returns an image **index** right away, but the image may still be on the screen or waiting for
 its vblank. The semaphore is the real answer: it is signaled when the presentation engine has let go of the image. It
-must be unsignaled when we pass it in (`VUID-vkAcquireNextImageKHR-semaphore-01286`), which the fence wait above
-guarantees.
+must be unsignaled when we pass it in (`VUID-vkAcquireNextImageKHR-semaphore-01286`) and must have no signal or wait
+operations still pending on it (`VUID-vkAcquireNextImageKHR-semaphore-01779`). The fence wait above guarantees both:
+the previous batch, the only operation that waited on `image_available`, has completed.
 
 Two special results: `SUBOPTIMAL` (the image still works, it just no longer fits the surface perfectly) and
 `ERROR_OUT_OF_DATE_KHR` (the swapchain no longer matches the window, for example after minimizing). Recreating the
-swapchain is module 7; step 09 prints a message and stops.
+swapchain is module 7; step 09 prints a message and stops on `OUT_OF_DATE`. When the present returns `SUBOPTIMAL`, the
+program simply keeps rendering: that is allowed, the swapchain still works, it is only no longer the best fit, and
+recreating it is again module 7.
 
 ## Image layouts
 
@@ -153,8 +158,16 @@ loop. Neither has a timer: the fence wait and the present mode pace the loop.
 
 <Step file="09_triangle" region="cleanup" />
 
-When the window closes, the last frame may still be rendering or waiting to be shown. `vkDeviceWaitIdle` waits for
-both, and only then are the objects destroyed, newest first. The command pool frees its command buffer.
+When the window closes, the last frame may still be rendering. `vkDeviceWaitIdle` waits until all work submitted to the
+device's queues has completed, and only then are the objects destroyed, newest first; the command pool frees its
+command buffer. It does not wait for the presentation engine to finish showing the last image, and it does not have
+to: destroying the swapchain requires only that the GPU's uses of its images have completed
+(`VUID-vkDestroySwapchainKHR-swapchain-01282`). Knowing exactly when a present has released its `render_finished`
+semaphore takes present fences (`VK_KHR_swapchain_maintenance1`), a topic of module 7.
+
+The wait must also happen when something fails mid-frame. In Rust, `destroy` runs after the event loop ends, normally
+or on an error. In C++ a small guard object declared just before the loop also waits, in its destructor: it runs on
+every way out of `main`, including an exception, before RAII destroys the objects the GPU may still be using.
 
 ## What the program prints
 

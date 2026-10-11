@@ -34,11 +34,12 @@ the specification's block diagram, with the ones a shader programs in bold:
 2. **Input assembly** - group vertices into primitives: points, lines, triangles.
 3. ***Vertex shader*** - one invocation per vertex, outputs a clip-space position.
 4. (*Tessellation* and *geometry* shaders - optional stages, unused here.)
-5. **Rasterization** - clipping, the perspective divide, the viewport transform, back-face culling, and finding the
-   pixels each triangle covers.
-6. ***Fragment shader*** - one invocation per covered pixel (per sample with multisampling), outputs colors.
-7. **Per-fragment tests** - depth and stencil.
-8. **Color blending** - combine the fragment's color with the color already in the attachment, then write.
+5. **Vertex post-processing** - fixed-function work on the finished primitives: clipping against the view volume, the
+   perspective divide and the viewport transform to pixel coordinates.
+6. **Rasterization** - back-face culling, and finding the pixels each triangle covers.
+7. ***Fragment shader*** - one invocation per covered pixel (per sample with multisampling), outputs colors.
+8. **Per-fragment tests** - depth and stencil.
+9. **Color blending** - combine the fragment's color with the color already in the attachment, then write.
 
 The stages that are not shaders are called [fixed-function](term:fixed-function): hardware with settings rather than a
 program. A Houdini analogy: the shaders are the wrangles you write, and the fixed-function stages are built-in SOPs with

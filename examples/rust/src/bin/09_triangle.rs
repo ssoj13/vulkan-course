@@ -817,10 +817,16 @@ impl Vk {
     /// Destroys the Vulkan objects in reverse order of creation.
     fn destroy(self) -> Result<(), vk::Result> {
         // #region cleanup
-        // First wait until the GPU is idle: the last frame may still be rendering
-        // or waiting to be presented, and nothing it uses may be destroyed before.
-        // Then this step's objects (the pool frees its command buffer), then
-        // everything from steps 07-08 in reverse order.
+        // First wait until the GPU is idle: the last frame may still be rendering,
+        // and nothing it uses may be destroyed before. The wait covers all work
+        // submitted to the queues, which is what destroying the swapchain needs
+        // (VUID-vkDestroySwapchainKHR-swapchain-01282); it does not wait for the
+        // presentation engine to finish showing the last image. Knowing when a
+        // present released its semaphore takes present fences
+        // (VK_KHR_swapchain_maintenance1), module 7. `destroy` runs whenever the
+        // event loop ends, also after an error. Then this step's objects (the
+        // pool frees its command buffer), then everything from steps 07-08 in
+        // reverse order.
         // SAFETY: plain call on a live device.
         let waited = unsafe { self.device.device_wait_idle() };
         if let Err(e) = &waited {

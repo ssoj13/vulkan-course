@@ -59,8 +59,8 @@ subpasses to dynamic rendering. This course uses dynamic rendering everywhere.
 
 `VkPipelineRenderingCreateInfo` goes into the `pNext` chain of `VkGraphicsPipelineCreateInfo`, and `renderPass` stays
 null. One color attachment, in the swapchain's format. That is all the pipeline needs: the format affects the code
-the driver generates for writing a pixel (with `_SRGB`, the encoding to sRGB), while the image itself can be any view of
-that format.
+the driver generates for writing a pixel (how the fragment shader's outputs are converted and packed for the
+attachment's format), while the image itself can be any view of that format.
 
 Two rules tie the halves together. A null `renderPass` is only allowed with the feature enabled
 (`VUID-VkGraphicsPipelineCreateInfo-dynamicRendering-06576`). And at draw time the rendering must match the pipeline:

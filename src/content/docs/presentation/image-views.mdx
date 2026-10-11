@@ -78,7 +78,9 @@ The order is reverse creation, with one exception that follows from ownership:
 - then the swapchain, the device, the surface, the messenger, the instance.
 
 `vkDeviceWaitIdle` comes first, as in [step 05](lesson:logical-device#5-clean-up). Nothing is drawn yet, but from step
-09 on the GPU may still be presenting the last frame when the window closes.
+09 on the GPU may still be rendering the last frame when the window closes. The wait covers all work submitted to the
+queues, which is what destroying the swapchain requires (`VUID-vkDestroySwapchainKHR-swapchain-01282`); it does not wait
+for the presentation engine to finish showing the last image, and it does not need to.
 
 ## What the program prints
 
