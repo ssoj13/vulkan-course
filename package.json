@@ -14,6 +14,7 @@
     "sync:validation-log": "cargo run --release --locked --manifest-path tools/vk-probe/Cargo.toml --bin validation-log -- src/data/validation-log.json",
     "sync:vuids": "bun scripts/sync-vuids.ts",
     "sync:dynamic-states": "bun scripts/sync-dynamic-states.ts",
+    "sync:shaders": "bun scripts/sync-shaders.ts",
     "astro": "astro"
   },
   "dependencies": {

@@ -8,3 +8,10 @@ publish = false
 # crates.io has no release newer than 0.38 (Vulkan 1.3 headers, 2024), so we pin
 # ash master at an exact commit (Vulkan-Headers 1.4.352) for Vulkan 1.4 bindings.
 ash = { git = "https://github.com/ash-rs/ash", rev = "f4c2ca3e4f6b998d5254ad101a32f024d87cdec2" }
+# Surface creation from a window handle (steps 06+). Taken from the SAME ash commit:
+# the crates.io ash-window 0.13 depends on crates.io ash 0.38, whose types would not
+# match the pinned ash above.
+ash-window = { git = "https://github.com/ash-rs/ash", rev = "f4c2ca3e4f6b998d5254ad101a32f024d87cdec2" }
+# Window + event loop (steps 06+): the latest stable release, ApplicationHandler API.
+# It re-exports raw-window-handle 0.6 (`winit::raw_window_handle`), which ash-window uses.
+winit = "=0.30.13"

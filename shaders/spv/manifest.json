@@ -1,0 +1,23 @@
+{
+	"compiler": "slangc 2026.1-52-gc8ddf20bb",
+	"flags": [
+		"-target",
+		"spirv",
+		"-profile",
+		"spirv_1_6",
+		"-fvk-use-entrypoint-name"
+	],
+	"shaders": [
+		{
+			"source": "triangle.slang",
+			"sourceSha256": "c5c06f70ba195c7af80760f50f9163a03d05d2bd636e872eb34cc314cb650071",
+			"outputs": [
+				{
+					"file": "triangle.spv",
+					"bytes": 1304,
+					"sha256": "9d3f229f912f6d506385d73714b9ea6d54f52a8d4a4c55501dfabde6d8a848b6"
+				}
+			]
+		}
+	]
+}
