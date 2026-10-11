@@ -467,6 +467,21 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
   without the rendered >= n-2 WAR wait, 25 without the COMPUTE->HOST barrier (host reads are not tracked; results still
   correct on this machine). Earlier "sync validation clean" claims for storage buffers (modules 9-10) were made without
   the heuristic. All clean runs of 25-27 used both env vars: only the bandicam warning. Logs: scratchpad m11/.
+- Sync validation re-check 09-24 with shader-access heuristic (2026-10-11): the setting's own description
+  (SDK Bin/VkLayer_khronos_validation.json, key `syncval_shader_accesses_heuristic`, default false, needs validate_sync):
+  "Take into account memory accesses performed by the shader based on SPIR-V static analysis. Warning: can produce
+  false-positives, can ignore certain types of accesses, does not support VK_EXT_descriptor_buffer." Fresh release builds
+  of both languages, VK_KHRONOS_VALIDATION_VALIDATE_SYNC=true + VK_KHRONOS_VALIDATION_SYNCVAL_SHADER_ACCESSES_HEURISTIC=true,
+  33 variants x 2 languages (09; 10 --frames 1/2/3; 11 --demo-resize with/without --no-present-fences; 12 --frames 1/2/3;
+  13; 14; 15 default/--transfer-queue/--bar; 16; 17; 18 default/--push-descriptor; 19; 20 (4 s, past the frame-120
+  write); 21 default/--nearest --address clamp/mirror/border; 22 default/--no-depth; 23 default/--no-mips/--anisotropy;
+  24 --samples 1/2/4/8): all exit 0, stderr = only the bandicam warning. So the earlier "clean" claims hold with the
+  heuristic too. Heuristic proven active (temporary edit of Rust 21, reverted, sha256 identical, rebuilt): after the draw,
+  a texture layout transition SHADER_READ_ONLY -> GENERAL with src NONE gives, with the heuristic, "vkCmdPipelineBarrier2():
+  WRITE_AFTER_READ hazard detected. vkCmdPipelineBarrier2 performs image layout transition on the VkImage ..., which was
+  previously read by vkCmdDrawIndexed."; WITHOUT it: silent. I.e. sampled-image (descriptor) reads are not tracked by
+  plain validate_sync either. Uniform-buffer reads were not tested separately (17-21 UBOs are host-written only, and host
+  accesses are not tracked). Logs: scratchpad syncrecheck/.
 - Module 8 review fixes, round 2 (2026-10-11, EN lessons; the RU lessons written afterwards carry the same facts):
   - gpu-allocator experiment (scratch cargo project, deleted after; logs check*.log in the session scratchpad gpualloc/):
     gpu-allocator =0.28.0 (features std+vulkan) + `[patch.crates-io] ash = { git = ash-rs/ash, rev = f4c2ca3 }`.
@@ -617,8 +632,11 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
   defined for every step: 25 has no window but loads SPIR-V) and READMEs updated. fmt + clippy -D warnings, C++ /W4 clean.
 - [ ] Module 11: independent reviews of 25-27 (code vs spec), then the EN lessons compute/{compute-shaders, particles,
   async-compute} (module `compute` not yet in course.json); `sync:vuids` is not needed for examples (src/ only).
-- [ ] Re-run the storage-buffer steps (17-24) with VK_KHRONOS_VALIDATION_SYNCVAL_SHADER_ACCESSES_HEURISTIC=true and
-  correct the "sync validation clean" statements if anything shows up (see State "examples 25-27", trap).
+- [x] Re-run steps 09-24 with VK_KHRONOS_VALIDATION_SYNCVAL_SHADER_ACCESSES_HEURISTIC=true (2026-10-11): clean, see
+  State "Sync validation re-check 09-24". Lessons not edited.
+- [ ] Lessons: barriers-and-layouts (EN ~269 "tracks every access", ~361; RU ~275, ~369) overstate what plain
+  VALIDATE_SYNC tracks: shader (descriptor) accesses need the heuristic setting. Add the qualifier and mention the second
+  env var where lessons state "clean with sync validation" (uniform-buffers, push-constants, bindless, timeline-semaphores).
 - [ ] Async compute shows no gain on the RTX 3080 Ti with 2^20 particles (CPU/present bound); a lesson experiment
   could add a heavier kernel or FIFO + a GPU-bound load to show when overlap helps - measure before claiming.
 - [ ] READMEs: the "Steps 08+ use triangle.spv / mesh.spv" sentence predates steps 17-27 shaders; list all .spv files.
