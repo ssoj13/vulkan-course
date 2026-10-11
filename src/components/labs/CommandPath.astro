@@ -5,10 +5,9 @@
  */
 import CommandPathView from './CommandPathView.tsx';
 import { FRAMES, percent, simulate, type InFlight } from '../../lib/labs/command-path';
-import { pick } from '../../lib/text';
+import { pick, tfmt } from '../../lib/text';
 import { TEXT } from './command-path.text';
 import { courseIn, langOf } from 'course-kit/lib/course.ts';
-import { fmt } from 'course-kit/i18n.mjs';
 
 const v = courseIn(langOf(Astro.url.pathname));
 const t = pick(TEXT, v.lang, 'command-path');
@@ -17,9 +16,9 @@ const rows = modes.map((m) => {
 	const s = simulate(m);
 	const span = (f: number, kind: string) => s.segments.find((x) => x.f === f && x.kind === kind)!;
 	return {
-		head: fmt(t.fbRow, { mode: m === 1 ? t.mode1 : t.mode2, n: FRAMES, t: s.end, gpu: percent(s, ['exec']), wait: percent(s, ['wait']) }),
+		head: tfmt(v.lang, t.fbRow, { mode: m === 1 ? t.mode1 : t.mode2, n: FRAMES, t: s.end, gpu: percent(s, ['exec']), wait: percent(s, ['wait']) }),
 		frames: Array.from({ length: FRAMES }, (_, f) =>
-			fmt(t.fbFrame, { f: f + 1, r0: span(f, 'record').t0, r1: span(f, 'record').t1, q: span(f, 'submit').t1, g0: span(f, 'exec').t0, g1: span(f, 'exec').t1 }),
+			tfmt(v.lang, t.fbFrame, { f: f + 1, r0: span(f, 'record').t0, r1: span(f, 'record').t1, q: span(f, 'submit').t1, g0: span(f, 'exec').t0, g1: span(f, 'exec').t1 }),
 		),
 	};
 });

@@ -1,0 +1,183 @@
+---
+title: The pipeline layout
+description: 'The declaration of every resource a pipeline''s shaders may read: descriptor set layouts and push constant ranges.'
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import MindMap from 'course-kit/components/MindMap.astro';
+import Quiz from 'course-kit/components/Quiz.astro';
+import Step from '../../../components/Step.astro';
+import ObjectGraph from '../../../components/ObjectGraph.astro';
+
+Real shaders read data from outside: a camera matrix, material parameters, textures. Before the first draw, the
+pipeline has to know the *shape* of all that data - which slots exist and of what type. That shape is the **pipeline
+layout**. Our triangle reads nothing, so its layout is empty; yet it is required. Why, and what goes into one when it
+is not empty?
+
+## Where this fits
+
+Third lesson of the pipeline module, a short one with a long reach:
+
+`VkDescriptorSetLayout × N + push constant ranges → VkPipelineLayout → VkPipeline`
+
+A pipeline layout is built on the device and, optionally, on descriptor set layouts. The
+[graphics pipeline](lesson:graphics-pipeline) needs one; the descriptors module (uniform buffers, descriptor sets, push
+constants, bindless) fills it with content. Here we learn what it declares and create the empty one of step 08.
+
+## A signature, not the arguments
+
+Think of a Houdini digital asset. Its **parameter interface** - which parameters exist, their names and types - is
+fixed when the asset is defined. The **values** are set on each instance, and can change every frame.
+
+A [pipeline layout](term:vk-pipeline-layout) is the parameter interface of a pipeline:
+
+- **descriptor set layouts** - groups of resource slots. Each slot (a *binding*) has a number, a type (uniform buffer,
+  sampled image, storage buffer ...) and the stages that see it. A [descriptor set layout](term:vk-descriptor-set-layout)
+  describes one group; the pipeline layout lists up to `maxBoundDescriptorSets` of them (32 on the course GPU,
+  `VUID-VkPipelineLayoutCreateInfo-setLayoutCount-00286`).
+- **push constant ranges** - a small block of bytes written straight into the command buffer, for values that change
+  per draw (an object index, a matrix). The course GPU allows `maxPushConstantsSize` = 256 bytes in total.
+
+The arguments come later and separately: descriptor sets with the actual buffers and images are *bound* while
+recording, and push constants are *pushed*. The layout only says what shape they will have. In a shader the same shape
+appears as `set` and `binding` numbers, and the pipeline's layout must match what the shaders declare
+(`VUID-VkGraphicsPipelineCreateInfo-layout-07988`).
+
+The hierarchy, outermost first: **pipeline layout** → its **descriptor set layouts** (set 0, set 1, ...) → their
+**bindings** (binding 0, 1, ...) → a **descriptor** per binding (one resource handle). Plus, beside the sets, the
+**push constant ranges**.
+
+## 1. The empty layout
+
+<Step file="08_pipeline" region="pipeline-layout" />
+
+No set layouts, no push constant ranges: our shaders use only constants compiled into them. The object is still
+needed: a graphics pipeline with shader stages must name a valid layout (`VUID-VkGraphicsPipelineCreateInfo-layout-06602`;
+the one exception is a new descriptor-heap extension that this course does not use). Then `layout(pipeline_layout)` in
+the create info of the [previous lesson](lesson:graphics-pipeline#3-create-the-pipeline) hands it to the pipeline.
+
+## Why the layout is a separate object
+
+If a pipeline had to describe its resource slots inside itself, every pipeline would carry its own copy, and nothing
+could tell that two pipelines take the same kind of arguments. As a separate object, a layout can be shared:
+
+- many pipelines can be created with one layout;
+- descriptor sets bound for one pipeline stay bound when you switch to another pipeline whose layout is compatible -
+  the specification defines exactly when two layouts are compatible (same set layouts up to a set number, same push
+  constant ranges). A renderer uses that: bind the per-frame data (camera, lights) once in set 0, then switch materials
+  and pipelines without touching it.
+
+That is why the layout is a parent of the pipeline in the object map, and why the descriptors module will start from
+this object.
+
+## 2. Cleanup
+
+<Step file="08_pipeline" region="cleanup" />
+
+The pipeline goes first, then its layout. The shader module is already gone: step 08 destroyed it right after the
+pipeline was created.
+
+## What the program prints
+
+```text
+Pipeline layout created: 0 descriptor set layouts, 0 push constant ranges
+```
+
+(shortened: one line of the [step 08 output](lesson:graphics-pipeline#what-the-program-prints).)
+
+## Build it yourself
+
+The descriptor set layout is an *optional* parent of the pipeline layout: create the layout with or without it. The
+dashed wire marks that the API accepts none, which is our case.
+
+<ObjectGraph
+	mode="build"
+	scope={['instance', 'physical-device', 'device', 'descriptor-set-layout', 'pipeline-layout', 'shader-module', 'pipeline']}
+	caption="A pipeline layout needs only the device; descriptor set layouts are optional. The pipeline needs the layout."
+/>
+
+## The map of this lesson
+
+<MindMap />
+
+## Underneath
+
+- What a layout turns into is up to the driver. Typically it decides where each set's descriptors and the push
+  constants live for the shaders: in dedicated registers, in a table the hardware reads, or in memory. That mapping
+  affects the shader code, which is one reason the layout must be known when the pipeline is compiled.
+- Push constants are cheap because they travel with the command buffer: no buffer has to be allocated or updated, the
+  values are recorded right next to the draw. That is also why their space is small.
+
+<Quiz
+	questions={[
+		{
+			q: 'Our shaders read no resources. Does the pipeline still need a layout?',
+			options: [
+				{
+					text: 'No: the layout member may simply be left as a null handle',
+					why: 'A graphics pipeline with shader stages must name a valid layout (VUID-VkGraphicsPipelineCreateInfo-layout-06602); the only exception is a descriptor-heap extension the course does not use.',
+				},
+				{
+					text: 'Yes, an empty one with no sets and no push constants',
+					why: 'Right: the layout is required even when it declares nothing, which is exactly what step 08 creates.',
+				},
+				{
+					text: 'Only if the pipeline uses dynamic state',
+					why: 'Dynamic state and the layout are unrelated: one is about fixed-function settings, the other about shader resources.',
+				},
+				{
+					text: 'No: the driver creates a default layout',
+					why: 'Vulkan creates nothing implicitly; if the pipeline needs a layout, the application provides it.',
+				},
+			],
+			answer: 1,
+			ref: '#1-the-empty-layout',
+		},
+		{
+			q: 'What does a pipeline layout contain?',
+			options: [
+				{
+					text: 'The actual buffers and images the shaders will read',
+					why: 'The actual resources live in descriptor sets bound while recording. The layout only declares their shape.',
+				},
+				{
+					text: 'Descriptor set layouts and push constant ranges',
+					why: 'Right: it is the shape of the shaders\' inputs; the values come later, bound or pushed while recording.',
+				},
+				{
+					text: 'The order of the pipeline stages',
+					why: 'Stage order is fixed by the graphics pipeline itself. The layout is about resources, not stages.',
+				},
+				{
+					text: 'The formats of the color attachments',
+					why: 'Attachment formats go into VkPipelineRenderingCreateInfo, part of dynamic rendering. The layout is about shader resources.',
+				},
+			],
+			answer: 1,
+			ref: '#a-signature-not-the-arguments',
+		},
+		{
+			q: 'Why is the pipeline layout an object of its own instead of a part of each pipeline?',
+			options: [
+				{
+					text: 'Layouts must be destroyed before pipelines',
+					why: 'The order is the other way round: step 08 destroys the pipeline first, then the layout.',
+				},
+				{
+					text: 'So pipelines can share it, and bound sets survive a pipeline switch',
+					why: 'Right: pipelines with compatible layouts accept the same bound descriptor sets, so per-frame data is bound once.',
+				},
+				{
+					text: 'The GPU stores layouts in a separate memory heap',
+					why: 'Where a driver keeps its layout data is its own business; the reason in the API is sharing and compatibility.',
+				},
+				{
+					text: 'A layout can be changed after the pipeline exists',
+					why: 'Vulkan objects like this are immutable once created; nothing in a layout can be changed later.',
+				},
+			],
+			answer: 1,
+			ref: '#why-the-layout-is-a-separate-object',
+		},
+	]}
+/>

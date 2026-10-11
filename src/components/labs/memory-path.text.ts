@@ -46,14 +46,14 @@ export const TEXT = {
 		budget: '{pct}% бюджета кадра в {frame} мс (60 fps)',
 		over: '{x}× целого кадра',
 		typeHead: 'Тип памяти этого пути (первый тип, разрешённый memoryTypeBits {bits}, с {flags})',
-		typeRow: 'тип {index} → heap {heap}',
-		heapRow: 'heap {index}: {size}',
+		typeRow: 'тип {index} → куча {heap}',
+		heapRow: 'куча {index}: {size}',
 		noFlags: 'без флагов',
-		noFit: '{size} не помещается в heap {heap} ({heapSize}): vkAllocateMemory нарушит правило:',
+		noFit: '{size} не помещается в кучу {heap} ({heapSize}): vkAllocateMemory нарушит правило:',
 		why: 'Поэтому выбор за вами: одни и те же байты стоят {fast} мс из VRAM и {slow} мс через шину. Vulkan не угадывает, где должен жить буфер, — тип памяти выбираете вы.',
 		note: 'Время — это байты, делённые на теоретическую пиковую пропускную способность, за один проход по данным. Реальные передачи до пика не дотягивают, а кэши, задержки и чужой трафик здесь не учтены.',
 		heapsHead: 'Кучи (heaps) и типы памяти GPU курса (vulkaninfo)',
-		rebarNote: 'На машине курса ReBAR выключен (снимок): heap {index} ({size}) — это окно BAR в 256 MiB, а не вся VRAM.',
+		rebarNote: 'На машине курса ReBAR выключен (снимок): куча {index} ({size}) — это окно BAR в 256 MiB, а не вся VRAM.',
 	},
 };
 

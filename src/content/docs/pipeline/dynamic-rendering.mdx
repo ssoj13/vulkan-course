@@ -1,0 +1,228 @@
+---
+title: Dynamic rendering
+description: 'Rendering into image views named at record time: attachments, load and store operations, and what replaced VkRenderPass.'
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import MindMap from 'course-kit/components/MindMap.astro';
+import Quiz from 'course-kit/components/Quiz.astro';
+import Step from '../../../components/Step.astro';
+
+A pipeline knows how to draw. It does not yet know *where*: which images receive its pixels, what they contain
+before the first draw, and whether the result is kept afterwards. In Vulkan 1.4 all of this is said in two places - a
+few formats in the pipeline, and the actual images at the moment rendering begins. This is **dynamic rendering**.
+
+## Where this fits
+
+Last lesson of the pipeline module; it joins the two halves of what we have built so far:
+
+`VkImageView → attachment (+ load/store ops, clear value) → vkCmdBeginRendering … draws … vkCmdEndRendering`
+
+and, on the pipeline side, `attachment formats → VkPipelineRenderingCreateInfo → VkPipeline`.
+
+Dynamic rendering is built on [image views](lesson:image-views) (the attachments are views) and on a device feature,
+`dynamicRendering`, which we enabled in [step 05](lesson:logical-device#2-which-features). It is used while recording
+[command buffers](lesson:command-buffers), and the [first triangle](lesson:first-triangle) is its first real use.
+
+## Attachments
+
+An [attachment](term:attachment) is an image view that a rendering writes to: a color target, a depth buffer, a stencil
+buffer. Compositing people know the idea from render passes in the AOV sense: one draw can write beauty into one
+target and other data into others at the same time, up to `maxColorAttachments` color targets (8 on the course GPU),
+plus one depth and one stencil attachment.
+
+A **rendering** (the specification says *render pass instance*) is the stretch of commands between
+`vkCmdBeginRendering` and `vkCmdEndRendering`. Every draw inside it writes into the same set of attachments.
+
+## Render passes, and what replaced them
+
+Vulkan 1.0 described attachments with two objects created up front: a [`VkRenderPass`](term:vk-render-pass) (the
+attachments' formats, what to do with their contents, and *subpasses* that could read each other's results pixel by
+pixel) and a `VkFramebuffer` binding concrete image views to it. Pipelines were created against a render pass.
+
+The design served tile-based mobile GPUs well, which keep a tile of every attachment in on-chip memory and gain a lot
+from knowing the whole pass in advance. On desktop GPUs it was mostly ceremony: objects to create, keep compatible and
+recreate with every swapchain resize.
+
+[Dynamic rendering](term:dynamic-rendering) (core in Vulkan 1.3) drops both objects:
+
+- the **pipeline** states only the **formats** of the attachments it will draw into;
+- the **command buffer** names the actual **image views** when a rendering begins.
+
+Render passes are still valid Vulkan, and you will meet them in older code. Vulkan 1.4 also made
+`dynamicRenderingLocalRead` core, which brings the "read what the previous draw wrote at this pixel" ability of
+subpasses to dynamic rendering. This course uses dynamic rendering everywhere.
+
+## 1. The pipeline states formats only
+
+<Step file="08_pipeline" region="rendering-info" />
+
+`VkPipelineRenderingCreateInfo` goes into the `pNext` chain of `VkGraphicsPipelineCreateInfo`, and `renderPass` stays
+null. One color attachment, in the swapchain's format. That is all the pipeline needs: the format affects the code
+the driver generates for writing a pixel (with `_SRGB`, the encoding to sRGB), while the image itself can be any view of
+that format.
+
+Two rules tie the halves together. A null `renderPass` is only allowed with the feature enabled
+(`VUID-VkGraphicsPipelineCreateInfo-dynamicRendering-06576`). And at draw time the rendering must match the pipeline:
+the same number of color attachments and the same formats (`VUID-vkCmdDraw-colorAttachmentCount-06179`,
+`VUID-vkCmdDraw-dynamicRenderingUnusedAttachments-08910`).
+
+## 2. Begin a rendering
+
+<Step file="09_triangle" region="begin-rendering" />
+
+This is recorded every frame, in step 09. The [attachment](term:attachment) is described by
+`VkRenderingAttachmentInfo`:
+
+- **`imageView`** - the view of the swapchain image acquired this frame;
+- **`imageLayout = COLOR_ATTACHMENT_OPTIMAL`** - the layout the image will be in during rendering. A barrier recorded
+  just before puts it there (see [the first triangle](lesson:first-triangle#two-layout-transitions)); `UNDEFINED`
+  is not allowed here (`VUID-VkRenderingAttachmentInfo-imageView-06135`);
+- **`loadOp = CLEAR`, `storeOp = STORE`, `clearValue`** - see the next section.
+
+`VkRenderingInfo` adds the **render area** (the whole 800x600 image) and the **layer count** (1). `vkCmdBeginRendering`
+needs the `dynamicRendering` feature enabled on the device (`VUID-vkCmdBeginRendering-dynamicRendering-06446`).
+
+## Load and store operations
+
+[Load and store operations](term:load-store-op) answer two questions per attachment: what happens to its contents when
+the rendering begins, and what happens when it ends.
+
+| At the start (`loadOp`) | Meaning |
+|---|---|
+| `LOAD` | keep what the image contains; draws add to it |
+| `CLEAR` | fill the whole render area with `clearValue` |
+| `DONT_CARE` | the old contents are undefined; use it when every pixel will be overwritten anyway |
+
+| At the end (`storeOp`) | Meaning |
+|---|---|
+| `STORE` | write the results so later work (here: presentation) can read them |
+| `DONT_CARE` | the results may be thrown away, e.g. a depth buffer nobody reads after the frame |
+
+Vulkan 1.4 also has `NONE` for both (the contents are not touched at all); we do not need it.
+
+We clear to a dark blue-gray and store. The clear value is in *linear* units, like shader output, and the `_SRGB`
+format encodes it when it is written: `0.02, 0.02, 0.03` lands in the image as `39, 39, 48` out of 255 (measured in the
+step 09 screenshot). With a `_UNORM` format the same clear would give a nearly black `5, 5, 8`.
+
+## What the program prints
+
+From step 08, the line that names the choice:
+
+```text
+Graphics pipeline created for color format B8G8R8A8_SRGB (dynamic rendering, no render pass)
+```
+
+(shortened: the full output is in [the graphics pipeline lesson](lesson:graphics-pipeline#what-the-program-prints).)
+
+## The map of this lesson
+
+<MindMap />
+
+## Underneath
+
+- On a desktop GPU like the course's, attachments live in VRAM, and the render outputs (ROPs) write pixels through
+  their caches. A `CLEAR` load op lets the driver clear efficiently, often without writing every pixel of memory, and
+  `DONT_CARE` lets it skip a read.
+- On a tile-based GPU (most phones) the frame is rendered tile by tile in fast on-chip memory. There, `LOAD` means
+  copying each tile *in* from memory and `STORE` means copying it *out*: the load and store ops decide most of the
+  memory traffic of a frame, which is why they exist at all.
+- `vkCmdBeginRendering` and `vkCmdEndRendering` are recorded commands like any other; nothing is cleared until the
+  command buffer runs on the GPU.
+
+<Quiz
+	questions={[
+		{
+			q: 'With dynamic rendering, what does the pipeline know about the images it draws into?',
+			options: [
+				{
+					text: 'Their formats, from VkPipelineRenderingCreateInfo',
+					why: 'Right: the pipeline states only the attachment formats; the actual views are named when the rendering begins.',
+				},
+				{
+					text: 'Their image views, fixed at pipeline creation',
+					why: 'That was roughly the Vulkan 1.0 model (render pass + framebuffer). With dynamic rendering the views are given at vkCmdBeginRendering.',
+				},
+				{
+					text: 'Nothing; it adapts to any attachment at draw time',
+					why: 'The formats must be known when the pipeline is compiled, and the rendering must match them at draw time (VUID-vkCmdDraw-dynamicRenderingUnusedAttachments-08910).',
+				},
+				{
+					text: 'Their size, which must equal the window size',
+					why: 'The size is not part of the pipeline at all; the render area and the dynamic viewport give it while recording.',
+				},
+			],
+			answer: 0,
+			ref: '#1-the-pipeline-states-formats-only',
+		},
+		{
+			q: 'Every pixel of a color attachment will be overwritten by a full-screen draw. Which loadOp avoids useless work?',
+			options: [
+				{
+					text: 'LOAD, so that the old pixels are already there',
+					why: 'LOAD reads the old contents, which is exactly the work you do not need when everything is overwritten.',
+				},
+				{
+					text: 'CLEAR, because clearing is always free',
+					why: 'CLEAR is cheap on many GPUs but not free, and it writes a value you would overwrite anyway.',
+				},
+				{
+					text: 'DONT_CARE: the old contents are not needed',
+					why: 'Right: DONT_CARE tells the driver the previous contents are undefined, so it neither reads nor clears them.',
+				},
+				{
+					text: 'STORE, set on the previous frame',
+					why: 'STORE is a storeOp, about the end of a rendering. At the start of this one you choose a loadOp.',
+				},
+			],
+			answer: 2,
+			ref: '#load-and-store-operations',
+		},
+		{
+			q: 'We clear with 0.02, 0.02, 0.03 into a B8G8R8A8_SRGB image. What ends up in memory?',
+			options: [
+				{
+					text: '5, 5, 8: the values times 255',
+					why: 'That is what a _UNORM format would store. With _SRGB the hardware applies the sRGB curve first.',
+				},
+				{
+					text: '39, 39, 48: the sRGB encoding of the values',
+					why: 'Right: the clear value is linear, and the _SRGB format encodes it when writing; the screenshot shows exactly these values.',
+				},
+				{
+					text: 'The same floats, the image stores floats',
+					why: 'B8G8R8A8 stores 8 bits per channel; floats would need a format like R16G16B16A16_SFLOAT.',
+				},
+				{
+					text: 'Nothing until the first draw writes a pixel',
+					why: 'CLEAR fills the whole render area when the rendering begins, whether or not anything is drawn.',
+				},
+			],
+			answer: 1,
+			ref: '#load-and-store-operations',
+		},
+		{
+			q: 'Why did Vulkan 1.0 have render pass objects at all?',
+			options: [
+				{
+					text: 'Tile-based GPUs gain from knowing the whole pass in advance',
+					why: 'Right: with all attachments and subpasses known up front, a tiler can keep data in on-chip memory and avoid memory traffic.',
+				},
+				{
+					text: 'Desktop GPUs cannot draw without a framebuffer object',
+					why: 'Desktop GPUs draw fine without one, which is why dynamic rendering became core: for them the objects were mostly ceremony.',
+				},
+				{
+					text: 'They were needed to choose the clear color',
+					why: 'Clear values were passed when a render pass began, not baked into the object; dynamic rendering passes them in the attachment info.',
+				},
+				{
+					text: 'OpenGL had render passes, and Vulkan copied them',
+					why: 'OpenGL had framebuffer objects but no render pass objects; the design came from tiled mobile hardware.',
+				},
+			],
+			answer: 0,
+			ref: '#render-passes-and-what-replaced-them',
+		},
+	]}
+/>

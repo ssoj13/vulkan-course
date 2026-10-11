@@ -33,6 +33,36 @@
         { "slug": "queue-families", "title": "Queue families: the GPU's engines", "short": "Queue families", "summary": "Graphics, compute, transfer: how queue families relate to the hardware engines inside the GPU." },
         { "slug": "logical-device", "title": "Logical device and queues", "short": "Logical device", "summary": "Opening a VkDevice with the features and queues we chose, and getting VkQueue handles." }
       ]
+    },
+    {
+      "slug": "presentation",
+      "title": "Presentation",
+      "summary": "Open a window, connect Vulkan to it through a surface, and build the swapchain: the ring of images the screen shows in turn.",
+      "lessons": [
+        { "slug": "window-and-surface", "title": "A window and its surface", "short": "Window and surface", "summary": "Vulkan knows no windows: the WSI extensions, VkSurfaceKHR, and asking the GPU what it can show in our window." },
+        { "slug": "swapchain", "title": "The swapchain and present modes", "short": "Swapchain", "summary": "A ring of images owned by the presentation engine: format, present mode, size and image count." },
+        { "slug": "image-views", "title": "Images and image views", "short": "Image views", "summary": "What a VkImage is, and why rendering and shaders look at images through VkImageView." }
+      ]
+    },
+    {
+      "slug": "pipeline",
+      "title": "The graphics pipeline",
+      "summary": "Shaders in Slang compiled to SPIR-V, the stages of the graphics pipeline, its layout, and rendering without render passes.",
+      "lessons": [
+        { "slug": "shaders-and-spirv", "title": "Shaders, Slang and SPIR-V", "short": "Shaders and SPIR-V", "summary": "From shader source to SPIR-V to a VkShaderModule: Vulkan's one binary shader format and how our triangle shader gets there." },
+        { "slug": "graphics-pipeline", "title": "The graphics pipeline object", "short": "Graphics pipeline", "summary": "Every stage from vertex input to color blending baked into one VkPipeline, and the state left dynamic." },
+        { "slug": "pipeline-layout", "title": "The pipeline layout", "short": "Pipeline layout", "summary": "The declaration of every resource a pipeline's shaders may read: descriptor set layouts and push constant ranges." },
+        { "slug": "dynamic-rendering", "title": "Dynamic rendering", "summary": "Rendering into image views named at record time: attachments, load and store operations, and what replaced VkRenderPass." }
+      ]
+    },
+    {
+      "slug": "commands",
+      "title": "Commands and the first triangle",
+      "summary": "Record commands into a command buffer, submit it to a queue, and put the first triangle on the screen.",
+      "lessons": [
+        { "slug": "command-buffers", "title": "Command pools and command buffers", "short": "Command buffers", "summary": "Where command buffers come from, what recording means, and how a submission reaches the queue." },
+        { "slug": "first-triangle", "title": "The first triangle", "summary": "One frame end to end: wait, acquire, record, submit, present, with a fence, semaphores and two layout transitions." }
+      ]
     }
   ],
   "labs": [
@@ -46,7 +76,7 @@
     { "slug": "queue-planner", "lesson": "queue-families", "title": "Queue planner", "summary": "The real queue families of the course GPU: choose graphics, async compute and transfer queues and see what you get." },
     { "slug": "object-builder", "lesson": "logical-device", "title": "Build the object tree", "summary": "Create and destroy Vulkan objects in any order; the simulator answers with the real validation rules." },
     { "slug": "queue-sync", "title": "Queues, semaphores and fences", "summary": "Submit batches to several queues with wait and signal semaphores and a fence: see what overlaps, what waits and where a race appears." },
-    { "slug": "graphics-pipeline", "title": "The graphics pipeline", "summary": "Walk the stages from vertex input to color output, and see which state is baked into a pipeline and which is dynamic in Vulkan 1.4." },
+    { "slug": "graphics-pipeline", "lesson": "graphics-pipeline", "title": "The graphics pipeline", "summary": "Walk the stages from vertex input to color output, and see which state is baked into a pipeline and which is dynamic in Vulkan 1.4." },
     { "slug": "buffer-memory", "title": "Buffers and memory", "summary": "From buffer usage to memory requirements to a memory type of the real course GPU, and a staging upload or a direct write through the BAR window." }
   ]
 }

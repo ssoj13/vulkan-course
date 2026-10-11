@@ -126,8 +126,14 @@ Files per lab `<slug>`: model `src/lib/labs/<slug>.ts` (pure, no DOM), view `src
 | queue-planner | QueuePlanner | devices/queue-families |
 | object-builder | ObjectGraph (`src/components/ObjectGraph*`, model `src/lib/objects.ts`) | devices/logical-device |
 | queue-sync | QueueSync | none yet (module 7) |
-| graphics-pipeline | GraphicsPipeline | none yet (module 5) |
+| graphics-pipeline | GraphicsPipeline | pipeline/graphics-pipeline (EN; RU when the RU lesson replaces its placeholder) |
 | buffer-memory | BufferMemory | none yet (module 8) |
+
+Widget texts: fill placeholders ONLY with `tfmt(lang, text, vars)` from `src/lib/text.ts` (never the engine `fmt`).
+Counts use ICU-style plural placeholders `{n|# очередь|# очереди|# очередей}` (ru: one/few/many, en: one/other, `#` =
+the number; a form without `#` is the word alone, e.g. units after a shown value). `textErrors` checks the form count
+per language; no "X: {n}" or "(s)" workarounds. `bun run lint` also fails on «лаба»/«лаборатория» (RU word is
+«интерактив», masculine) and on « - » used as a dash in ru/ pages and `ru` text tables.
 
 Shared modules: `src/lib/labs/memory.ts` (heaps/types of gpu.json and the ONE find-memory-type rule `findType(bits,
 flags)`, used by memory-path and buffer-memory), `src/lib/vuids.ts` (`vuid(id)`: the only way to read a VUID text;
@@ -156,7 +162,7 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
 
 - Engine: `github:ssoj13/course-kit#v0.4.1` (public). Bump the tag in package.json for engine changes. v0.4.1 (prepared
   locally, not released yet) ships `src/*.d.mts` declarations for the engine's .mjs modules; until it is released,
-  `bun run check` passes only with those files copied into node_modules/course-kit/src.
+  `bun run check` passes only with those files copied into node_modules/course-kit/src. v0.4.2 (prepared locally, not committed/tagged): /labs catalog h2 ids (module slug, `ahead`) + "On this page"; its labs.astro is copied into node_modules for local builds until released.
 - examples 01-05 in Rust (ash git master, Vulkan 1.4) and C++ (vk::raii, ApiVersion14, C++23 for std::print):
   built and run on RTX 3080 Ti; reviewed by two independent reviewers (code vs spec, lesson facts) and fixed.
   Rust and C++ print identical output except handle addresses (verified 2026-10-10 by diffing real runs; before that
@@ -184,6 +190,31 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
   between queues there is not even that.
 - Repo `ssoj13/vulkan-course` (public, Pages via Actions). `task.md` (private notes) and `.omh/` are gitignored and
   were never published; the pre-publication local history was deleted.
+- examples 06-09 (modules 4-6, 2026-10-10): 06_window_surface, 07_swapchain, 08_pipeline, 09_triangle in both
+  languages; run on the RTX 3080 Ti, stdout identical (no handles printed), validation clean (core + sync + best
+  practices; only the bandicam implicit-layer warning). Rust: winit =0.30.13 (ApplicationHandler; Vulkan setup in
+  `Vk::new` from `resumed`), ash-window from the SAME ash git rev (crates.io 0.13 = ash 0.38 types). C++: GLFW 3.5.1
+  via vcpkg manifest (`examples/cpp/vcpkg.json`, presets set the vcpkg toolchain: old build dirs need `--fresh`);
+  short enum names from `vk_enum_string_helper.h` so output matches ash's Debug. Every region name exists in both
+  files of a step (Step.astro shows both tabs). Window fixed 800x600 physical px; minimizing gives OUT_OF_DATE on this
+  machine and step 09 stops with a message (recreation = module 7). 09: one frame in flight, one render-finished
+  semaphore PER SWAPCHAIN IMAGE, barriers chained to the semaphore stages (COLOR_ATTACHMENT_OUTPUT). Shaders: one
+  source `shaders/*.slang` -> committed `shaders/spv/*.spv` + `manifest.json` (`bun run sync:shaders`, slangc
+  -fvk-use-entrypoint-name, spirv-val vulkan1.4); `tests/shaders.test.ts` catches stale SPIR-V. Slang SV_VertexID =
+  VertexIndex-BaseVertex (needs DrawParameters), so triangle.slang uses SV_VulkanVertexID. Screenshot:
+  `examples/screenshots/09_triangle.png` (Rust; C++ renders the same). NVIDIA best-practices layer flags the non-0/1
+  clear color (no fast clear) - a possible lesson aside. NOT reproduced on 2026-10-10 (env VK_KHRONOS_VALIDATION_VALIDATE_BEST_PRACTICES[_NVIDIA]=true,
+  messenger WARNING|ERROR: only the pageable-device-local-memory PERFORMANCE warning), so no lesson mentions it.
+- Lessons of modules 4-6 (EN, 2026-10-10): presentation/{window-and-surface,swapchain,image-views},
+  pipeline/{shaders-and-spirv,graphics-pipeline,pipeline-layout,dynamic-rendering}, commands/{command-buffers,first-triangle};
+  every 06-09 region is shown once (09 begin-rendering in dynamic-rendering, 09 submit in command-buffers). Program
+  output quoted from real Rust runs (window closed via WM_CLOSE). Screenshot `src/assets/09_triangle.png` shown with
+  `<Image format="png">`: the lesson quotes measured pixels (bg 39,39,48 = sRGB of 0.02/0.03; centroid 156,157,156 =
+  sRGB of 1/3), and the default WebP would change them. RU pages of these 9 lessons are PLACEHOLDERS. 32 terms added
+  (fence/semaphore/image-layout/frame-loop point at first-triangle until module 7 owns them; vk-descriptor-set-layout
+  has no lesson yet). objects.json: `term` links for all presentation..sync objects, and ParentRef `createOnly`
+  (shader-module -> pipeline: destroying the module leaves the pipeline valid, spec of vkDestroyShaderModule).
+  ObjectGraph.astro draws a parent that is outside the scope through the in-scope objects that are a kind of it (`isA`).
 
 ## TODO
 
@@ -193,7 +224,9 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
   reviewed by independent readers, built, screenshots in both languages, deployed
 - [x] 12 labs (2026-10-10); consolidation: tools/vk-probe, VUID single source, shared find-memory-type rule, astro check clean
 - [ ] Release course-kit v0.4.1 (declarations), bump the tag here, then add `bun run check` to the CI test job
-- [ ] Embed queue-sync, graphics-pipeline and buffer-memory in their lessons once modules 5/7/8 exist
+- [ ] Embed queue-sync and buffer-memory in their lessons once modules 7/8 exist ([x] graphics-pipeline, EN)
+- [ ] RU lessons of modules 4-6 (placeholders now); then embed GraphicsPipeline in ru/pipeline/graphics-pipeline
+- [ ] labs/graphics-pipeline.mdx (EN+RU) still says it previews the pipeline module: reword now that the lesson exists
 - [ ] C++ examples in CI (needs Vulkan SDK headers 1.4.341 with vulkan_raii.hpp on the runner)
 - [ ] Decide with the user: term maps put foundations at the bottom, ObjectGraph puts the root on top
 - [ ] After enabling ReBAR on the dev machine (steps in REBAR.md): capture a second snapshot (`sync:gpu` ->

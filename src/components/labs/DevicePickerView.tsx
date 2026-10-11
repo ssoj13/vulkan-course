@@ -5,7 +5,6 @@
  */
 import { useMemo, useState, type KeyboardEvent } from 'react';
 import { LabFrame } from 'course-kit/components/lab/LabFrame.tsx';
-import { fmt } from 'course-kit/i18n.mjs';
 import gpu from '../../data/gpu.json';
 import {
 	CANDIDATES,
@@ -25,7 +24,7 @@ import {
 	type Rule,
 	type Step03Feature,
 } from '../../lib/labs/device-picker';
-import { pick as pickText } from '../../lib/text';
+import { pick as pickText, tfmt } from '../../lib/text';
 import { TEXT } from './device-picker.text';
 import './device-picker.css';
 
@@ -91,25 +90,25 @@ export default function DevicePickerView({ lang }: { lang: string }) {
 				))}
 			</div>
 			<div className="vk-dp-panel" role="tabpanel" id={`vk-dp-panel-${tab}`} aria-labelledby={`vk-dp-tab-${tab}`}>
-				{tab === 'props' && <Props t={t} />}
-				{tab === 'features' && <Features t={t} q={fq} setQ={setFq} off={fOff} setOff={setFOff} />}
-				{tab === 'limits' && <Limits t={t} q={lq} setQ={setLq} expl={lExpl} setExpl={setLExpl} />}
-				{tab === 'picker' && <Picker t={t} rule={rule} setRule={setRule} on={on} setOn={setOn} />}
+				{tab === 'props' && <Props lang={lang} t={t} />}
+				{tab === 'features' && <Features lang={lang} t={t} q={fq} setQ={setFq} off={fOff} setOff={setFOff} />}
+				{tab === 'limits' && <Limits lang={lang} t={t} q={lq} setQ={setLq} expl={lExpl} setExpl={setLExpl} />}
+				{tab === 'picker' && <Picker lang={lang} t={t} rule={rule} setRule={setRule} on={on} setOn={setOn} />}
 			</div>
-			<p className="lab-muted">{fmt(t.source, { date: gpu.meta.date, sdk: gpu.meta.sdk })}</p>
+			<p className="lab-muted">{tfmt(lang, t.source, { date: gpu.meta.date, sdk: gpu.meta.sdk })}</p>
 		</LabFrame>
 	);
 }
 
-function Props({ t }: { t: Texts }) {
+function Props({ lang, t }: { lang: string; t: Texts }) {
 	const d = gpu.device;
 	const type = shortType(d.type);
 	const rows: [string, string, string][] = [
 		[t.pName, d.name, ''],
 		[t.pType, type, t[`type_${type}` as TypeKey] ?? ''],
-		[t.pApi, d.apiVersion, fmt(t.pApiNote, { api: d.apiVersion, usable: usable(4, d.apiVersion) })],
-		[t.pDriver, `${hex(d.driverVersionRaw, 8)} = ${nvidiaDriver(d.driverVersionRaw)}`, fmt(t.pDriverNote, { raw: hex(d.driverVersionRaw, 8), ver: d.driverVersion })],
-		[t.pVendor, hex(d.vendorID), fmt(t.pVendorNote, { vendor: VENDORS[d.vendorID] ?? '?' })],
+		[t.pApi, d.apiVersion, tfmt(lang, t.pApiNote, { api: d.apiVersion, usable: usable(4, d.apiVersion) })],
+		[t.pDriver, `${hex(d.driverVersionRaw, 8)} = ${nvidiaDriver(d.driverVersionRaw)}`, tfmt(lang, t.pDriverNote, { raw: hex(d.driverVersionRaw, 8), ver: d.driverVersion })],
+		[t.pVendor, hex(d.vendorID), tfmt(lang, t.pVendorNote, { vendor: VENDORS[d.vendorID] ?? '?' })],
 		[t.pDevice, hex(d.deviceID), t.pDeviceNote],
 	];
 	return (
@@ -129,7 +128,7 @@ function Props({ t }: { t: Texts }) {
 	);
 }
 
-function Features({ t, q, setQ, off, setOff }: { t: Texts; q: string; setQ: (s: string) => void; off: boolean; setOff: (b: boolean) => void }) {
+function Features({ lang, t, q, setQ, off, setOff }: { lang: string; t: Texts; q: string; setQ: (s: string) => void; off: boolean; setOff: (b: boolean) => void }) {
 	const groups = useMemo(() => featureGroups(q, off), [q, off]);
 	const empty = groups.every((g) => !g.rows.length);
 	return (
@@ -146,7 +145,7 @@ function Features({ t, q, setQ, off, setOff }: { t: Texts; q: string; setQ: (s: 
 				.filter((g) => g.rows.length)
 				.map((g) => (
 					<section key={g.struct} className="vk-dp-group">
-						<h4>{fmt(t.fGroup, { struct: g.struct, minor: g.minor, n: g.supported, total: g.total })}</h4>
+						<h4>{tfmt(lang, t.fGroup, { struct: g.struct, minor: g.minor, n: g.supported, total: g.total })}</h4>
 						<ul className="vk-dp-feats">
 							{g.rows.map((r) => (
 								<li key={r.name} className={`${r.value ? 'is-yes' : 'is-no'}${r.step03 ? ' is-marked' : ''}`}>
@@ -163,7 +162,7 @@ function Features({ t, q, setQ, off, setOff }: { t: Texts; q: string; setQ: (s: 
 	);
 }
 
-function Limits({ t, q, setQ, expl, setExpl }: { t: Texts; q: string; setQ: (s: string) => void; expl: boolean; setExpl: (b: boolean) => void }) {
+function Limits({ lang, t, q, setQ, expl, setExpl }: { lang: string; t: Texts; q: string; setQ: (s: string) => void; expl: boolean; setExpl: (b: boolean) => void }) {
 	const rows = useMemo(() => limitRows(q, expl), [q, expl]);
 	return (
 		<>
@@ -182,7 +181,7 @@ function Limits({ t, q, setQ, expl, setExpl }: { t: Texts; q: string; setQ: (s: 
 							<code>{r.name}</code>
 							<b>
 								{r.value}
-								{r.unit && t[`unit_${r.unit}` as UnitKey] ? ` ${t[`unit_${r.unit}` as UnitKey]}` : ''}
+								{r.unit && t[`unit_${r.unit}` as UnitKey] ? ` ${tfmt(lang, t[`unit_${r.unit}` as UnitKey], { n: r.n! })}` : ''}
 								{r.size ? ` (${r.size})` : ''}
 							</b>
 						</div>
@@ -195,12 +194,14 @@ function Limits({ t, q, setQ, expl, setExpl }: { t: Texts; q: string; setQ: (s: 
 }
 
 function Picker({
+	lang,
 	t,
 	rule,
 	setRule,
 	on,
 	setOn,
 }: {
+	lang: string;
 	t: Texts;
 	rule: Rule;
 	setRule: (r: Rule) => void;
@@ -217,16 +218,16 @@ function Picker({
 		setRule({ ...rule, required: STEP03_FEATURES.map((x) => x.name).filter((n) => (n === f ? yes : rule.required.includes(n))) });
 
 	const line = (c: Exclude<Check, { kind: 'score' }>, have: string): string => {
-		if (c.kind === 'version') return fmt(c.ok ? t.trVersionOk : t.trVersionBad, { have: c.have, minor: c.minor });
-		if (c.value === 'na') return fmt(t.trFeatNa, { name: c.name, minor: featureMinor(c.name), have });
-		return fmt(c.value ? t.trFeatOk : t.trFeatFalse, { name: c.name });
+		if (c.kind === 'version') return tfmt(lang, c.ok ? t.trVersionOk : t.trVersionBad, { have: c.have, minor: c.minor });
+		if (c.value === 'na') return tfmt(lang, t.trFeatNa, { name: c.name, minor: featureMinor(c.name), have });
+		return tfmt(lang, c.value ? t.trFeatOk : t.trFeatFalse, { name: c.name });
 	};
 
 	return (
 		<div className="vk-dp-picker">
 			<p className={`lab-msg vk-dp-result ${winner ? 'is-ok' : 'is-err'}`} aria-live="polite">
 				{winner
-					? fmt(rule.preferDiscrete && result.tiedLater.length === 0 ? t.pickedScore : t.pickedFirst, { name: label(t, winner), score: winScore })
+					? tfmt(lang, rule.preferDiscrete && result.tiedLater.length === 0 ? t.pickedScore : t.pickedFirst, { name: label(t, winner), score: winScore })
 					: t.pickedNone}
 			</p>
 			<fieldset className="vk-dp-rule">
@@ -267,7 +268,7 @@ function Picker({
 						return (
 							<li key={c.id} className={`vk-dp-cand${won ? ' is-picked' : ''}${on[c.id] ? '' : ' is-off'}${c.hypothetical ? ' is-hypo' : ''}`}>
 								<label className="vk-dp-check">
-									<input type="checkbox" checked={on[c.id]} onChange={(e) => setOn({ ...on, [c.id]: e.target.checked })} aria-label={fmt(t.candOn, { name: label(t, c) })} />
+									<input type="checkbox" checked={on[c.id]} onChange={(e) => setOn({ ...on, [c.id]: e.target.checked })} aria-label={tfmt(lang, t.candOn, { name: label(t, c) })} />
 									<b>{label(t, c)}</b>
 									<span className={`vk-dp-badge${c.hypothetical ? ' is-hypo' : ' is-accent'}`}>{c.hypothetical ? t.hypo : t.real}</span>
 								</label>
@@ -279,7 +280,7 @@ function Picker({
 									{v?.checks.map((ch, i) =>
 										ch.kind === 'score' ? (
 											<li key={i} className="is-ok">
-												{rule.preferDiscrete ? fmt(t.trScore, { score: ch.score, type: shortType(c.type) }) : t.trScoreOff}
+												{rule.preferDiscrete ? tfmt(lang, t.trScore, { score: ch.score, type: shortType(c.type) }) : t.trScoreOff}
 												{' - '}
 												{won ? t.trWin : result.tiedLater.includes(c.id) ? t.trTie : t.trLose}
 											</li>

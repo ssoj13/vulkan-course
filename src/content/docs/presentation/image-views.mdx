@@ -1,0 +1,191 @@
+---
+title: Images and image views
+description: 'What a VkImage is, and why rendering and shaders look at images through VkImageView.'
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import MindMap from 'course-kit/components/MindMap.astro';
+import Quiz from 'course-kit/components/Quiz.astro';
+import Step from '../../../components/Step.astro';
+import ObjectGraph from '../../../components/ObjectGraph.astro';
+
+The swapchain gave us three images. Yet nothing in Vulkan renders into a `VkImage` directly, and no shader reads one
+directly either: both go through a **`VkImageView`**. What is an image, what does a view add on top of it, and why
+is this extra object worth having?
+
+## Where this fits
+
+Last lesson of the presentation module, and the bridge to rendering:
+
+`VkSwapchainKHR → VkImage (swapchain) → VkImageView → color attachment of a rendering`
+
+An image view is built on an image (and created from the device). Images come back in full in the images module
+(textures, depth, mipmaps); here we meet them through the swapchain, and the views we make are what
+[dynamic rendering](lesson:dynamic-rendering) will draw into in [the first triangle](lesson:first-triangle).
+
+## What an image is
+
+A [`VkImage`](term:vk-image) is a block of texels plus a description: a **format** (`B8G8R8A8_SRGB`), an **extent**
+(800x600x1), a number of **mip levels** and **array layers**, a **usage** (what it may be used for) and a **tiling**.
+
+Tiling is where an image differs from a plain array of pixels. With *optimal* tiling the driver arranges texels in its
+own order - typically small tiles or a space-filling curve, so that neighbors in 2D are neighbors in memory, which
+suits the texture units and the render outputs. It is the same idea as a tiled EXR versus a scanline EXR, except that
+the tile layout is the GPU's secret. That is why we never write into an optimal image's memory directly, and why the
+same image can be "arranged" differently for different jobs (image layouts, met in [the first triangle](lesson:first-triangle#two-layout-transitions)).
+
+An image also has a structure. It splits into **subresources**: one per *aspect* (color; or depth and stencil), per
+*mip level* and per *array layer*. A cube map is an image with 6 layers; a texture with a full mip chain of a 1024²
+image has 11 levels.
+
+## What a view adds
+
+An [image view](term:vk-image-view) says **which part** of an image to look at and **how to read it**:
+
+- **view type**: 1D, 2D, 3D, cube, or arrays of them. The same 6-layer image can be viewed as a 2D array, as one single face,
+  or (if it was created cube-compatible) as a cube map.
+- **format**: usually the image's own format; with the right creation flags, a compatible one (reading 8-bit
+  `_UNORM` data as `_SRGB`, for example).
+- **component mapping**: a swizzle, like a Shuffle node in Nuke: read red from the alpha channel, force green to one.
+  `IDENTITY` leaves the channels as they are.
+- **subresource range**: which aspect, which mip levels, which layers.
+
+The hierarchy, from memory to use: **image** (texels and their description) → **subresources** (aspect × mip × layer)
+→ **view** (a selected range, read in a chosen way) → **use** (a color attachment for rendering, a sampled texture for a
+shader). The same image can have many views at once, for different uses; creating a view never copies texels.
+
+## 1. One view per swapchain image
+
+<Step file="07_swapchain" region="create-image-views" />
+
+For the swapchain images the answer to every question is the plain one: a 2D view, the swapchain's format, identity
+swizzle, the color aspect, mip level 0 and layer 0 - the only level and layer these images have. One view per image,
+so three views.
+
+The image must have been created with a usage a view can serve (`VUID-VkImageViewCreateInfo-image-04441`): our
+swapchain images carry `COLOR_ATTACHMENT`, which is exactly what the views will be used for.
+
+## 2. Who destroys what
+
+<Step file="07_swapchain" region="cleanup" />
+
+The order is reverse creation, with one exception that follows from ownership:
+
+- the **views** are ours (we created them with `vkCreateImageView`), so we destroy them, before the swapchain whose
+  images they look at;
+- the **images** are not ours: the swapchain destroys them together with itself. Calling `vkDestroyImage` on a
+  swapchain image is invalid (`VUID-vkDestroyImage-image-04882`);
+- then the swapchain, the device, the surface, the messenger, the instance.
+
+`vkDeviceWaitIdle` comes first, as in [step 05](lesson:logical-device#5-clean-up). Nothing is drawn yet, but from step
+09 on the GPU may still be presenting the last frame when the window closes.
+
+## What the program prints
+
+The step 07 program, which this lesson and [the previous one](lesson:swapchain) share:
+
+```text
+Swapchain created: 3 images
+Image views created: 3
+```
+
+(shortened: the full output is in the [swapchain lesson](lesson:swapchain#what-the-program-prints).)
+
+## Build it yourself
+
+The whole presentation chain. Build it to the image views, then destroy the swapchain *before* the views and watch
+what happens to them: their images are released with the swapchain, and the views are left pointing at nothing.
+
+<ObjectGraph
+	mode="build"
+	scope={['instance', 'surface', 'physical-device', 'device', 'queue', 'swapchain', 'swapchain-image', 'image-view']}
+	caption="An image view needs the device and an image; here the image is a swapchain image. Views are destroyed before the swapchain."
+/>
+
+## The map of this lesson
+
+<MindMap />
+
+## Underneath
+
+- A view is small. Creating one does not touch the texels; the driver turns the view's description (address of the
+  image, format, dimensions, swizzle, range) into the hardware's own descriptor format, which the texture units or the
+  render outputs read when the view is used.
+- That is why the format, swizzle and range live in the view and not in every draw call: the description is prepared
+  once, at `vkCreateImageView`, and reused every frame.
+- For the swapchain images the driver chose the memory and the tiling; the presentation engine knows how to read them.
+  Our views only describe how *we* will write into them.
+
+<Quiz
+	questions={[
+		{
+			q: 'What does vkCreateImageView do with the texels of the image?',
+			options: [
+				{
+					text: 'Copies them into a new, reformatted buffer',
+					why: 'No texel is copied: a view only describes how to read the existing image.',
+				},
+				{
+					text: 'Nothing; it only describes a range and a way to read it',
+					why: 'Right: a view is a description (type, format, swizzle, subresource range) over the same memory; many views can share one image.',
+				},
+				{
+					text: 'Converts them to the format given in the view',
+					why: 'A view with a compatible format reinterprets the same bits when they are read; it converts nothing in memory.',
+				},
+				{
+					text: 'Locks them so no other view can use them',
+					why: 'One image can have many views at once, for different uses. Views do not lock anything.',
+				},
+			],
+			answer: 1,
+			ref: '#what-a-view-adds',
+		},
+		{
+			q: 'Who destroys a swapchain image?',
+			options: [
+				{
+					text: 'The application, with vkDestroyImage, before the swapchain',
+					why: 'Calling vkDestroyImage on a swapchain image is invalid usage (VUID-vkDestroyImage-image-04882): the image is not yours.',
+				},
+				{
+					text: 'The image view that looks at it',
+					why: 'A view never owns its image; destroying the view leaves the image as it was.',
+				},
+				{
+					text: 'The swapchain, when it is destroyed',
+					why: 'Right: the swapchain created its images and releases them with itself; the application destroys only its views.',
+				},
+				{
+					text: 'Nobody; the images live until the device is destroyed',
+					why: 'They go away with the swapchain, which is why views must not be used after the swapchain is gone.',
+				},
+			],
+			answer: 2,
+			ref: '#2-who-destroys-what',
+		},
+		{
+			q: 'A 6-layer image holds the faces of a cube map. Can you sample only one face as an ordinary 2D texture?',
+			options: [
+				{
+					text: 'Yes: a 2D view with a range of one layer',
+					why: 'Right: the subresource range selects one layer and the view type 2D reads it as a flat texture; the image itself stays a cube.',
+				},
+				{
+					text: 'No: you must copy the face into a new image first',
+					why: 'A copy is not needed: selecting a part of an image is exactly what a view is for.',
+				},
+				{
+					text: 'No: an image has one view type, fixed at creation',
+					why: 'The image has a type (2D with 6 layers); the view type is chosen per view, and one image can be seen as a cube, a 2D array or one 2D face.',
+				},
+				{
+					text: 'Only with a component mapping that picks the face',
+					why: 'The component mapping swizzles channels (r, g, b, a), not layers. Layers are chosen by the subresource range.',
+				},
+			],
+			answer: 0,
+			ref: '#what-a-view-adds',
+		},
+	]}
+/>

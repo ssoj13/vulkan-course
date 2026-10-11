@@ -29,6 +29,33 @@
         "queue-families": { "title": "Семейства очередей: движки GPU", "short": "Семейства очередей", "summary": "Graphics, compute, transfer: как семейства очередей связаны с аппаратными движками внутри GPU." },
         "logical-device": { "title": "Логическое устройство и очереди", "short": "Логическое устройство", "summary": "Открываем VkDevice с выбранными возможностями и очередями и получаем хэндлы VkQueue." }
       }
+    },
+    "presentation": {
+      "title": "Вывод на экран",
+      "summary": "Открываем окно, связываем с ним Vulkan через surface и строим swapchain — кольцо изображений, которые экран показывает по очереди.",
+      "lessons": {
+        "window-and-surface": { "title": "Окно и его surface", "short": "Окно и surface", "summary": "Vulkan не знает про окна: расширения WSI, VkSurfaceKHR и вопрос к GPU, что он может показать в нашем окне." },
+        "swapchain": { "title": "Swapchain и режимы показа", "short": "Swapchain", "summary": "Кольцо изображений во владении presentation engine: формат, режим показа, размер и число изображений." },
+        "image-views": { "title": "Изображения и image view", "short": "Image view", "summary": "Что такое VkImage и почему рендеринг и шейдеры смотрят на изображения через VkImageView." }
+      }
+    },
+    "pipeline": {
+      "title": "Графический пайплайн",
+      "summary": "Шейдеры на Slang, скомпилированные в SPIR-V, стадии графического пайплайна, его layout и рендеринг без render pass.",
+      "lessons": {
+        "shaders-and-spirv": { "title": "Шейдеры, Slang и SPIR-V", "short": "Шейдеры и SPIR-V", "summary": "От исходника шейдера к SPIR-V и к VkShaderModule: единственный двоичный формат шейдеров в Vulkan и путь нашего шейдера треугольника." },
+        "graphics-pipeline": { "title": "Объект графического пайплайна", "short": "Графический пайплайн", "summary": "Все стадии от входа вершин до смешивания цветов, зашитые в один VkPipeline, и состояние, оставленное динамическим." },
+        "pipeline-layout": { "title": "Pipeline layout", "summary": "Объявление всех ресурсов, которые могут читать шейдеры пайплайна: layout наборов дескрипторов и диапазоны push-констант." },
+        "dynamic-rendering": { "title": "Dynamic rendering", "summary": "Рендеринг в image view, названные прямо при записи команд: attachments, операции load и store и то, что пришло на смену VkRenderPass." }
+      }
+    },
+    "commands": {
+      "title": "Команды и первый треугольник",
+      "summary": "Записываем команды в command buffer, отправляем его в очередь и выводим на экран первый треугольник.",
+      "lessons": {
+        "command-buffers": { "title": "Command pool и command buffer", "short": "Command buffer", "summary": "Откуда берутся command buffer, что значит запись команд и как отправка доходит до очереди." },
+        "first-triangle": { "title": "Первый треугольник", "summary": "Один кадр от начала до конца: ждём, получаем изображение, записываем, отправляем, показываем — с fence, семафорами и двумя переходами layout." }
+      }
     }
   },
   "labs": {

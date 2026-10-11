@@ -115,6 +115,9 @@ describe('features and limits tabs', () => {
 		expect(by('timestampPeriod').value).toBe('1');
 		expect(by('maxComputeSharedMemorySize').size).toBe('48 KiB');
 		expect(by('maxComputeWorkGroupSize').value).toBe('1024, 1024, 64');
+		expect(by('maxComputeWorkGroupSize').n).toBe(64);
+		expect(by('nonCoherentAtomSize').n).toBe(64);
+		for (const e of EXPLAINED) expect(typeof by(e.name).n, e.name).toBe('number');
 		expect(by('framebufferColorSampleCounts').value).toBe('1, 2, 4, 8');
 		expect(limitRows('offsetalign', true).map((r) => r.name)).toEqual(['minUniformBufferOffsetAlignment', 'minStorageBufferOffsetAlignment']);
 		expect(binarySize(4294967295)).toBeNull();

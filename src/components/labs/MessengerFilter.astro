@@ -5,10 +5,9 @@
  */
 import MessengerFilterView from './MessengerFilterView.tsx';
 import { COURSE, blockedBy, produced, snippet } from '../../lib/labs/messenger-filter';
-import { pick } from '../../lib/text';
+import { pick, tfmt } from '../../lib/text';
 import { TEXT } from './messenger-filter.text';
 import { courseIn, langOf } from 'course-kit/lib/course.ts';
-import { fmt } from 'course-kit/i18n.mjs';
 
 const v = courseIn(langOf(Astro.url.pathname));
 const t = pick(TEXT, v.lang, 'messenger-filter');
@@ -26,7 +25,7 @@ const lines = produced(COURSE, false).filter((m) => !blockedBy(m, COURSE));
 			{
 				lines.map((m) => (
 					<li>
-						<code>{fmt(t.fbLine, { severity: m.severity, type: m.type, message: m.message })}</code>
+						<code>{tfmt(v.lang, t.fbLine, { severity: m.severity, type: m.type, message: m.message })}</code>
 					</li>
 				))
 			}

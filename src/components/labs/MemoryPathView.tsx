@@ -5,8 +5,7 @@
  */
 import { useState } from 'react';
 import { LabFrame } from 'course-kit/components/lab/LabFrame.tsx';
-import { fmt } from 'course-kit/i18n.mjs';
-import { pick } from '../../lib/text';
+import { pick, tfmt } from '../../lib/text';
 import {
 	BUFFER_TYPE_BITS,
 	BW,
@@ -40,7 +39,7 @@ export default function MemoryPathView({ lang }: { lang: string }) {
 	const size = SIZES[si]!;
 	const tr = transfer(path, size);
 	const num = (n: number) => new Intl.NumberFormat(lang, { maximumSignificantDigits: 3 }).format(n);
-	const gbps = (bw: number) => fmt(t.gbps, { gb: num(bw / 1e9) });
+	const gbps = (bw: number) => tfmt(lang, t.gbps, { gb: num(bw / 1e9) });
 	const route = new Set<NodeId>(PATH[path].route);
 	// Heaps of the picture, read from the type each path picks: RAM and VRAM boxes show their real sizes.
 	const heapOf = (p: PathId) => transfer(p, size).heap;
@@ -64,7 +63,7 @@ export default function MemoryPathView({ lang }: { lang: string }) {
 		>
 			<div className="mp-controls">
 				<label className="lab-field">
-					<span>{fmt(t.size, { size: bytes(size, lang) })}</span>
+					<span>{tfmt(lang, t.size, { size: bytes(size, lang) })}</span>
 					<input
 						type="range"
 						min={0}
@@ -107,25 +106,25 @@ export default function MemoryPathView({ lang }: { lang: string }) {
 			</ol>
 
 			<div className="mp-time">
-				<p>{fmt(t.time, { ms: num(tr.ms), bw: gbps(PATH[path].bw), peak: t.peak })}</p>
+				<p>{tfmt(lang, t.time, { ms: num(tr.ms), bw: gbps(PATH[path].bw), peak: t.peak })}</p>
 				<div
 					className="mp-meter"
 					role="meter"
 					aria-valuemin={0}
 					aria-valuemax={100}
 					aria-valuenow={Math.min(100, Math.round(tr.budget * 100))}
-					aria-label={fmt(t.budget, { pct: num(tr.budget * 100), frame: num(FRAME_MS) })}
+					aria-label={tfmt(lang, t.budget, { pct: num(tr.budget * 100), frame: num(FRAME_MS) })}
 				>
 					<span className={level} style={{ width: `${Math.min(100, tr.budget * 100)}%` }} />
 				</div>
 				<p className={`lab-msg ${level}`}>
-					{tr.budget < 1 ? fmt(t.budget, { pct: num(tr.budget * 100), frame: num(FRAME_MS) }) : fmt(t.over, { x: num(tr.budget) })}
+					{tr.budget < 1 ? tfmt(lang, t.budget, { pct: num(tr.budget * 100), frame: num(FRAME_MS) }) : tfmt(lang, t.over, { x: num(tr.budget) })}
 				</p>
 			</div>
 
 			{!tr.fits && (
 				<div className="lab-msg is-err">
-					<p>{fmt(t.noFit, { size: bytes(size, lang), heap: tr.heap.index, heapSize: bytes(tr.heap.size, lang) })}</p>
+					<p>{tfmt(lang, t.noFit, { size: bytes(size, lang), heap: tr.heap.index, heapSize: bytes(tr.heap.size, lang) })}</p>
 					<p className="mp-vuid">
 						<code>{VUID_HEAP_SIZE}</code> {vuid(VUID_HEAP_SIZE)}
 					</p>
@@ -137,22 +136,22 @@ export default function MemoryPathView({ lang }: { lang: string }) {
 				<ul>
 					{HEAPS.map((h) => (
 						<li key={`h${h.index}`} className={h.index === tr.heap.index ? 'is-on' : undefined}>
-							{fmt(t.heapRow, { index: h.index, size: bytes(h.size, lang) })} — <code>{flags(h.flags)}</code>
+							{tfmt(lang, t.heapRow, { index: h.index, size: bytes(h.size, lang) })} — <code>{flags(h.flags)}</code>
 						</li>
 					))}
 				</ul>
-				<p className="lab-muted">{fmt(t.rebarNote, { index: heapOf('bar').index, size: bytes(heapOf('bar').size, lang) })}</p>
-				<p className="lab-muted">{fmt(t.typeHead, { bits: BUFFER_TYPE_BITS, flags: PATH[path].need.map(shortFlag).join(' | ') })}</p>
+				<p className="lab-muted">{tfmt(lang, t.rebarNote, { index: heapOf('bar').index, size: bytes(heapOf('bar').size, lang) })}</p>
+				<p className="lab-muted">{tfmt(lang, t.typeHead, { bits: BUFFER_TYPE_BITS, flags: PATH[path].need.map(shortFlag).join(' | ') })}</p>
 				<ul>
 					{TYPES.map((ty) => (
 						<li key={`t${ty.index}`} className={ty.index === tr.type.index ? 'is-on' : undefined} aria-current={ty.index === tr.type.index ? 'true' : undefined}>
-							{fmt(t.typeRow, { index: ty.index, heap: ty.heapIndex })} — <code>{flags(ty.flags)}</code>
+							{tfmt(lang, t.typeRow, { index: ty.index, heap: ty.heapIndex })} — <code>{flags(ty.flags)}</code>
 						</li>
 					))}
 				</ul>
 			</div>
 
-			<p>{fmt(t.why, { fast: num(transfer('vram', size).ms), slow: num(transfer('sysram', size).ms) })}</p>
+			<p>{tfmt(lang, t.why, { fast: num(transfer('vram', size).ms), slow: num(transfer('sysram', size).ms) })}</p>
 			<p className="lab-muted">{t.note}</p>
 		</LabFrame>
 	);

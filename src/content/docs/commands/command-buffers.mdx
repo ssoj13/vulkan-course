@@ -1,0 +1,239 @@
+---
+title: Command pools and command buffers
+description: Where command buffers come from, what recording means, and how a submission reaches the queue.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import MindMap from 'course-kit/components/MindMap.astro';
+import Quiz from 'course-kit/components/Quiz.astro';
+import Step from '../../../components/Step.astro';
+import ObjectGraph from '../../../components/ObjectGraph.astro';
+
+Everything so far was *setup*: objects created once. Drawing is different. The GPU never executes a Vulkan call the
+moment we make it; we write the work down first and hand it over as a whole. Where is it written, what does "recording"
+mean, and how does the written work reach the GPU?
+
+## Where this fits
+
+This opens the **commands** module, the last step before pixels appear. The idea itself is old: in
+[how a program talks to the GPU](lesson:talking-to-gpu) we met command buffers and queues as concepts. Now they become
+objects and calls:
+
+`queue family → VkCommandPool → VkCommandBuffer → recording (vkCmd*) → vkQueueSubmit2 → VkQueue → GPU`
+
+A command pool is built on the device and **one queue family**; a command buffer is allocated from a pool; a submission
+goes to a queue of that same family. The [first triangle](lesson:first-triangle) records and submits one command
+buffer per frame, with the fences and semaphores that keep frames in order.
+
+## Record now, run later
+
+A render farm job is a good picture. You do not walk to each render node and type commands; you write a job script,
+submit it to a queue, and go on with your work while the farm runs it later, on its own schedule.
+
+A [command buffer](term:vk-command-buffer) is the job script, and [recording](term:recording) is writing it: every
+`vkCmd*` call (bind a pipeline, set the viewport, draw, insert a barrier) appends a command to the buffer on the CPU.
+Nothing reaches the GPU while you record. Only [submission](term:submission) (`vkQueueSubmit2`) hands the finished buffer
+to a queue, and the GPU executes it when it gets there - possibly while the CPU is already recording the next frame.
+
+This split is what makes Vulkan fast on the CPU side: recording is plain writing into memory, it can happen on many
+threads at once, and a recorded buffer can be inspected, reused or thrown away without the GPU ever being involved.
+
+A command buffer goes through well-defined states:
+
+1. **initial** - freshly allocated or reset, empty;
+2. **recording** - between `vkBeginCommandBuffer` and `vkEndCommandBuffer`;
+3. **executable** - recorded and ready to submit;
+4. **pending** - submitted, the GPU has not finished it. It must not be re-recorded or freed in this state;
+5. **invalid** - for example a one-time-submit buffer after it ran, or a buffer whose resources were destroyed.
+
+## 1. The queue
+
+<Step file="09_triangle" region="get-queue" />
+
+The one queue we requested in [step 05](lesson:logical-device#4-get-the-queue). A queue records nothing itself: it
+*executes* command buffers (`vkQueueSubmit2`) and *presents* images (`vkQueuePresentKHR`).
+
+## 2. The command pool
+
+<Step file="09_triangle" region="command-pool" />
+
+A [command pool](term:vk-command-pool) is the memory that command buffers are allocated from. It is tied to **one queue
+family**, because the commands are encoded for that kind of hardware engine; a buffer from it may be submitted only to
+queues of that family (`VUID-vkQueueSubmit2-commandBuffer-03878`).
+
+The flag `RESET_COMMAND_BUFFER` lets us reset each buffer of the pool on its own. Without it, a buffer can only be
+reset together with the whole pool (`vkResetCommandPool`), and resetting a single buffer is invalid
+(`VUID-vkResetCommandBuffer-commandBuffer-00046`). We re-record the same buffer every frame, so we want the flag.
+
+Pools are not thread-safe: two threads must not record into buffers of one pool at the same time. That is why a
+multithreaded renderer gives every thread its own pool.
+
+## 3. The command buffer
+
+<Step file="09_triangle" region="command-buffer" />
+
+`vkAllocateCommandBuffers` takes buffers from the pool. **Primary** buffers are submitted to a queue; **secondary**
+buffers are recorded separately and executed from inside a primary one (useful for recording on several threads).
+With one frame in flight, one primary buffer is all we need. Command buffers are not destroyed one by one: they go back
+with their pool.
+
+## 4. Begin recording
+
+<Step file="09_triangle" region="begin-recording" />
+
+Each frame starts by resetting the buffer (back to *initial*) and beginning it (*recording*).
+`ONE_TIME_SUBMIT` promises the driver that this recording will be submitted once and then reset and re-recorded; a
+driver may use that promise to optimize, and after the run the buffer becomes *invalid* until it is reset. Everything recorded between here and `vkEndCommandBuffer` - barriers, the
+rendering, the draw - is the subject of [the first triangle](lesson:first-triangle).
+
+## 5. Submit
+
+<Step file="09_triangle" region="submit" />
+
+`vkQueueSubmit2` (the synchronization2 version, core in Vulkan 1.3) sends one or more **batches**. A batch carries:
+
+- **command buffers** to execute, in order;
+- **wait semaphores**, each with a *stage mask*: the GPU work of this batch may run up to that stage before the
+  semaphore is signaled, but not past it;
+- **signal semaphores**, signaled when the batch's work has reached the given stage;
+- and for the whole call, an optional **fence**, signaled when everything submitted has completed.
+
+In our frame the batch waits for the acquired swapchain image only at `COLOR_ATTACHMENT_OUTPUT`: the vertex shader may
+already run while the presentation engine is still releasing the image, and only the writing of colors has to wait.
+Why the semaphores and the fence are needed at all is the story of [the first triangle](lesson:first-triangle#the-frame-loop);
+the full theory is module 7.
+
+`vkQueueSubmit2` returns at once. Submitting is cheap for the CPU: the work happens later, on the GPU.
+
+## What the program prints
+
+The step 09 line for this lesson's objects:
+
+```text
+Command pool + 1 primary command buffer
+```
+
+(shortened: the full step 09 output is in [the first triangle](lesson:first-triangle#what-the-program-prints).)
+
+## Build it yourself
+
+A command pool belongs to the device; its buffers belong to the pool. Allocate a buffer, then destroy the pool while
+the buffer exists: the pool frees it. Try to destroy the buffer on its own as well, and compare.
+
+<ObjectGraph
+	mode="build"
+	scope={['instance', 'physical-device', 'device', 'queue', 'command-pool', 'command-buffer']}
+	caption="The command buffer is allocated from the pool and goes back with it; vkFreeCommandBuffers returns it earlier."
+/>
+
+## The map of this lesson
+
+<MindMap />
+
+## Underneath
+
+- Recording is the driver writing the GPU's own command format into memory it allocated from the pool: packets that
+  set state, point at the pipeline, launch draws. That is the "encoding" of [how a program talks to the GPU](lesson:talking-to-gpu);
+  `vkCmdDraw` costs the CPU about as much as writing a few words.
+- At submission the driver hands those packets to the queue's hardware engine: it adds the buffer to the queue's ring
+  of work and tells the GPU there is more. The [command processor](term:command-processor) then reads the buffer from
+  memory by itself.
+- A buffer in the *pending* state is still being read by the GPU. Re-recording it then would rewrite memory the GPU
+  is reading, which is why step 09 waits on a fence before resetting it.
+
+<Quiz
+	questions={[
+		{
+			q: 'When does the GPU execute a vkCmdDraw that you record?',
+			options: [
+				{
+					text: 'Immediately, during the vkCmdDraw call',
+					why: 'Recording only writes the command into the buffer on the CPU; the GPU sees nothing yet.',
+				},
+				{
+					text: 'At vkEndCommandBuffer, at the moment the recording is closed',
+					why: 'Ending the recording makes the buffer executable, nothing more; it still has to be submitted.',
+				},
+				{
+					text: 'After the buffer is submitted, when the queue reaches it',
+					why: 'Right: submission hands the buffer to a queue, and the GPU runs it later, on its own schedule.',
+				},
+				{
+					text: 'Only after vkQueueWaitIdle is called on the queue',
+					why: 'Waiting only blocks the CPU until the work is done; the GPU starts on submitted work without being asked to.',
+				},
+			],
+			answer: 2,
+			ref: '#record-now-run-later',
+		},
+		{
+			q: 'Your pool was created for queue family 0. Can its command buffers be submitted to a queue of family 2?',
+			options: [
+				{
+					text: 'Yes, any queue of the same device accepts them',
+					why: 'A command buffer is encoded for the kind of engine its pool serves; it must go to a queue of that family (VUID-vkQueueSubmit2-commandBuffer-03878).',
+				},
+				{
+					text: 'No: only to queues of family 0',
+					why: 'Right: a pool is tied to one queue family, and its buffers may be submitted only to queues of that family.',
+				},
+				{
+					text: 'Yes, if family 2 also supports graphics',
+					why: 'Matching capabilities do not help: the rule is about the family the pool was created for, not about flags.',
+				},
+				{
+					text: 'Only after the buffer is reset',
+					why: 'Resetting clears the contents but not the pool\'s queue family; the buffer still belongs to family 0.',
+				},
+			],
+			answer: 1,
+			ref: '#2-the-command-pool',
+		},
+		{
+			q: 'You call vkResetCommandBuffer on a buffer whose pool was created without RESET_COMMAND_BUFFER. What is wrong?',
+			options: [
+				{
+					text: 'Nothing; the flag only affects performance',
+					why: 'The flag is a rule, not a hint: without it, resetting a single buffer is invalid usage (VUID-vkResetCommandBuffer-commandBuffer-00046).',
+				},
+				{
+					text: 'The buffer must first be freed with vkFreeCommandBuffers',
+					why: 'A freed buffer no longer exists, so it cannot be reset. Without the flag the whole pool is reset instead.',
+				},
+				{
+					text: 'Single buffers of that pool can only be reset with the whole pool',
+					why: 'Right: without RESET_COMMAND_BUFFER use vkResetCommandPool; resetting one buffer breaks VUID-vkResetCommandBuffer-commandBuffer-00046.',
+				},
+				{
+					text: 'The call is allowed only for secondary command buffers',
+					why: 'Primary or secondary makes no difference here; what matters is the flag of the pool.',
+				},
+			],
+			answer: 2,
+			ref: '#2-the-command-pool',
+		},
+		{
+			q: 'The submit waits on the image-available semaphore at COLOR_ATTACHMENT_OUTPUT. What may run before the semaphore is signaled?',
+			options: [
+				{
+					text: 'Nothing in the batch; a wait blocks all of it',
+					why: 'The stage mask exists exactly to avoid that: only the given stage and later ones wait.',
+				},
+				{
+					text: 'Earlier stages, such as the vertex shader',
+					why: 'Right: work may run up to the stage mask; only writing color into the image has to wait until the image is ours.',
+				},
+				{
+					text: 'Only the clear of the color attachment',
+					why: 'The clear writes the attachment, which happens at COLOR_ATTACHMENT_OUTPUT, so it waits too.',
+				},
+				{
+					text: 'The present, which signals the semaphore',
+					why: 'The present comes after rendering and waits on another semaphore; the image-available one is signaled by the acquire.',
+				},
+			],
+			answer: 1,
+			ref: '#5-submit',
+		},
+	]}
+/>

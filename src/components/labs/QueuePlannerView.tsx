@@ -4,7 +4,6 @@
  * All logic lives in lib/labs/queue-planner.ts.
  */
 import { LabFrame } from 'course-kit/components/lab/LabFrame.tsx';
-import { fmt } from 'course-kit/i18n.mjs';
 import { useState } from 'react';
 import {
 	DEFAULT_OPTIONS,
@@ -19,7 +18,7 @@ import {
 	type Role,
 	type RoleReq,
 } from '../../lib/labs/queue-planner';
-import { pick } from '../../lib/text';
+import { pick, tfmt } from '../../lib/text';
 import { vuid } from '../../lib/vuids';
 import { TEXT } from './queue-planner.text';
 import './queue-planner.css';
@@ -28,16 +27,16 @@ type Texts = (typeof TEXT)['en'];
 const roleName = (t: Texts, r: Role) => t[`role_${r}`];
 
 /** One error in the reader's language; VUID texts stay verbatim (the spec's English). */
-function errorText(t: Texts, e: PlanError): string {
+function errorText(lang: string, t: Texts, e: PlanError): string {
 	switch (e.kind) {
 		case 'noFamily':
-			return fmt(t.errNoFamily, { role: roleName(t, e.role) });
+			return tfmt(lang, t.errNoFamily, { role: roleName(t, e.role) });
 		case 'duplicate':
-			return fmt(t.errDuplicate, { family: e.family, infos: e.infos });
+			return tfmt(lang, t.errDuplicate, { family: e.family, infos: e.infos });
 		case 'tooMany':
-			return fmt(t.errTooMany, { family: e.family, count: e.count, max: e.max });
+			return tfmt(lang, t.errTooMany, { family: e.family, count: e.count, max: e.max });
 		case 'priority':
-			return fmt(t.errPriority, { family: e.family, value: e.value });
+			return tfmt(lang, t.errPriority, { family: e.family, value: e.value });
 	}
 }
 
@@ -99,7 +98,7 @@ export default function QueuePlannerView({ lang }: { lang: string }) {
 					{ROLES.map((r) => (
 						<div key={r} className={`vk-qp-role${reqs[r].on ? '' : ' is-off'}`}>
 							<label className="vk-qp-check">
-								<input type="checkbox" checked={reqs[r].on} onChange={(e) => setReq(r, { on: e.target.checked })} aria-label={fmt(t.roleOn, { role: roleName(t, r) })} />
+								<input type="checkbox" checked={reqs[r].on} onChange={(e) => setReq(r, { on: e.target.checked })} aria-label={tfmt(lang, t.roleOn, { role: roleName(t, r) })} />
 								<b>{roleName(t, r)}</b>
 								<span className="lab-muted">{t[`roleNeeds_${r}`]}</span>
 							</label>
@@ -132,7 +131,7 @@ export default function QueuePlannerView({ lang }: { lang: string }) {
 						<input type="checkbox" checked={opt.merge} onChange={(e) => setOpt({ ...opt, merge: e.target.checked })} /> {t.merge}
 					</label>
 					<p className="lab-muted">{t.presentNote}</p>
-					<p className="lab-muted">{fmt(t.priorityNote, { levels: PRIORITY_LEVELS })}</p>
+					<p className="lab-muted">{tfmt(lang, t.priorityNote, { levels: PRIORITY_LEVELS })}</p>
 				</fieldset>
 			</div>
 
@@ -181,7 +180,7 @@ export default function QueuePlannerView({ lang }: { lang: string }) {
 					<ul className="vk-qp-errors">
 						{p.errors.map((e, i) => (
 							<li key={i}>
-								<b>{errorText(t, e)}</b>
+								<b>{errorText(lang, t, e)}</b>
 								{'vuid' in e && (
 									<span className="vk-qp-vuid">
 										[{e.vuid}] {vuid(e.vuid)}

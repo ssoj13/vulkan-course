@@ -8,8 +8,7 @@ import { useMemo, useState } from 'react';
 import { LabFrame } from 'course-kit/components/lab/LabFrame.tsx';
 import { Scrubber } from 'course-kit/components/lab/Scrubber.tsx';
 import { useTimeline } from 'course-kit/components/lab/useTimeline.ts';
-import { fmt } from 'course-kit/i18n.mjs';
-import { pick } from '../../lib/text';
+import { pick, tfmt } from '../../lib/text';
 import { CONDS, MAX_X, PROGRAM, WARP, condSrc, inputs, run, type Block, type Cond, type Inputs, type WarpFrame } from '../../lib/labs/warp-divergence';
 import { TEXT } from './warp-divergence.text';
 import './warp-divergence.css';
@@ -48,18 +47,18 @@ export default function WarpDivergenceView({ lang }: { lang: string }) {
 	const nActive = f.active.filter(Boolean).length;
 
 	const caption = (() => {
-		if (!f.at) return fmt(t.capStart, { nIf, nElse: r.taken.length - nIf });
+		if (!f.at) return tfmt(lang, t.capStart, { nIf, nElse: r.taken.length - nIf });
 		const vars = { cycle: f.cycle, code: code(f.at.block, f.at.line) };
 		const now =
 			f.at.block === 'pre'
-				? fmt(t.capPre, vars)
+				? tfmt(lang, t.capPre, vars)
 				: f.at.block === 'post'
-					? fmt(t.capPost, vars)
-					: fmt(t.capBranch, { ...vars, path: path(f.at.block === 'if'), n: nActive, off: r.taken.length - nActive });
+					? tfmt(lang, t.capPost, vars)
+					: tfmt(lang, t.capBranch, { ...vars, path: path(f.at.block === 'if'), n: nActive, off: r.taken.length - nActive });
 		if (tl.index < tl.count - 1) return now;
 		const sum = r.divergent
-			? fmt(t.sumDivergent, { cycles: r.cycles, eff: Math.round(r.efficiency * 100), allIf: r.allIf, allElse: r.allElse })
-			: fmt(t.sumUniform, { cycles: r.cycles, path: path(nIf > 0) });
+			? tfmt(lang, t.sumDivergent, { cycles: r.cycles, eff: Math.round(r.efficiency * 100), allIf: r.allIf, allElse: r.allElse })
+			: tfmt(lang, t.sumUniform, { cycles: r.cycles, path: path(nIf > 0) });
 		return `${now} ${sum}`;
 	})();
 
@@ -92,7 +91,7 @@ export default function WarpDivergenceView({ lang }: { lang: string }) {
 					</select>
 				</label>
 				<label className="lab-field wd-thr">
-					<span>{fmt(t.threshold, { t: thr })}</span>
+					<span>{tfmt(lang, t.threshold, { t: thr })}</span>
 					<input
 						type="range"
 						min={0}
@@ -138,7 +137,7 @@ export default function WarpDivergenceView({ lang }: { lang: string }) {
 					<p className="lab-muted">{t.lanes}</p>
 					<ol className="wd-lanes">
 						{xs.map((x, lane) => {
-							const tip = fmt(t.laneTip, { lane, x, path: path(r.taken[lane]!) });
+							const tip = tfmt(lang, t.laneTip, { lane, x, path: path(r.taken[lane]!) });
 							return (
 								<li
 									key={lane}

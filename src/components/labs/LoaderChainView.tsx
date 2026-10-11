@@ -3,11 +3,10 @@
  * from the program through the loader's trampoline, the active layers and the terminator to the driver(s). The path
  * and its rules come from lib/labs/loader-chain.ts; boxes the call does not pass are drawn as "not on this path".
  */
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import { LabFrame } from 'course-kit/components/lab/LabFrame.tsx';
 import { Scrubber } from 'course-kit/components/lab/Scrubber.tsx';
 import { useTimeline } from 'course-kit/components/lab/useTimeline.ts';
-import { fmt } from 'course-kit/i18n.mjs';
 import {
 	CALLS,
 	ICDS,
@@ -24,9 +23,26 @@ import {
 	type Setup,
 	type Via,
 } from '../../lib/labs/loader-chain';
-import { pick } from '../../lib/text';
+import { pick, tfmt } from '../../lib/text';
 import { TEXT } from './loader-chain.text';
 import './loader-chain.css';
+
+/**
+ * An identifier that wraps only at its own seams, after `_` and before `.` (VK_LAYER_NV_|optimus, nvoglv64|.dll):
+ * lab code may otherwise wrap anywhere (engine lab.css), which splits names mid-word in narrow table cells.
+ */
+function Id({ s }: { s: string }) {
+	return (
+		<code className="lc-id">
+			{s.split(/(?<=_)|(?=\.)/).map((part, i) => (
+				<Fragment key={i}>
+					{i > 0 && <wbr />}
+					{part}
+				</Fragment>
+			))}
+		</code>
+	);
+}
 
 const INITIAL: Setup = { call: 'vkCreateInstance', env: new Map(), validation: true, second: false, gpu: 'nvidia', via: 'gdpa' };
 
@@ -87,14 +103,14 @@ export default function LoaderChainView({ lang }: { lang: string }) {
 						<legend>{t.appLayers}</legend>
 						<label>
 							<input type="checkbox" checked={setup.validation} onChange={(e) => change({ validation: e.currentTarget.checked })} />
-							<code>{t.validation}</code>
+							<Id s={t.validation} />
 						</label>
 					</fieldset>
 					<fieldset className="lc-set">
 						<legend>{t.drivers}</legend>
 						<label>
 							<input type="checkbox" checked disabled />
-							<code>{ICD_INFO.nvidia.dll}</code> ({ICD_INFO.nvidia.gpu})
+							<Id s={ICD_INFO.nvidia.dll} /> ({ICD_INFO.nvidia.gpu})
 						</label>
 						<label>
 							<input type="checkbox" checked={setup.second} onChange={(e) => change({ second: e.currentTarget.checked })} />
@@ -124,7 +140,7 @@ export default function LoaderChainView({ lang }: { lang: string }) {
 					{tr.layers.length === 0 && <li className="lc-note">{level !== 'device' ? t.noLayers : setup.via === 'export' ? t.noLayersDevice : t.noLayersGdpa}</li>}
 					{tr.layers.map((l) => (
 						<li key={l.name} className={`${cls(layerNode(l.name))} is-layer is-${l.kind}`}>
-							<code>{l.name}</code> <span className="lc-tag">{l.kind === 'implicit' ? t.implicit : t.explicit}</span>
+							<Id s={l.name} /> <span className="lc-tag">{l.kind === 'implicit' ? t.implicit : t.explicit}</span>
 						</li>
 					))}
 					<li className={cls('terminator')}>
@@ -134,7 +150,7 @@ export default function LoaderChainView({ lang }: { lang: string }) {
 					<li className="lc-icds">
 						{tr.icds.map((i) => (
 							<div key={i} className={`${cls(icdNode(i))} is-icd`}>
-								<code>{ICD_INFO[i].dll}</code>
+								<Id s={ICD_INFO[i].dll} />
 								<span className="lc-sub">{ICD_INFO[i].gpu}</span>
 								{off(icdNode(i))}
 							</div>
@@ -143,55 +159,63 @@ export default function LoaderChainView({ lang }: { lang: string }) {
 				</ol>
 			</div>
 
-			<Scrubber lang={lang} tl={tl} caption={fmt(t[hop.key], hop.vars)} />
+			<Scrubber lang={lang} tl={tl} caption={tfmt(lang, t[hop.key], hop.vars)} />
 
 			<details className="lc-env" open>
 				<summary>{t.envTitle}</summary>
 				<p className="lab-muted">{t.envHint}</p>
 				<div className="lc-table-wrap">
-					<table>
-						<thead>
-							<tr>
-								<th>{t.colLayer}</th>
-								<th>{t.colBy}</th>
-								<th>{t.colEnable}</th>
-								<th>{t.colDisable}</th>
-								<th>{t.colState}</th>
+					<table role="table">
+						<thead role="rowgroup">
+							<tr role="row">
+								<th role="columnheader">{t.colLayer}</th>
+								<th role="columnheader">{t.colBy}</th>
+								<th role="columnheader">{t.colEnable}</th>
+								<th role="columnheader">{t.colDisable}</th>
+								<th role="columnheader">{t.colState}</th>
 							</tr>
 						</thead>
-						<tbody>
+						<tbody role="rowgroup">
 							{IMPLICIT_LAYERS.map((l) => {
 								const on = implicitActive(l, setup.env);
 								// A disable variable counts with any value, so a checkbox (sets "1") is enough.
 								const box = (name: string) => (
 									<label className="lc-var">
-										<input type="checkbox" checked={setup.env.has(name)} onChange={(e) => setEnv(name, e.currentTarget.checked ? '1' : '')} aria-label={fmt(t.setVar, { name })} />
-										<code>{name}</code>
+										<input type="checkbox" checked={setup.env.has(name)} onChange={(e) => setEnv(name, e.currentTarget.checked ? '1' : '')} aria-label={tfmt(lang, t.setVar, { name })} />
+										<Id s={name} />
 									</label>
 								);
 								// An enable variable must match the manifest's value, so the reader types the value.
 								const field = ({ name, value }: { name: string; value: string }) => (
 									<label className="lc-var">
-										<code>{name}</code> =
+										<Id s={name} /> =
 										<input
 											type="text"
 											size={4}
 											value={setup.env.get(name) ?? ''}
 											placeholder={t.envUnset}
 											onChange={(e) => setEnv(name, e.currentTarget.value)}
-											aria-label={fmt(t.envValue, { name, value })}
+											aria-label={tfmt(lang, t.envValue, { name, value })}
 										/>
 									</label>
 								);
 								return (
-									<tr key={l.name} className={on ? 'is-on' : 'is-out'}>
-										<td>
-											<code>{l.name}</code>
+									<tr key={l.name} role="row" className={on ? 'is-on' : 'is-out'}>
+										<td role="cell">
+											<Id s={l.name} />
 										</td>
-										<td>{l.by}</td>
-										<td>{l.enableEnv ? field(l.enableEnv) : t.none}</td>
-										<td>{box(l.disableEnv)}</td>
-										<td>{on ? t.stateOn : t.stateOff}</td>
+										<td role="cell" data-label={t.colBy}>
+											{l.by}
+										</td>
+										<td role="cell" data-label={t.colEnable}>
+											{l.enableEnv ? field(l.enableEnv) : t.none}
+										</td>
+										<td role="cell" data-label={t.colDisable}>
+											{box(l.disableEnv)}
+										</td>
+										<td role="cell" data-label={t.colState}>
+											{on ? t.stateOn : t.stateOff}
+										</td>
 									</tr>
 								);
 							})}

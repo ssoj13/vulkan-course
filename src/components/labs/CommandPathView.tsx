@@ -7,9 +7,8 @@ import { useMemo, useState } from 'react';
 import { LabFrame } from 'course-kit/components/lab/LabFrame.tsx';
 import { Scrubber } from 'course-kit/components/lab/Scrubber.tsx';
 import { useTimeline } from 'course-kit/components/lab/useTimeline.ts';
-import { fmt } from 'course-kit/i18n.mjs';
 import { FRAMES, percent, simulate, type CpEvent, type InFlight, type Lane, type Schedule } from '../../lib/labs/command-path';
-import { pick } from '../../lib/text';
+import { pick, tfmt } from '../../lib/text';
 import { TEXT } from './command-path.text';
 import './command-path.css';
 
@@ -23,31 +22,31 @@ const SCALE = Math.max(RUNS[1].end, RUNS[2].end);
 const WORK = ['update', 'record', 'submit'] as const;
 
 /** The caption of an event in the reader's language. */
-function caption(t: T, s: Schedule, e: CpEvent): string {
+function caption(lang: string, t: T, s: Schedule, e: CpEvent): string {
 	const v = { f: e.f + 1, cb: e.cb, g: e.g + 1 };
 	switch (e.kind) {
 		case 'start':
 			return t.capStart;
 		case 'update':
-			return fmt(t.capUpdate, v);
+			return tfmt(lang, t.capUpdate, v);
 		case 'record':
-			return fmt(t.capRecord, v);
+			return tfmt(lang, t.capRecord, v);
 		case 'recorded':
-			return fmt(t.capRecorded, v);
+			return tfmt(lang, t.capRecorded, v);
 		case 'queued':
-			return fmt(t.capQueued, v);
+			return tfmt(lang, t.capQueued, v);
 		case 'gpuStart':
-			return fmt(t.capGpuStart, v);
+			return tfmt(lang, t.capGpuStart, v);
 		case 'gpuEnd':
-			return fmt(t.capGpuEnd, v);
+			return tfmt(lang, t.capGpuEnd, v);
 		case 'waitStart':
-			return fmt(s.inFlight === 1 ? t.capWaitStart1 : t.capWaitStart2, v);
+			return tfmt(lang, s.inFlight === 1 ? t.capWaitStart1 : t.capWaitStart2, v);
 		case 'waitEnd':
-			return fmt(s.inFlight === 1 ? t.capWaitEnd1 : t.capWaitEnd2, v);
+			return tfmt(lang, s.inFlight === 1 ? t.capWaitEnd1 : t.capWaitEnd2, v);
 		case 'waitFree':
-			return fmt(e.g < 0 ? t.capWaitNew : t.capWaitDone, v);
+			return tfmt(lang, e.g < 0 ? t.capWaitNew : t.capWaitDone, v);
 		case 'done':
-			return fmt(s.inFlight === 1 ? t.capDone1 : t.capDone2, { n: FRAMES, t: s.end, gpu: percent(s, ['exec']), wait: percent(s, ['wait']) });
+			return tfmt(lang, s.inFlight === 1 ? t.capDone1 : t.capDone2, { n: FRAMES, t: s.end, gpu: percent(s, ['exec']), wait: percent(s, ['wait']) });
 	}
 }
 
@@ -81,7 +80,7 @@ export default function CommandPathView({ lang }: { lang: string }) {
 				))}
 			</fieldset>
 
-			<div className="cp-chart" role="img" aria-label={fmt(t.lanes, { t: now, end: run.end })}>
+			<div className="cp-chart" role="img" aria-label={tfmt(lang, t.lanes, { t: now, end: run.end })}>
 				{LANES.map((lane) => (
 					<div className="cp-row" key={lane}>
 						<span className="cp-lane">{t[LANE_KEY[lane]]}</span>
@@ -89,7 +88,7 @@ export default function CommandPathView({ lang }: { lang: string }) {
 							{run.segments
 								.filter((s) => s.lane === lane && s.t0 < now)
 								.map((s) => {
-									const label = fmt(t.bar, { f: s.f + 1, what: t[s.kind], t0: s.t0, t1: s.t1 });
+									const label = tfmt(lang, t.bar, { f: s.f + 1, what: t[s.kind], t0: s.t0, t1: s.t1 });
 									return (
 										<span
 											key={`${s.kind}-${s.f}`}
@@ -126,7 +125,7 @@ export default function CommandPathView({ lang }: { lang: string }) {
 				))}
 			</ul>
 
-			<Scrubber lang={lang} tl={tl} caption={caption(t, run, tl.frame)} />
+			<Scrubber lang={lang} tl={tl} caption={caption(lang, t, run, tl.frame)} />
 
 			<div className="lab-stats">
 				<div className="lab-stat">
@@ -143,7 +142,7 @@ export default function CommandPathView({ lang }: { lang: string }) {
 				</div>
 				<div className="lab-stat">
 					<b>{run.end}</b>
-					<span>{fmt(t.statTime, { n: FRAMES })}</span>
+					<span>{tfmt(lang, t.statTime, { n: FRAMES })}</span>
 				</div>
 			</div>
 			<p className="lab-muted">{t.illustrative}</p>

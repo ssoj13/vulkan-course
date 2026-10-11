@@ -67,6 +67,9 @@ yours: [Where the data lives](lab:memory-path) shows how.
 
 <MemoryPath />
 
+See also: how a buffer finds its memory type, and how data reaches memory the CPU cannot map, in
+[Buffers and memory](lab:buffer-memory).
+
 GPUs hide memory latency differently from CPUs: rather than relying mainly on big caches, an SM keeps many warps in flight and switches
 to another one whenever the current one waits for memory. That is why GPUs want *lots* of parallel work.
 

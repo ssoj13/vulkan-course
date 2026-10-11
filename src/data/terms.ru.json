@@ -138,6 +138,165 @@
     "vk-queue": {
       "label": "VkQueue",
       "def": "Хэндл одной очереди логического устройства — то место, куда отправляют command buffer на исполнение."
+    },
+    "wsi": {
+      "label": "Интеграция с оконной системой (WSI)",
+      "aka": ["WSI", "window system integration", "VK_KHR_surface", "VK_KHR_win32_surface"],
+      "def": "Расширения, которые связывают Vulkan с окнами операционной системы: переносимое расширение surface, по одному платформенному на создание surface и расширение swapchain. Само ядро Vulkan рисует только в изображения и про окна не знает."
+    },
+    "vk-surface": {
+      "label": "VkSurfaceKHR",
+      "aka": ["surface", "поверхность"],
+      "def": "Окно ОС глазами Vulkan: объект уровня instance, созданный из платформенного хэндла окна; у семейств очередей GPU можно спросить, умеют ли они показывать в него изображения."
+    },
+    "surface-capabilities": {
+      "label": "Возможности surface",
+      "aka": ["VkSurfaceCapabilitiesKHR", "surface capabilities"],
+      "def": "Что оконная система разрешает для пары «GPU + surface»: диапазон числа изображений, текущий и допустимые размеры, повороты, смешивание альфы с рабочим столом и допустимые usage изображений."
+    },
+    "presentation-engine": {
+      "label": "Presentation engine",
+      "aka": ["движок показа", "композитор", "compositor"],
+      "def": "Механизм платформы, который выводит готовые изображения на дисплей (в Windows — композитор рабочего стола вместе с драйвером дисплея); изображения swapchain принадлежат ему, приложению он их только одалживает."
+    },
+    "vk-swapchain": {
+      "label": "VkSwapchainKHR",
+      "aka": ["swapchain", "свопчейн", "VK_KHR_swapchain"],
+      "def": "Небольшое кольцо изображений для показа в одном surface, создаётся из устройства через VK_KHR_swapchain: приложение получает изображение, рисует в него и отдаёт обратно на показ."
+    },
+    "swapchain-image": {
+      "label": "Изображение swapchain",
+      "aka": ["swapchain image"],
+      "def": "VkImage, которое создал swapchain и которым он владеет: приложение получает его хэндл через vkGetSwapchainImagesKHR и никогда не создаёт и не уничтожает его само."
+    },
+    "surface-format": {
+      "label": "Формат surface",
+      "aka": ["VkSurfaceFormatKHR", "цветовое пространство", "color space"],
+      "def": "Пара «формат пикселей + цветовое пространство», которую оконная система умеет показать: формат говорит, как значения хранятся, цветовое пространство — как экран их понимает."
+    },
+    "present-mode": {
+      "label": "Режим показа",
+      "aka": ["present mode", "VkPresentModeKHR", "FIFO", "MAILBOX", "vsync"],
+      "def": "Правило, по которому показанные изображения сменяют друг друга на экране: FIFO (очередь, из которой берётся по кадру на каждый вертикальный обратный ход, поддерживается всегда), MAILBOX, IMMEDIATE и другие."
+    },
+    "vk-image": {
+      "label": "VkImage",
+      "aka": ["изображение", "image"],
+      "def": "Блок текселей с форматом, размером, mip-уровнями и слоями массива; обычно разложен в памяти так, как знает только драйвер (optimal tiling). Это текстуры, буферы глубины, render target."
+    },
+    "vk-image-view": {
+      "label": "VkImageView",
+      "aka": ["image view"],
+      "def": "Способ смотреть на изображение: тип вида, формат, перестановка каналов и диапазон аспектов, mip-уровней и слоёв. Рендеринг и шейдеры работают с view, а не с самими изображениями."
+    },
+    "shader": {
+      "label": "Шейдер",
+      "aka": ["shader"],
+      "def": "Маленькая программа, которую GPU выполняет для каждой вершины, пикселя или элемента работы; программируемая стадия пайплайна, исполняемая на шейдерных ядрах GPU."
+    },
+    "slang": {
+      "label": "Slang",
+      "aka": ["slangc"],
+      "def": "Шейдерный язык с синтаксисом в духе HLSL, проект под крылом Khronos, входит в Vulkan SDK; его компилятор slangc выдаёт SPIR-V для Vulkan."
+    },
+    "spirv": {
+      "label": "SPIR-V",
+      "aka": ["SPIRV", ".spv"],
+      "def": "Двоичный промежуточный язык шейдеров от Khronos: поток 32-битных слов, который Vulkan принимает вместо исходного текста; драйвер дальше компилирует его в код своего GPU."
+    },
+    "vk-shader-module": {
+      "label": "VkShaderModule",
+      "aka": ["shader module", "шейдерный модуль"],
+      "def": "Код SPIR-V, переданный устройству; может содержать несколько точек входа и нужен только до тех пор, пока не созданы использующие его пайплайны."
+    },
+    "graphics-pipeline": {
+      "label": "Графический пайплайн",
+      "aka": ["graphics pipeline", "конвейер"],
+      "def": "Цепочка стадий, превращающая вершины в пиксели: сборка примитивов, вершинный шейдер, растеризация, фрагментный шейдер, тесты и смешивание; часть стадий программируется, остальные фиксированные."
+    },
+    "fixed-function": {
+      "label": "Фиксированная стадия",
+      "aka": ["fixed-function", "fixed function"],
+      "def": "Стадия пайплайна, которая не шейдер, а железо с настройками: сборка примитивов, растеризация, тесты глубины и трафарета, смешивание цветов."
+    },
+    "vk-pipeline": {
+      "label": "VkPipeline",
+      "aka": ["пайплайн", "pipeline", "pipeline state object", "PSO"],
+      "def": "Графический пайплайн, запечённый в один объект: шейдерные стадии плюс настройки всех фиксированных стадий; драйвер компилирует его при создании."
+    },
+    "dynamic-state": {
+      "label": "Динамическое состояние",
+      "aka": ["dynamic state", "VkDynamicState", "vkCmdSet*"],
+      "def": "Часть состояния пайплайна, объявленная при его создании динамической: её не зашивают в пайплайн, а задают командой vkCmdSet* во время записи."
+    },
+    "vk-descriptor-set-layout": {
+      "label": "VkDescriptorSetLayout",
+      "aka": ["descriptor set layout", "layout набора дескрипторов"],
+      "def": "Форма группы ресурсов шейдера: номера binding, типы ресурсов и стадии, которые их видят."
+    },
+    "vk-pipeline-layout": {
+      "label": "VkPipelineLayout",
+      "aka": ["pipeline layout"],
+      "def": "Полный список слотов ресурсов, которые видят шейдеры пайплайна: его layout наборов дескрипторов плюс диапазоны push-констант. Он нужен каждому пайплайну, даже пустой."
+    },
+    "dynamic-rendering": {
+      "label": "Dynamic rendering",
+      "aka": ["динамический рендеринг", "vkCmdBeginRendering", "VK_KHR_dynamic_rendering"],
+      "def": "Рендеринг в attachments, названные прямо во время записи (vkCmdBeginRendering), пайплайну достаточно знать их форматы; в ядре с Vulkan 1.3, в большинстве случаев заменяет объекты render pass и framebuffer."
+    },
+    "attachment": {
+      "label": "Attachment",
+      "aka": ["render target", "color attachment", "вложение"],
+      "def": "Image view, в который пишет рендеринг (цвет, глубина, трафарет): цель отрисовки."
+    },
+    "load-store-op": {
+      "label": "Операции load и store",
+      "aka": ["loadOp", "storeOp", "VK_ATTACHMENT_LOAD_OP_CLEAR"],
+      "def": "Что происходит с содержимым attachment в начале рендеринга (загрузить, очистить, всё равно) и в конце (сохранить, всё равно)."
+    },
+    "vk-render-pass": {
+      "label": "VkRenderPass",
+      "aka": ["render pass", "VkFramebuffer"],
+      "def": "Способ Vulkan 1.0 заранее описать attachments и subpass, в паре с VkFramebuffer из image view; по-прежнему допустим, но в основном вытеснен dynamic rendering."
+    },
+    "vk-command-pool": {
+      "label": "VkCommandPool",
+      "aka": ["command pool", "пул команд"],
+      "def": "Память, из которой выделяются command buffer одного семейства очередей; уничтожение пула освобождает все его command buffer."
+    },
+    "vk-command-buffer": {
+      "label": "VkCommandBuffer",
+      "def": "Объект Vulkan для command buffer: выделяется из пула, записывается вызовами vkCmd* между begin и end, отправляется в очередь."
+    },
+    "recording": {
+      "label": "Запись команд",
+      "aka": ["recording", "vkCmd*", "vkBeginCommandBuffer"],
+      "def": "Запись команд в command buffer на CPU (вызовы vkCmd* между vkBeginCommandBuffer и vkEndCommandBuffer); на GPU ничего не выполняется, пока буфер не отправлен."
+    },
+    "submission": {
+      "label": "Отправка в очередь",
+      "aka": ["vkQueueSubmit2", "submit", "сабмит"],
+      "def": "Передача записанных command buffer в очередь (vkQueueSubmit2) вместе с семафорами, которые нужно ждать и сигналить, и необязательным fence."
+    },
+    "vk-fence": {
+      "label": "VkFence",
+      "aka": ["fence"],
+      "def": "Сигнал от GPU к CPU: отправка сигналит его, когда её работа завершена, а CPU ждёт его через vkWaitForFences."
+    },
+    "vk-semaphore": {
+      "label": "VkSemaphore",
+      "aka": ["семафор", "semaphore", "бинарный семафор"],
+      "def": "Сигнал между операциями очередей на GPU: одна операция его сигналит, другая ждёт (получение изображения, потом рендеринг, потом показ)."
+    },
+    "image-layout": {
+      "label": "Layout изображения",
+      "aka": ["VkImageLayout", "image layout", "переход layout"],
+      "def": "Раскладка памяти изображения под один вид использования (color attachment, показ, выборка в шейдере...); переводит изображение из одного layout в другой барьер."
+    },
+    "frame-loop": {
+      "label": "Цикл кадра",
+      "aka": ["frame loop", "acquire", "present", "vkAcquireNextImageKHR", "vkQueuePresentKHR"],
+      "def": "Путь одного кадра по кругу: дождаться предыдущего кадра, получить изображение swapchain, записать команды, отправить, показать."
     }
   },
   "edges": {
@@ -167,6 +326,61 @@
     "vk-device|built-on|vk-physical-device": "открывается на",
     "vk-device|uses|features": "включает",
     "vk-queue|built-on|vk-device": "получается из",
-    "vk-queue|built-on|queue-family": "принадлежит"
+    "vk-queue|built-on|queue-family": "принадлежит",
+    "wsi|built-on|extension": "состоит из",
+    "vk-surface|built-on|vk-instance": "создаётся из",
+    "surface-capabilities|built-on|vk-surface": "запрашиваются для",
+    "surface-capabilities|built-on|vk-physical-device": "зависят от",
+    "vk-surface|uses|queue-family": "спрашивает поддержку показа у",
+    "presentation-engine|related|driver": "работает вместе с",
+    "vk-swapchain|built-on|vk-surface": "показывает в",
+    "vk-swapchain|built-on|vk-device": "создаётся из",
+    "vk-swapchain|built-on|presentation-engine": "принадлежит",
+    "surface-format|built-on|vk-surface": "предлагается",
+    "present-mode|built-on|vk-surface": "предлагается",
+    "vk-swapchain|uses|surface-format": "выбирает",
+    "vk-swapchain|uses|present-mode": "выбирает",
+    "vk-image|built-on|vk-device": "принадлежит",
+    "vk-image-view|built-on|vk-image": "смотрит на",
+    "shader|built-on|shader-core": "исполняется на",
+    "spirv|built-on|shader": "кодирует",
+    "slang|uses|spirv": "компилируется в",
+    "slang|uses|shader": "описывает",
+    "vk-shader-module|built-on|spirv": "содержит",
+    "vk-shader-module|built-on|vk-device": "создаётся из",
+    "graphics-pipeline|built-on|shader": "программируется",
+    "vk-pipeline|built-on|graphics-pipeline": "запекает",
+    "vk-pipeline|built-on|vk-shader-module": "компилируется из",
+    "vk-pipeline|built-on|vk-pipeline-layout": "требует",
+    "vk-pipeline|built-on|vk-device": "создаётся из",
+    "vk-pipeline|related|explicit-api": "воплощает",
+    "dynamic-state|built-on|vk-pipeline": "объявляется в",
+    "vk-descriptor-set-layout|built-on|vk-device": "создаётся из",
+    "vk-pipeline-layout|built-on|vk-device": "создаётся из",
+    "vk-pipeline-layout|uses|vk-descriptor-set-layout": "перечисляет",
+    "attachment|built-on|vk-image-view": "роль для",
+    "dynamic-rendering|built-on|attachment": "рисует в",
+    "dynamic-rendering|uses|features": "включается как",
+    "dynamic-rendering|related|vk-render-pass": "заменяет",
+    "vk-pipeline|uses|dynamic-rendering": "указывает форматы для",
+    "vk-render-pass|built-on|vk-device": "создаётся из",
+    "vk-command-pool|built-on|vk-device": "создаётся из",
+    "vk-command-pool|built-on|queue-family": "обслуживает одно",
+    "vk-command-buffer|built-on|vk-command-pool": "выделяется из",
+    "recording|built-on|vk-command-buffer": "пишет в",
+    "recording|uses|vk-pipeline": "привязывает",
+    "recording|uses|dynamic-state": "задаёт",
+    "recording|uses|dynamic-rendering": "начинает",
+    "submission|built-on|vk-queue": "идёт в",
+    "submission|uses|vk-command-buffer": "несёт",
+    "vk-fence|built-on|vk-device": "создаётся из",
+    "vk-semaphore|built-on|vk-device": "создаётся из",
+    "submission|uses|vk-fence": "сигналит",
+    "submission|uses|vk-semaphore": "ждёт и сигналит",
+    "recording|uses|image-layout": "переводит",
+    "frame-loop|built-on|submission": "отправляет",
+    "frame-loop|built-on|vk-swapchain": "получает и показывает",
+    "frame-loop|uses|vk-fence": "ждёт",
+    "frame-loop|uses|vk-semaphore": "связывает через"
   }
 }

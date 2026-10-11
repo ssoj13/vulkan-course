@@ -24,6 +24,12 @@ export interface ParentRef {
 	vuid: string;
 	/** True when the API accepts none (e.g. a pipeline layout with zero descriptor set layouts). */
 	optional?: boolean;
+	/**
+	 * True when the child keeps no reference to this parent after creation, so destroying the parent later leaves the
+	 * child valid (the spec: "A shader module can be destroyed while pipelines created using its shaders are still in
+	 * use").
+	 */
+	createOnly?: boolean;
 }
 
 export interface VkObject {
@@ -175,7 +181,7 @@ export function create(state: SimState, id: string, extensions: readonly string[
 	};
 }
 
-/** All live objects that (transitively) hang off `id`. */
+/** All live objects that (transitively) hang off `id`; a `createOnly` parent does not hold its children. */
 function liveDescendants(state: SimState, id: string): string[] {
 	const out: string[] = [];
 	const stack = [id];
@@ -183,7 +189,7 @@ function liveDescendants(state: SimState, id: string): string[] {
 		const cur = stack.pop()!;
 		for (const a of state.alive) {
 			if (out.includes(a) || a === id) continue;
-			if (obj(a).parents.some((p) => p.id === cur || obj(cur).isA === p.id)) {
+			if (obj(a).parents.some((p) => !p.createOnly && (p.id === cur || obj(cur).isA === p.id))) {
 				out.push(a);
 				stack.push(a);
 			}

@@ -1,0 +1,272 @@
+---
+title: Shaders, Slang and SPIR-V
+description: 'From shader source to SPIR-V to a VkShaderModule: Vulkan''s one binary shader format and how our triangle shader gets there.'
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import MindMap from 'course-kit/components/MindMap.astro';
+import Quiz from 'course-kit/components/Quiz.astro';
+import Snippet from 'course-kit/components/Snippet.astro';
+import Step from '../../../components/Step.astro';
+
+A triangle needs two small programs: one that places its corners, one that colors its pixels. We write them as text,
+but Vulkan accepts no text at all. What does it accept, how does our source get there, and what is the
+`VkShaderModule` we hand to the device?
+
+## Where this fits
+
+This opens the **pipeline** module: everything the GPU needs to know to draw. The first ingredient is the shaders,
+and they travel a chain of three languages and one object:
+
+`Slang source (.slang) → slangc → SPIR-V (.spv) → VkShaderModule → pipeline stage → driver compiler → GPU machine code`
+
+A shader module is built on two things: SPIR-V code and the logical device it is created from. It feeds the
+[graphics pipeline](lesson:graphics-pipeline), which is where the shaders finally become GPU code. Underneath it all are
+the shader cores of [the GPU lesson](lesson:gpu): the hardware that runs every shader.
+
+## What a shader is
+
+If you have written a VEX wrangle in Houdini, you have written a shader in spirit. A Point Wrangle is one small
+function, and Houdini runs it for every point, in parallel, with `@P` and `@ptnum` as inputs. A
+[shader](term:shader) is the same idea on the GPU:
+
+- a **vertex shader** runs once per vertex: it receives the vertex index (and later vertex attributes) and outputs a
+  position in clip space, plus any values to interpolate across the triangle;
+- a **fragment shader** runs once per pixel the triangle covers: it receives the interpolated values and outputs a
+  color.
+
+Thousands of these invocations run at the same time on the shader cores, in groups of 32 lanes on the course GPU (the
+[warp divergence](lab:warp-divergence) interactive shows what that means for an `if`). Everything around them -
+assembling triangles, finding which pixels they cover, blending - is fixed-function hardware, the subject of
+[the next lesson](lesson:graphics-pipeline).
+
+## Three languages on the way to the GPU
+
+OpenGL took shaders as **source text** in GLSL, and every driver brought its own GLSL compiler. The same shader could
+compile on one vendor and fail on another, and every program paid for parsing and compiling text at run time.
+
+Vulkan splits the compiler in two, with a standard binary format in the middle:
+
+1. **Source language** - Slang, GLSL or HLSL. Compiled *offline*, on the developer's machine, by a compiler the
+   developer controls (slangc, glslang, DXC).
+2. **[SPIR-V](term:spirv)** - Khronos' binary intermediate language: a stream of 32-bit words describing types,
+   variables and functions in SSA form. It is the *only* shader format core Vulkan accepts
+   (`VUID-VkShaderModuleCreateInfo-pCode-07912`; the exception is an old NVIDIA extension).
+3. **GPU machine code** - each vendor's own instruction set, produced by the driver from SPIR-V. The driver never sees
+   our source, only SPIR-V.
+
+The front end (parsing, language rules) happens once and is the same for every GPU; only the back end (register
+allocation, scheduling for one chip) is the driver's job. It is the same split as C++ → LLVM IR → x86 or ARM.
+
+## Slang
+
+The course writes its shaders in [Slang](term:slang). Its syntax is close to HLSL, it adds modules and generics, it
+is hosted by Khronos, and its compiler `slangc` ships with the Vulkan SDK (the course uses slangc 2026.1 from SDK
+1.4.341.1). GLSL and HLSL would work just as well: the output is SPIR-V either way, and Vulkan cannot tell which
+language it came from.
+
+`bun run sync:shaders` compiles every `shaders/*.slang` with `-target spirv -profile spirv_1_6
+-fvk-use-entrypoint-name`, checks the result with `spirv-val` for Vulkan 1.4, and commits the `.spv` files next to a
+manifest of hashes, so a test notices a shader that was edited but not recompiled.
+
+## The triangle shader
+
+One file holds both stages:
+
+<Snippet src="shaders/triangle.slang" />
+
+What to notice:
+
+- **No vertex buffer.** The three corners and colors are constant arrays in the shader; the vertex shader picks one
+  by its index. Vertex buffers are module 8.
+- **Clip space has +Y down.** Unlike OpenGL, Vulkan's clip space points Y downwards, so `y = -0.5` is the *top*
+  corner. Seen on screen the order top → bottom-right → bottom-left is clockwise; the pipeline will declare clockwise
+  as the front face.
+- **Semantics are the interface.** `SV_Position` is the built-in clip-space position; `COLOR0` becomes an ordinary
+  varying at location 0, interpolated by the rasterizer; `SV_Target` is color attachment 0 of the rendering.
+- **`SV_VulkanVertexID`, not `SV_VertexID`.** Slang's `SV_VertexID` follows Direct3D's meaning (index minus base
+  vertex), which in SPIR-V needs an extra capability and device feature. `SV_VulkanVertexID` is SPIR-V's `VertexIndex`
+  as it is.
+
+## What is inside the .spv
+
+`spirv-dis` from the SDK turns the binary back into readable form. The head of `triangle.spv` (shortened: the types,
+constants and function bodies follow):
+
+```text
+               OpCapability Shader
+               OpMemoryModel Logical GLSL450
+               OpEntryPoint Vertex %vertexMain "vertexMain" %gl_Position %entryPointParam_vertexMain_color %gl_VertexIndex
+               OpEntryPoint Fragment %fragmentMain "fragmentMain" %entryPointParam_fragmentMain %input_color
+               OpExecutionMode %fragmentMain OriginUpperLeft
+               OpSource Slang 1
+               ...
+               OpDecorate %gl_VertexIndex BuiltIn VertexIndex
+               OpDecorate %gl_Position BuiltIn Position
+               OpDecorate %entryPointParam_vertexMain_color Location 0
+               OpDecorate %input_color Location 0
+               OpDecorate %entryPointParam_fragmentMain Location 0
+```
+
+Two **entry points** in one module, each with its execution model (`Vertex`, `Fragment`) and the variables it
+touches. The **decorations** are the contract with the rest of the pipeline: built-ins the hardware fills or reads
+(`VertexIndex`, `Position`) and numbered locations that connect one stage's outputs to the next stage's inputs
+(the vertex `color` and the fragment `input.color` both sit at location 0) and the fragment output to attachment 0.
+
+## 1. Load the SPIR-V
+
+<Step file="08_pipeline" region="load-spirv" />
+
+The `.spv` is embedded in the executable. SPIR-V is a sequence of 32-bit words, so Vulkan wants the code as `u32` /
+`uint32_t` words, 4-byte aligned, with a size that is a multiple of 4
+(`VUID-VkShaderModuleCreateInfo-codeSize-08735`). Rust's `include_bytes!` only guarantees 1-byte alignment, so
+`ash::util::read_spv` copies the bytes into a `Vec<u32>` and checks the magic number `0x07230203` on the way. Our file
+is 1304 bytes: 326 words.
+
+## 2. The shader module
+
+<Step file="08_pipeline" region="create-shader-module" />
+
+A [shader module](term:vk-shader-module) is just the SPIR-V handed to the device. The validation layer checks the
+code against the SPIR-V rules here, but the driver does not compile anything for the GPU yet: the machine code depends
+on the rest of the pipeline state (which attachment formats, which vertex layout), and that is known only at
+`vkCreateGraphicsPipelines`.
+
+<Aside title="Vulkan 1.4 can skip the module">
+With the `maintenance5` feature (core in Vulkan 1.4, but like every feature it must be enabled on the device) a
+pipeline stage may carry a `VkShaderModuleCreateInfo` in its `pNext` chain instead of a module handle
+(`VUID-VkPipelineShaderStageCreateInfo-stage-06845`). Our device does not enable `maintenance5`, and the explicit
+module keeps the steps visible, so the course creates one.
+</Aside>
+
+## 3. Stages name their entry points
+
+<Step file="08_pipeline" region="shader-stages" />
+
+One module, two stages. Each `VkPipelineShaderStageCreateInfo` names a stage and the entry point in the module that
+implements it. The name must be an `OpEntryPoint` of that module with the matching execution model
+(`VUID-VkPipelineShaderStageCreateInfo-pName-00707`), which is why `-fvk-use-entrypoint-name` matters: it keeps the
+names `vertexMain` and `fragmentMain` from the source instead of renaming both to `main`.
+
+These two structs are only a description so far. They become part of the pipeline in
+[the next lesson](lesson:graphics-pipeline).
+
+## What the program prints
+
+Step 08 builds on step 07; its new lines (the rest is the [swapchain output](lesson:swapchain#what-the-program-prints)):
+
+```text
+SPIR-V: 1304 bytes (triangle.spv)
+Shader module created: entry points vertexMain, fragmentMain
+```
+
+## The map of this lesson
+
+<MindMap />
+
+## Underneath
+
+- At `vkCreateGraphicsPipelines` the driver runs its own compiler on the SPIR-V: optimization for the given pipeline
+  state, register allocation, instruction scheduling for the exact chip. This is the slow part of creating a pipeline,
+  and the reason Vulkan wants pipelines created up front instead of at draw time.
+- Drivers keep their own on-disk caches of compiled shaders, so a second run of the same program often creates its
+  pipelines faster. Vulkan also gives the application an explicit `VkPipelineCache`; that is an advanced topic.
+- On the GPU the compiled vertex and fragment code runs on the same shader cores. A fragment shader invocation is one
+  lane of a warp; the rasterizer packs covered pixels into warps, in 2x2 quads so that derivatives can be computed.
+
+<Quiz
+	questions={[
+		{
+			q: 'What does vkCreateShaderModule give the driver?',
+			options: [
+				{
+					text: 'The Slang source, to be compiled by the driver',
+					why: 'Vulkan never sees shader source: the source language is compiled offline, and only SPIR-V reaches the API.',
+				},
+				{
+					text: 'Finished GPU machine code for this chip',
+					why: 'The machine code is produced later, at pipeline creation, when the driver knows the rest of the state.',
+				},
+				{
+					text: 'SPIR-V words, not yet compiled for the GPU',
+					why: 'Right: a module holds SPIR-V; the driver compiles it to its own instruction set when a pipeline using it is created.',
+				},
+				{
+					text: 'A text file path that the driver loads',
+					why: 'Vulkan takes the code itself, as an array of 32-bit words; it reads no files.',
+				},
+			],
+			answer: 2,
+			ref: '#2-the-shader-module',
+		},
+		{
+			q: 'Why does Vulkan take SPIR-V instead of GLSL text like OpenGL?',
+			options: [
+				{
+					text: 'SPIR-V runs directly on the GPU without compilation',
+					why: 'SPIR-V is still compiled by the driver into the GPU instruction set; it is an intermediate language, not machine code.',
+				},
+				{
+					text: 'The front end runs offline, the same for every vendor',
+					why: 'Right: parsing and language rules happen once in a compiler the developer controls; drivers only do the back end from a standard binary format.',
+				},
+				{
+					text: 'GLSL cannot describe vertex and fragment shaders',
+					why: 'GLSL describes both fine, and can be compiled to SPIR-V too. The change is where compilation happens, not what the language can express.',
+				},
+				{
+					text: 'SPIR-V files are always smaller than source',
+					why: 'Size is not the point (a SPIR-V file can be larger than its source). The point is moving the front end out of the driver.',
+				},
+			],
+			answer: 1,
+			ref: '#three-languages-on-the-way-to-the-gpu',
+		},
+		{
+			q: 'Our module has two entry points. How does a pipeline stage pick one?',
+			options: [
+				{
+					text: 'By its name in VkPipelineShaderStageCreateInfo',
+					why: 'Right: each stage gives the module and an entry point name, which must be an OpEntryPoint with the matching execution model.',
+				},
+				{
+					text: 'The first entry point is always the vertex stage',
+					why: 'Order means nothing; the stage names its entry point explicitly, and the execution model in the SPIR-V must match the stage.',
+				},
+				{
+					text: 'Each entry point needs its own module',
+					why: 'One module may hold several entry points; our triangle.spv holds vertexMain and fragmentMain.',
+				},
+				{
+					text: 'Entry points must be called main; the stage flag decides',
+					why: 'That is the old GLSL convention. With -fvk-use-entrypoint-name the names stay vertexMain and fragmentMain, and the stage selects one by name.',
+				},
+			],
+			answer: 0,
+			ref: '#3-stages-name-their-entry-points',
+		},
+		{
+			q: 'In our shader the top corner has y = -0.5. Why negative?',
+			options: [
+				{
+					text: 'Slang flips Y when it compiles to SPIR-V',
+					why: 'Slang leaves the value as written. The sign comes from Vulkan\'s clip space convention.',
+				},
+				{
+					text: 'Vulkan clip space has +Y pointing down',
+					why: 'Right: unlike OpenGL, Vulkan\'s clip space Y points downwards, so negative Y is the top of the screen.',
+				},
+				{
+					text: 'The viewport is set upside down in step 09',
+					why: 'The viewport in step 09 is the plain one (y = 0, positive height). No flip is involved.',
+				},
+				{
+					text: 'Negative Y marks the vertex as the first one',
+					why: 'Vertex order comes from the vertex index, not from coordinates. The sign is only about where up is.',
+				},
+			],
+			answer: 1,
+			ref: '#the-triangle-shader',
+		},
+	]}
+/>

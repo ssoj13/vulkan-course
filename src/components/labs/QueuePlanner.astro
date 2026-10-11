@@ -5,10 +5,9 @@
  */
 import QueuePlannerView from './QueuePlannerView.tsx';
 import { DEFAULT_OPTIONS, DEFAULT_REQS, FAMILIES, plan } from '../../lib/labs/queue-planner';
-import { pick } from '../../lib/text';
+import { pick, tfmt } from '../../lib/text';
 import { TEXT } from './queue-planner.text';
 import { courseIn, langOf } from 'course-kit/lib/course.ts';
-import { fmt } from 'course-kit/i18n.mjs';
 
 const v = courseIn(langOf(Astro.url.pathname));
 const t = pick(TEXT, v.lang, 'queue-planner');
@@ -24,8 +23,8 @@ if (p.errors.length) throw new Error(`queue-planner: the default plan is invalid
 	<details class="vk-lab-text">
 		<summary>{t.asText}</summary>
 		<ul>
-			{FAMILIES.map((f) => <li>{fmt(t.fbFamily, { family: f.index, count: f.queueCount, flags: f.flags.join(' | ') })}</li>)}
-			{p.infos.map((i) => <li>{fmt(t.fbInfo, { family: i.family, count: i.count, roles: i.roles.map((r) => t[`role_${r}`]).join(', ') })}</li>)}
+			{FAMILIES.map((f) => <li>{tfmt(v.lang, t.fbFamily, { family: f.index, count: f.queueCount, flags: f.flags.join(' | ') })}</li>)}
+			{p.infos.map((i) => <li>{tfmt(v.lang, t.fbInfo, { family: i.family, count: i.count, roles: i.roles.map((r) => t[`role_${r}`]).join(', ') })}</li>)}
 		</ul>
 	</details>
 </figure>

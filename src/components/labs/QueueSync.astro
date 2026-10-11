@@ -6,8 +6,7 @@
  */
 import QueueSyncView from './QueueSyncView.tsx';
 import { courseIn, langOf } from 'course-kit/lib/course.ts';
-import { fmt } from 'course-kit/i18n.mjs';
-import { pick } from '../../lib/text';
+import { pick, tfmt } from '../../lib/text';
 import { PRESETS, PRESET_IDS, analyze, scenarioErrors, type SubmitOp } from '../../lib/labs/queue-sync';
 import { TEXT } from './queue-sync.text';
 
@@ -19,16 +18,16 @@ const t = pick(TEXT, lang, 'queue-sync');
 const sc = PRESETS.upload;
 const who = (i: number) => {
 	const op = sc.ops[i] as SubmitOp;
-	return fmt(t[`w_${op.name}`], { n: op.n ?? '' });
+	return tfmt(lang, t[`w_${op.name}`], { n: op.n ?? '' });
 };
 // The events of the first scenario that a reader without JavaScript most needs: submits, signals, waits, ends.
 const lines = analyze(sc).run.events.flatMap((e) => {
 	const v = { who: who(e.op), t: e.t };
-	if (e.kind === 'submit') return [`t = ${e.t}: ${fmt(t.ev_submit, { ...v, queue: (sc.ops[e.op] as SubmitOp).queue })}`];
-	if (e.kind === 'signal') return [`t = ${e.t}: ${fmt(t.ev_signal, { ...v, sem: e.sem })}`];
-	if (e.kind === 'waitDone') return [`t = ${e.t}: ${fmt(t.ev_waitDone, { ...v, sem: e.sem })}`];
-	if (e.kind === 'blocked') return [`t = ${e.t}: ${fmt(t.ev_blocked, { ...v, sem: e.sem, stage: e.stage })}`];
-	if (e.kind === 'done') return [`t = ${e.t}: ${fmt(t.ev_done, v)}`];
+	if (e.kind === 'submit') return [`t = ${e.t}: ${tfmt(lang, t.ev_submit, { ...v, queue: (sc.ops[e.op] as SubmitOp).queue })}`];
+	if (e.kind === 'signal') return [`t = ${e.t}: ${tfmt(lang, t.ev_signal, { ...v, sem: e.sem })}`];
+	if (e.kind === 'waitDone') return [`t = ${e.t}: ${tfmt(lang, t.ev_waitDone, { ...v, sem: e.sem })}`];
+	if (e.kind === 'blocked') return [`t = ${e.t}: ${tfmt(lang, t.ev_blocked, { ...v, sem: e.sem, stage: e.stage })}`];
+	if (e.kind === 'done') return [`t = ${e.t}: ${tfmt(lang, t.ev_done, v)}`];
 	return [];
 });
 ---

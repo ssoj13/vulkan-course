@@ -8,7 +8,6 @@ import { useMemo, useState } from 'react';
 import { LabFrame } from 'course-kit/components/lab/LabFrame.tsx';
 import { Scrubber } from 'course-kit/components/lab/Scrubber.tsx';
 import { useTimeline } from 'course-kit/components/lab/useTimeline.ts';
-import { fmt } from 'course-kit/i18n.mjs';
 import {
 	AXES,
 	CORE_DYNAMIC,
@@ -37,7 +36,7 @@ import {
 	type StageId,
 	type WalkFrame,
 } from '../../lib/labs/graphics-pipeline';
-import { pick } from '../../lib/text';
+import { pick, tfmt } from '../../lib/text';
 import { TEXT } from './graphics-pipeline.text';
 import './graphics-pipeline.css';
 
@@ -47,7 +46,7 @@ type T = (typeof TEXT)['en'];
 const CELL = 22;
 const num = (x: number) => +x.toFixed(2);
 
-function StageDetail({ t, id }: { t: T; id: StageId }) {
+function StageDetail({ lang, t, id }: { lang: string; t: T; id: StageId }) {
 	const s = stage(id);
 	const dyn = dynamicOf(id);
 	return (
@@ -71,13 +70,13 @@ function StageDetail({ t, id }: { t: T; id: StageId }) {
 				<p className="lab-muted">{s.kind === 'shader' ? t.noDynamicShader : t.noDynamic}</p>
 			) : (
 				<>
-					<p className="lab-muted">{fmt(t.dynamicCount, { n: dyn.length, total: CORE_DYNAMIC.length })}</p>
+					<p className="lab-muted">{tfmt(lang, t.dynamicCount, { n: dyn.length, total: CORE_DYNAMIC.length })}</p>
 					<ul className="gp-dyn">
 						{dyn.map((d) => (
 							<li key={d.state}>
-								<code>{shortState(d.state)}</code> <span className="gp-ver">{fmt(t.since, { v: versionOf(d.state) })}</span>
+								<code>{shortState(d.state)}</code> <span className="gp-ver">{tfmt(lang, t.since, { v: versionOf(d.state) })}</span>
 								<span className="gp-dyn-sub">
-									{fmt(t.setWith, { cmd: d.cmd })}; {fmt(t.replaces, { what: d.replaces })}
+									{tfmt(lang, t.setWith, { cmd: d.cmd })}; {tfmt(lang, t.replaces, { what: d.replaces })}
 								</span>
 							</li>
 						))}
@@ -150,27 +149,27 @@ function WalkPicture({ t, f }: { t: T; f: WalkFrame }) {
 	);
 }
 
-function walkCaption(t: T, f: WalkFrame, cull: CullMode): string {
+function walkCaption(lang: string, t: T, f: WalkFrame, cull: CullMode): string {
 	const n = f.step === 'rasterization' || f.step === 'fragment-shader' ? f.frags.length : 0;
 	const empty = f.culled && ['fragment-shader', 'fragment-ops', 'color-blend', 'attachments'].includes(f.step);
 	if (empty) return t.walkEmpty;
 	switch (f.step) {
 		case 'vertex-shader':
-			return fmt(t['walk.vertex-shader'], { dx: SHIFT_X });
+			return tfmt(lang, t['walk.vertex-shader'], { dx: SHIFT_X });
 		case 'rasterization':
-			return fmt(t['walk.rasterization'], {
+			return tfmt(lang, t['walk.rasterization'], {
 				w: FB.w,
 				h: FB.h,
 				area: num(f.area),
 				facing: f.area > 0 ? t.facingFront : t.facingBack,
-				result: f.culled ? fmt(t.rasterCulled, { mode: t[`cull.${cull}`] }) : fmt(t.rasterCovered, { n }),
+				result: f.culled ? tfmt(lang, t.rasterCulled, { mode: t[`cull.${cull}`] }) : tfmt(lang, t.rasterCovered, { n }),
 			});
 		case 'fragment-shader':
-			return fmt(t['walk.fragment-shader'], { n });
+			return tfmt(lang, t['walk.fragment-shader'], { n });
 		case 'fragment-ops':
-			return fmt(t['walk.fragment-ops'], { wall: WALL.depth, rejected: f.rejected.length, kept: f.frags.length });
+			return tfmt(lang, t['walk.fragment-ops'], { wall: WALL.depth, rejected: f.rejected.length, kept: f.frags.length });
 		case 'color-blend':
-			return fmt(t['walk.color-blend'], { kept: f.frags.length });
+			return tfmt(lang, t['walk.color-blend'], { kept: f.frags.length });
 		default:
 			return t[`walk.${f.step}`];
 	}
@@ -240,18 +239,18 @@ function Walk({ t, lang }: { t: T; lang: string }) {
 							<span className="gp-key is-rejected" /> {t.legendRejected}
 						</li>
 						<li>
-							<span className="gp-key is-wall" /> {fmt(t.legendWall, { wall: WALL.depth })}
+							<span className="gp-key is-wall" /> {tfmt(lang, t.legendWall, { wall: WALL.depth })}
 						</li>
 					</ul>
 				</div>
 			</div>
-			<Scrubber lang={lang} tl={tl} caption={walkCaption(t, f, cull)} />
+			<Scrubber lang={lang} tl={tl} caption={walkCaption(lang, t, f, cull)} />
 			<p className="lab-muted">{t.walkNote}</p>
 		</section>
 	);
 }
 
-function Count({ t }: { t: T }) {
+function Count({ lang, t }: { lang: string; t: T }) {
 	const [choice, setChoice] = useState<DynChoice>(DYNAMIC);
 	const c = count(choice);
 	const toggle = (a: Axis) => setChoice((x) => ({ ...x, [a]: !x[a] }));
@@ -266,7 +265,7 @@ function Count({ t }: { t: T }) {
 	return (
 		<section className="gp-count" aria-label={t.countTitle}>
 			<h4>{t.countTitle}</h4>
-			<p>{fmt(t.countScene, { m: SCENE.materials })}</p>
+			<p>{tfmt(lang, t.countScene, { m: SCENE.materials })}</p>
 			<div className="lab-row">
 				{preset(FULLY_STATIC, t.presetStatic)}
 				{preset(DYNAMIC, t.presetDynamic)}
@@ -281,9 +280,9 @@ function Count({ t }: { t: T }) {
 				))}
 			</fieldset>
 			<div className="gp-count-result">
-				<b aria-live="polite">{fmt(t.countResult, { n: c.pipelines })}</b>
+				<b aria-live="polite">{tfmt(lang, t.countResult, { n: c.pipelines })}</b>
 				<span className="lab-muted">
-					{fmt(t.formula, { m: SCENE.materials, cull: choice.cull ? 1 : SCENE.cull, depth: choice.depth ? 1 : SCENE.depth })}
+					{tfmt(lang, t.formula, { m: SCENE.materials, cull: choice.cull ? 1 : SCENE.cull, depth: choice.depth ? 1 : SCENE.depth })}
 				</span>
 				<div className="gp-pipes" aria-hidden="true">
 					{Array.from({ length: c.pipelines }, (_, i) => (
@@ -291,13 +290,13 @@ function Count({ t }: { t: T }) {
 					))}
 				</div>
 			</div>
-			<p className={c.perResize ? 'lab-msg is-warn' : 'lab-msg is-ok'}>{c.perResize ? fmt(t.perResize, { n: c.perResize }) : t.noResize}</p>
+			<p className={c.perResize ? 'lab-msg is-warn' : 'lab-msg is-ok'}>{c.perResize ? tfmt(lang, t.perResize, { n: c.perResize }) : t.noResize}</p>
 			<p>
-				{c.dynamicStates.length ? fmt(t.dynList, { list: c.dynamicStates.map(shortState).join(', ') }) : t.dynNone}
+				{c.dynamicStates.length ? tfmt(lang, t.dynList, { list: c.dynamicStates.map(shortState).join(', ') }) : t.dynNone}
 				{c.cmds.length > 0 && (
 					<>
 						<br />
-						{fmt(t.cmdList, { list: c.cmds.join(', ') })}
+						{tfmt(lang, t.cmdList, { list: c.cmds.join(', ') })}
 					</>
 				)}
 			</p>
@@ -331,12 +330,12 @@ export default function GraphicsPipelineView({ lang }: { lang: string }) {
 							</li>
 						))}
 					</ol>
-					<StageDetail t={t} id={sel} />
+					<StageDetail lang={lang} t={t} id={sel} />
 				</div>
-				<p className="lab-muted">{fmt(t.wholePipeline, { layout: WHOLE[0]!.member, dynamic: WHOLE[1]!.member })}</p>
+				<p className="lab-muted">{tfmt(lang, t.wholePipeline, { layout: WHOLE[0]!.member, dynamic: WHOLE[1]!.member })}</p>
 			</section>
 			<Walk t={t} lang={lang} />
-			<Count t={t} />
+			<Count lang={lang} t={t} />
 		</LabFrame>
 	);
 }

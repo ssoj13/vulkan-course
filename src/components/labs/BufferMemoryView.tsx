@@ -8,7 +8,6 @@ import { useMemo, useState } from 'react';
 import { LabFrame } from 'course-kit/components/lab/LabFrame.tsx';
 import { Scrubber } from 'course-kit/components/lab/Scrubber.tsx';
 import { useTimeline } from 'course-kit/components/lab/useTimeline.ts';
-import { fmt } from 'course-kit/i18n.mjs';
 import {
 	CONSUMER,
 	COPY_FAMILIES,
@@ -33,7 +32,7 @@ import {
 import { DL, HC, HEAPS, TYPES } from '../../lib/labs/memory';
 import { vuid } from '../../lib/vuids';
 import reqJson from '../../data/buffer-requirements.json';
-import { pick } from '../../lib/text';
+import { pick, tfmt } from '../../lib/text';
 import { TEXT } from './buffer-memory.text';
 import './buffer-memory.css';
 
@@ -46,14 +45,14 @@ const flags = (fs: readonly string[]) => fs.map(short).join(' | ');
 const plain = (f: string) => f.replace(/^VK_(PIPELINE_STAGE|ACCESS)_2_/, '').replace(/_BIT$/, '');
 
 /** Caption of a flow step in the reader's language, plus the call it makes. */
-export function stepText(t: T, s: FlowStep): string {
+export function stepText(lang: string, t: T, s: FlowStep): string {
 	const which = (w: Which) => (w === 'dst' ? t.whichDst : t.whichStaging);
 	switch (s.kind) {
 		case 'create':
-			return fmt(t['step.create'], { which: which(s.which), request: bytes(s.request), usage: flags(s.usage) });
+			return tfmt(lang, t['step.create'], { which: which(s.which), request: bytes(s.request), usage: flags(s.usage) });
 		case 'reqs': {
 			const parts = [
-				fmt(t['step.reqs'], { which: which(s.which), size: bytes(s.req.size), alignment: s.req.alignment, bits: `0b${bitString(s.req.memoryTypeBits)}`, types: typesIn(s.req.memoryTypeBits).join(', ') }),
+				tfmt(lang, t['step.reqs'], { which: which(s.which), size: bytes(s.req.size), alignment: s.req.alignment, bits: `0b${bitString(s.req.memoryTypeBits)}`, types: typesIn(s.req.memoryTypeBits).join(', ') }),
 				t.reqsRound,
 			];
 			if (!typesIn(s.req.memoryTypeBits).includes(2)) parts.push(t.reqsType2);
@@ -62,41 +61,41 @@ export function stepText(t: T, s: FlowStep): string {
 		case 'choose': {
 			const w = WANT[s.placement];
 			const picked = TYPES[s.choice.picked!]!;
-			const parts = [fmt(t['step.choose'], { which: which(s.which), flags: flags(s.choice.optimal ? w.optimal : w.required), type: picked.index, heap: picked.heapIndex })];
-			if (!s.choice.optimal) parts.push(fmt(t.chooseFallback, { optimal: flags(w.optimal), required: flags(w.required) }));
-			parts.push(fmt(t.chooseRule, { vuid: VUIDS.bindType }));
+			const parts = [tfmt(lang, t['step.choose'], { which: which(s.which), flags: flags(s.choice.optimal ? w.optimal : w.required), type: picked.index, heap: picked.heapIndex })];
+			if (!s.choice.optimal) parts.push(tfmt(lang, t.chooseFallback, { optimal: flags(w.optimal), required: flags(w.required) }));
+			parts.push(tfmt(lang, t.chooseRule, { vuid: VUIDS.bindType }));
 			return parts.join(' ');
 		}
 		case 'allocate':
-			return fmt(t['step.allocate'], { size: bytes(s.size), type: s.type.index, heap: s.type.heapIndex, heapSize: bytes(s.heapSize) });
+			return tfmt(lang, t['step.allocate'], { size: bytes(s.size), type: s.type.index, heap: s.type.heapIndex, heapSize: bytes(s.heapSize) });
 		case 'bind':
-			return fmt(t['step.bind'], { which: which(s.which), alignment: s.alignment, next: bytes(s.size) });
+			return tfmt(lang, t['step.bind'], { which: which(s.which), alignment: s.alignment, next: bytes(s.size) });
 		case 'map': {
-			const parts = [fmt(t['step.map'], { which: which(s.which), mapAlign: LIMITS.minMemoryMapAlignment, request: bytes(s.request) })];
+			const parts = [tfmt(lang, t['step.map'], { which: which(s.which), mapAlign: LIMITS.minMemoryMapAlignment, request: bytes(s.request) })];
 			if (s.type.flags.includes(HC)) parts.push(t.mapCoherent);
 			parts.push(s.type.flags.includes(DL) ? t.mapVram : t.mapHost);
 			return parts.join(' ');
 		}
 		case 'copy':
 			return s.ok
-				? fmt(t['step.copy'], { request: bytes(s.request), dma: DMA?.index ?? '-', count: DMA?.count ?? 0 })
-				: fmt(t.copyError, { vuid: VUIDS.copyDst, text: vuid(VUIDS.copyDst) });
+				? tfmt(lang, t['step.copy'], { request: bytes(s.request), dma: DMA?.index ?? '-', count: DMA?.count ?? 0 })
+				: tfmt(lang, t.copyError, { vuid: VUIDS.copyDst, text: vuid(VUIDS.copyDst) });
 		case 'sync': {
 			const c = s.consumers.map((u) => CONSUMER[u]!);
 			const list = c.length ? c.map((x) => `${x.stages.map((st) => st.replace('VK_PIPELINE_STAGE_2_', '')).join(' | ')} / ${x.access.replace('VK_ACCESS_2_', '')}`).join(', ') : t.consumersNone;
-			return fmt(t['step.sync'], { consumers: list });
+			return tfmt(lang, t['step.sync'], { consumers: list });
 		}
 		case 'gpuWrite':
-			if (!s.writer) return fmt(t.gpuWriteNone, { vuid: VUIDS.copyDst });
-			return fmt(s.writer === 'copy' ? t['step.gpuWrite'] : t.gpuWriteDispatch, { request: bytes(s.request) });
+			if (!s.writer) return tfmt(lang, t.gpuWriteNone, { vuid: VUIDS.copyDst });
+			return tfmt(lang, s.writer === 'copy' ? t['step.gpuWrite'] : t.gpuWriteDispatch, { request: bytes(s.request) });
 		case 'hostSync':
-			return fmt(t['step.hostSync'], { stage: plain(WRITER[s.writer].stage), access: plain(WRITER[s.writer].access) });
+			return tfmt(lang, t['step.hostSync'], { stage: plain(WRITER[s.writer].stage), access: plain(WRITER[s.writer].access) });
 		case 'fence':
 			return t['step.fence'];
 		case 'read':
 			return [
-				fmt(t['step.read'], { request: bytes(s.request), type: s.type.index, heap: s.type.heapIndex }),
-				s.coherent ? t.readCoherent : fmt(t.readNonCoherent, { vuid: VUIDS.flushAtom }),
+				tfmt(lang, t['step.read'], { request: bytes(s.request), type: s.type.index, heap: s.type.heapIndex }),
+				s.coherent ? t.readCoherent : tfmt(lang, t.readNonCoherent, { vuid: VUIDS.flushAtom }),
 			].join(' ');
 	}
 }
@@ -152,20 +151,20 @@ function typeAt(steps: readonly FlowStep[], i: number): { bits: number | null; p
 	return { bits, picked };
 }
 
-function HeapMap({ t, bits, picked }: { t: T; bits: number | null; picked: number | null }) {
+function HeapMap({ lang, t, bits, picked }: { lang: string; t: T; bits: number | null; picked: number | null }) {
 	return (
 		<div className="bm-heaps" role="group" aria-label={t.heapsLabel}>
 			{HEAPS.map((h) => (
 				<div key={h.index} className={`bm-heap${h.flags.length ? ' is-device' : ''}`}>
 					<p className="bm-heap-head">
-						<b>{fmt(t.heap, { i: h.index, size: bytes(h.size) })}</b> <span className="lab-muted">{h.flags.length ? flags(h.flags) : t.noFlags}</span>
+						<b>{tfmt(lang, t.heap, { i: h.index, size: bytes(h.size) })}</b> <span className="lab-muted">{h.flags.length ? flags(h.flags) : t.noFlags}</span>
 					</p>
 					<ul className="bm-types">
 						{TYPES.filter((ty) => ty.heapIndex === h.index).map((ty) => {
 							const state = bits === null ? '' : bits & (1 << ty.index) ? ' is-allowed' : ' is-blocked';
 							return (
 								<li key={ty.index} className={`bm-type${state}${picked === ty.index ? ' is-picked' : ''}`}>
-									<span className="bm-type-n">{fmt(t.type, { i: ty.index })}</span>
+									<span className="bm-type-n">{tfmt(lang, t.type, { i: ty.index })}</span>
 									<span className="bm-type-flags">{ty.flags.length ? flags(ty.flags) : t.noFlags}</span>
 								</li>
 							);
@@ -200,20 +199,20 @@ export default function BufferMemoryView({ lang }: { lang: string }) {
 	return (
 		<LabFrame lang={lang} title={t.title} onReset={reset}>
 			<div className="bm-controls">
-				<fieldset className="bm-group">
-					<legend>{t.usageLabel}</legend>
-					{USAGES.map((u) => {
-						const on = usage.includes(u);
-						const last = on && usage.length === 1;
-						return (
-							<label key={u} className={`bm-check${on ? ' is-on' : ''}`} title={last ? t.usageHint : undefined}>
-								<input type="checkbox" checked={on} aria-disabled={last} onChange={() => toggle(u)} />
-								<code>{short(u)}</code>
-							</label>
-						);
-					})}
-				</fieldset>
 				<div className="bm-group">
+					<fieldset className="bm-group">
+						<legend>{t.usageLabel}</legend>
+						{USAGES.map((u) => {
+							const on = usage.includes(u);
+							const last = on && usage.length === 1;
+							return (
+								<label key={u} className={`bm-check${on ? ' is-on' : ''}`} title={last ? t.usageHint : undefined}>
+									<input type="checkbox" checked={on} aria-disabled={last} onChange={() => toggle(u)} />
+									<code>{short(u)}</code>
+								</label>
+							);
+						})}
+					</fieldset>
 					<label className="lab-field">
 						<span>{t.sizeLabel}</span>
 						<select value={request} onChange={(e) => setRequest(Number(e.currentTarget.value))}>
@@ -224,19 +223,19 @@ export default function BufferMemoryView({ lang }: { lang: string }) {
 							))}
 						</select>
 					</label>
-					<fieldset className="bm-group">
-						<legend>{t.placeLabel}</legend>
-						{PLACEMENTS.map((p) => (
-							<label key={p} className={`bm-check${p === placement ? ' is-on' : ''}`}>
-								<input type="radio" name="bm-place" checked={p === placement} onChange={() => setPlacement(p)} />
-								<span>
-									{t[`place.${p}`]}
-									<span className="bm-want">{fmt(t.want, { optimal: flags(WANT[p].optimal), required: flags(WANT[p].required) })}</span>
-								</span>
-							</label>
-						))}
-					</fieldset>
 				</div>
+				<fieldset className="bm-group">
+					<legend>{t.placeLabel}</legend>
+					{PLACEMENTS.map((p) => (
+						<label key={p} className={`bm-check${p === placement ? ' is-on' : ''}`}>
+							<input type="radio" name="bm-place" checked={p === placement} onChange={() => setPlacement(p)} />
+							<span>
+								{t[`place.${p}`]}
+								<span className="bm-want">{tfmt(lang, t.want, { optimal: flags(WANT[p].optimal), required: flags(WANT[p].required) })}</span>
+							</span>
+						</label>
+					))}
+				</fieldset>
 			</div>
 
 			<div className="bm-main">
@@ -252,12 +251,12 @@ export default function BufferMemoryView({ lang }: { lang: string }) {
 						<code>{call(s)}</code>
 					</pre>
 					{s.kind === 'create' && s.which === 'staging' && deviceOnly?.kind === 'allocate' && (
-						<p className="lab-msg">{fmt(t.mapDeviceNote, { type: deviceOnly.type.index, vuid: VUIDS.mapHostVisible })}</p>
+						<p className="lab-msg">{tfmt(lang, t.mapDeviceNote, { type: deviceOnly.type.index, vuid: VUIDS.mapHostVisible })}</p>
 					)}
 				</div>
 				<div className="bm-side">
 					<h4>{t.heapsTitle}</h4>
-					<HeapMap t={t} bits={bits} picked={picked} />
+					<HeapMap lang={lang} t={t} bits={bits} picked={picked} />
 					<ul className="bm-legend">
 						<li>
 							<span className="bm-key is-allowed" /> {t.legendAllowed}
@@ -269,21 +268,21 @@ export default function BufferMemoryView({ lang }: { lang: string }) {
 							<span className="bm-key is-picked" /> {t.legendPicked}
 						</li>
 					</ul>
-					{BAR_HEAP && <p className="lab-muted">{fmt(t.barNote, { size: bytes(BAR_HEAP.size) })}</p>}
+					{BAR_HEAP && <p className="lab-muted">{tfmt(lang, t.barNote, { size: bytes(BAR_HEAP.size) })}</p>}
 				</div>
 			</div>
-			<Scrubber lang={lang} tl={tl} caption={<span className={isError ? 'bm-err' : undefined}>{stepText(t, s)}</span>} />
+			<Scrubber lang={lang} tl={tl} caption={<span className={isError ? 'bm-err' : undefined}>{stepText(lang, t, s)}</span>} />
 
 			<details className="bm-facts">
 				<summary>{t.factsTitle}</summary>
 				<ul>
-					<li>{fmt(t.factAlign, { ubo: LIMITS.minUniformBufferOffsetAlignment })}</li>
-					<li>{fmt(t.factMap, { map: LIMITS.minMemoryMapAlignment })}</li>
-					<li>{fmt(t.factAtom, { atom: LIMITS.nonCoherentAtomSize, vuid: VUIDS.flushAtom })}</li>
-					<li>{fmt(t.factGran, { gran: LIMITS.bufferImageGranularity })}</li>
+					<li>{tfmt(lang, t.factAlign, { ubo: LIMITS.minUniformBufferOffsetAlignment })}</li>
+					<li>{tfmt(lang, t.factMap, { map: LIMITS.minMemoryMapAlignment })}</li>
+					<li>{tfmt(lang, t.factAtom, { atom: LIMITS.nonCoherentAtomSize, vuid: VUIDS.flushAtom })}</li>
+					<li>{tfmt(lang, t.factGran, { gran: LIMITS.bufferImageGranularity })}</li>
 				</ul>
 			</details>
-			<p className="lab-muted">{fmt(t.captureNote, { device: reqJson.meta.device })}</p>
+			<p className="lab-muted">{tfmt(lang, t.captureNote, { device: reqJson.meta.device })}</p>
 		</LabFrame>
 	);
 }

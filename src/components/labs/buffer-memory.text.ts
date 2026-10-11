@@ -33,12 +33,12 @@ const en = {
 	chooseRule: 'Using a type outside memoryTypeBits breaks {vuid}.',
 	'step.allocate': 'vkAllocateMemory: allocationSize {size} from type {type}, heap {heap} ({heapSize}). This is the real block of memory.',
 	'step.bind': 'vkBindBufferMemory({which}, memory, offset 0). The offset must be a multiple of the alignment ({alignment}); a second buffer in the same block could start at {next}. Allocations are expensive, so real apps take one big block and place many buffers in it (VMA does this).',
-	'step.map': 'vkMapMemory gives the CPU a pointer into {which} (aligned to at least {mapAlign} bytes); memcpy writes the {request} into it.',
+	'step.map': 'vkMapMemory gives the CPU a pointer into {which} (aligned to at least {mapAlign|# byte|# bytes}); memcpy writes the {request} into it.',
 	mapCoherent: 'The type is HOST_COHERENT: no flush is needed, and vkQueueSubmit makes the writes visible to the GPU.',
 	mapVram: 'The pointer leads into VRAM through the BAR window: the CPU writes cross PCIe once, and the GPU then reads at VRAM speed.',
 	mapHost: 'The memory is system RAM: the GPU will read it over PCIe every time it uses it.',
 	mapDeviceNote: 'Type {type} is DEVICE_LOCAL only, not HOST_VISIBLE: the CPU cannot map it ({vuid}). So the data goes through a staging buffer.',
-	'step.copy': 'vkCmdCopyBuffer(staging → your buffer, {request}), recorded into a command buffer and submitted to a queue that can transfer: family 0 (graphics), or family {dma}, the {count} dedicated transfer (DMA) queues of this GPU.',
+	'step.copy': 'vkCmdCopyBuffer(staging → your buffer, {request}), recorded into a command buffer and submitted to a queue that can transfer: family 0 (graphics), or family {dma}, with {count|# dedicated transfer (DMA) queue|# dedicated transfer (DMA) queues} of this GPU.',
 	copyError: 'Validation error: your buffer was created without TRANSFER_DST, so it cannot be a copy destination. {vuid}: {text}',
 	'step.sync':
 		'Before the GPU reads the buffer: on the same queue, a pipeline barrier from COPY / TRANSFER_WRITE to {consumers}; from the transfer queue, a semaphore plus a queue family ownership transfer (the buffer is EXCLUSIVE). Destroy the staging buffer only after a fence says the copy is done.',
@@ -92,12 +92,12 @@ const ru: typeof en = {
 	chooseRule: 'Тип вне memoryTypeBits нарушает {vuid}.',
 	'step.allocate': 'vkAllocateMemory: allocationSize {size} из типа {type}, куча {heap} ({heapSize}). Вот это и есть настоящий блок памяти.',
 	'step.bind': 'vkBindBufferMemory({which}, memory, offset 0). Смещение должно быть кратно alignment ({alignment}); второй буфер в том же блоке мог бы начаться с {next}. Выделения дорогие, поэтому настоящие приложения берут один большой блок и раскладывают в нём много буферов (так делает VMA).',
-	'step.map': 'vkMapMemory даёт CPU указатель в «{which}» (выровнен минимум на {mapAlign} байт); memcpy записывает туда {request}.',
+	'step.map': 'vkMapMemory даёт CPU указатель в «{which}» (выровнен минимум на {mapAlign|# байт|# байта|# байт}); memcpy записывает туда {request}.',
 	mapCoherent: 'Тип HOST_COHERENT: flush не нужен, а vkQueueSubmit делает записи видимыми для GPU.',
 	mapVram: 'Указатель ведёт в VRAM через окно BAR: записи CPU один раз пересекают PCIe, а дальше GPU читает со скоростью VRAM.',
 	mapHost: 'Это системная RAM: GPU будет читать её через PCIe при каждом обращении.',
 	mapDeviceNote: 'Тип {type} только DEVICE_LOCAL, без HOST_VISIBLE: CPU не может его отобразить ({vuid}). Поэтому данные идут через staging-буфер.',
-	'step.copy': 'vkCmdCopyBuffer(staging → ваш буфер, {request}) пишется в command buffer и отправляется в очередь, умеющую transfer: семейство 0 (графика) или семейство {dma} — {count} выделенные transfer-очереди (DMA) этого GPU.',
+	'step.copy': 'vkCmdCopyBuffer(staging → ваш буфер, {request}) пишется в command buffer и отправляется в очередь, умеющую transfer: семейство 0 (графика) или семейство {dma} — {count|# выделенная transfer-очередь|# выделенные transfer-очереди|# выделенных transfer-очередей} (DMA) этого GPU.',
 	copyError: 'Ошибка валидации: ваш буфер создан без TRANSFER_DST и не может быть приёмником копирования. {vuid}: {text}',
 	'step.sync':
 		'Прежде чем GPU прочитает буфер: в той же очереди — pipeline barrier от COPY / TRANSFER_WRITE к {consumers}; из transfer-очереди — семафор и передача владения между семействами очередей (буфер EXCLUSIVE). Staging-буфер уничтожаем только после того, как fence сообщит, что копирование закончено.',
@@ -114,7 +114,7 @@ const ru: typeof en = {
 	factAlign: 'alignment (из требований): где буфер может начинаться внутри блока. Снятые значения: 4 для буфера только с INDEX, 16 для большинства, 64 как только включён UNIFORM — это minUniformBufferOffsetAlignment ({ubo}).',
 	factMap: 'minMemoryMapAlignment {map}: указатель из vkMapMemory выровнен минимум на столько.',
 	factAtom: 'nonCoherentAtomSize {atom}: flush некогерентной памяти идёт кусками такого размера ({vuid}). Здесь все HOST_VISIBLE-типы ещё и HOST_COHERENT, так что на этом GPU правило не срабатывает.',
-	factGran: 'bufferImageGranularity {gran}: буферы и изображения с optimal tiling в одном блоке не должны делить одну страницу размером {gran} байт.',
+	factGran: 'bufferImageGranularity {gran}: буферы и изображения с optimal tiling в одном блоке не должны делить одну страницу размером {gran|# байт|# байта|# байт}.',
 	captureNote: 'Данные настоящие: типы памяти из vulkaninfo, требования к памяти сняты на GPU курса ({device}) для всех комбинаций этих шести флагов и этих размеров. Другие GPU и драйверы отвечают иначе.',
 };
 

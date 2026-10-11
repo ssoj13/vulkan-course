@@ -1,0 +1,328 @@
+---
+title: The first triangle
+description: 'One frame end to end: wait, acquire, record, submit, present, with a fence, semaphores and two layout transitions.'
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import MindMap from 'course-kit/components/MindMap.astro';
+import Quiz from 'course-kit/components/Quiz.astro';
+import Step from '../../../components/Step.astro';
+import ObjectGraph from '../../../components/ObjectGraph.astro';
+import { Image } from 'astro:assets';
+import triangle from '../../../assets/09_triangle.png';
+
+Every piece exists: a swapchain with image views, a pipeline, a command buffer. This lesson puts them in motion and
+draws one triangle, frame after frame. The new question is coordination: the CPU, the GPU and the presentation engine
+work at their own pace, so how does each one know when it may touch an image?
+
+## Where this fits
+
+The last lesson of the commands module and the end of the first big arc of the course: from `vkCreateInstance` to
+pixels on the screen. It uses everything from modules 4 to 6, and it is the first program in which the GPU actually
+executes work. One frame is this chain:
+
+`wait fence → acquire image → record (barrier, rendering, draw, barrier) → submit → present`
+
+The [frame loop](term:frame-loop) is built on the [swapchain](lesson:swapchain) (acquire and present), the
+[pipeline](lesson:graphics-pipeline), [dynamic rendering](lesson:dynamic-rendering) and
+[command buffers](lesson:command-buffers), held together by a fence and semaphores. Module 7 (synchronization) starts
+from this loop and makes it fast: several frames in flight, timeline semaphores, and recreating the swapchain.
+
+## The frame loop
+
+Three parties take part in every frame, each running on its own:
+
+- the **CPU** records commands and submits them;
+- the **GPU queue** executes them, later;
+- the **presentation engine** shows images and releases them when they leave the screen.
+
+Nobody may use an image or a command buffer while another party still does. Vulkan gives a separate tool for each kind
+of "wait until":
+
+- a [fence](term:vk-fence) - **GPU → CPU**: a submission signals it when its work completes, and the CPU waits on it;
+- a [semaphore](term:vk-semaphore) - **GPU → GPU**: one queue operation (acquire, a batch, present) signals it, another
+  waits on it, and the CPU is not involved;
+- a **pipeline barrier** - **inside a command buffer**: orders commands before it against commands after it, and can
+  change an image's layout on the way.
+
+These form a hierarchy from coarse to fine: the fence orders whole submissions against the CPU, the semaphore orders
+queue operations against each other, the barrier orders individual commands. (The [queue-sync](lab:queue-sync)
+interactive lets you play with the first two.) One frame then goes like this:
+
+1. **wait** for the fence of the previous frame: its command buffer is free again;
+2. **acquire** a swapchain image; the presentation engine will signal `image_available` when it is really ours;
+3. **record**: barrier to the attachment layout, rendering, draw, barrier to the present layout;
+4. **submit**: wait on `image_available`, run, signal `render_finished` and the fence;
+5. **present**: the presentation engine waits on `render_finished`, then shows the image.
+
+## 1. The sync objects
+
+<Step file="09_triangle" region="sync-objects" />
+
+One fence, one `image_available` semaphore, and one `render_finished` semaphore **per swapchain image** - three here.
+Why per image? `vkQueuePresentKHR` waits on `render_finished`, but we cannot know when the presentation engine has
+finished that wait. It is only certain once the *same image* comes back from a later acquire. Indexing the semaphore by
+the image index ties its reuse to exactly that moment. A single shared semaphore could be signaled again while the
+previous present still waits on it.
+
+The fence is created **signaled**, because the very first frame waits on it before anything was ever submitted;
+an unsignaled fence would make it wait forever.
+
+## 2. Wait for the previous frame
+
+<Step file="09_triangle" region="wait-fence" />
+
+With one frame in flight the CPU waits here until the GPU has finished the previous frame. Only then may the command
+buffer be reset and re-recorded (a *pending* buffer must not be touched) and `image_available` reused. The CPU and
+GPU take turns instead of overlapping; making them overlap is the first lesson of module 7.
+
+The fence is *not* reset here, only after a successful acquire. If the acquire failed and we returned early with a reset
+fence, the next frame would wait on a fence that nothing will ever signal.
+
+## 3. Acquire an image
+
+<Step file="09_triangle" region="acquire" />
+
+`vkAcquireNextImageKHR` returns an image **index** right away, but the image may still be on the screen or waiting for
+its vblank. The semaphore is the real answer: it is signaled when the presentation engine has let go of the image. It
+must be unsignaled when we pass it in (`VUID-vkAcquireNextImageKHR-semaphore-01286`), which the fence wait above
+guarantees.
+
+Two special results: `SUBOPTIMAL` (the image still works, it just no longer fits the surface perfectly) and
+`ERROR_OUT_OF_DATE_KHR` (the swapchain no longer matches the window, for example after minimizing). Recreating the
+swapchain is module 7; step 09 prints a message and stops.
+
+## Image layouts
+
+An [image layout](term:image-layout) is the arrangement of an image's memory for one kind of use. A GPU may keep
+render targets compressed or tiled in a way that suits its render outputs, while the presentation engine needs a form it
+can read. Instead of guessing, Vulkan makes us say which use comes next:
+
+- `UNDEFINED` - "I do not care about the contents". As the *old* layout of a transition it allows the GPU to discard
+  them;
+- `COLOR_ATTACHMENT_OPTIMAL` - for rendering into;
+- `PRESENT_SRC_KHR` - for presenting. An image must be in it when it is presented
+  (`VUID-VkPresentInfoKHR-pImageIndices-01430`).
+
+A layout changes through a **barrier** (`vkCmdPipelineBarrier2`, synchronization2), which is also an ordering rule: the
+transition happens after the work in the *source* stages and before the work in the *destination* stages. This is a
+preview; barriers and layouts get a full lesson in module 7.
+
+### Two layout transitions
+
+<Step file="09_triangle" region="barrier-to-attachment" />
+
+`UNDEFINED → COLOR_ATTACHMENT_OPTIMAL`, before the rendering. The old contents may be discarded: we clear the whole
+image anyway. The source stage is `COLOR_ATTACHMENT_OUTPUT`, the same stage at which the submit waits on
+`image_available`. That chains the two: the semaphore wait blocks that stage, the barrier comes after it, so the
+transition cannot start before the image is ours.
+
+Then comes the rendering itself: `vkCmdBeginRendering` with a clear, exactly as in the
+[dynamic rendering lesson](lesson:dynamic-rendering#2-begin-a-rendering), and the draw:
+
+<Step file="09_triangle" region="draw" />
+
+Bind the pipeline, fill in its two dynamic states (the whole image as viewport and scissor), draw **3 vertices, 1
+instance**: the vertex shader runs for vertex indices 0, 1 and 2, and picks its corner from them. End the rendering.
+
+<Step file="09_triangle" region="barrier-to-present" />
+
+`COLOR_ATTACHMENT_OPTIMAL → PRESENT_SRC_KHR`, after the color writes. The source access `COLOR_ATTACHMENT_WRITE` says
+which writes must be finished and made available; the destination stage is again `COLOR_ATTACHMENT_OUTPUT`, the stage at
+which `render_finished` is signaled, so the transition is ordered before the signal. No destination access: the
+presentation engine makes the writes visible to itself. Then `vkEndCommandBuffer` closes the recording.
+
+## 4. Submit and present
+
+The submit was shown in [the command buffers lesson](lesson:command-buffers#5-submit): wait on `image_available` at
+`COLOR_ATTACHMENT_OUTPUT`, execute the buffer, signal `render_finished` for this image, and signal the fence when
+everything is done. Then:
+
+<Step file="09_triangle" region="present" />
+
+`vkQueuePresentKHR` is a queue operation too: it is queued behind our batch and waits on `render_finished` on the
+GPU side, so the CPU does not wait at all. When the semaphore is signaled the image goes back to the presentation
+engine, which shows it at the next vblank (MAILBOX, chosen in the [swapchain lesson](lesson:swapchain#4-pick-a-present-mode)).
+
+## 5. The loop and the end
+
+<Step file="09_triangle" region="event-loop" />
+
+winit asks for a redraw only on request, so each frame requests the next one; GLFW polls events and draws in a plain
+loop. Neither has a timer: the fence wait and the present mode pace the loop.
+
+<Step file="09_triangle" region="cleanup" />
+
+When the window closes, the last frame may still be rendering or waiting to be shown. `vkDeviceWaitIdle` waits for
+both, and only then are the objects destroyed, newest first. The command pool frees its command buffer.
+
+## What the program prints
+
+```text
+Window: 800x600 pixels
+Found 1 GPU(s)
+GPU 0: NVIDIA GeForce RTX 3080 Ti
+
+Picked: NVIDIA GeForce RTX 3080 Ti
+Graphics + present family: 0
+VkDevice created with VK_KHR_swapchain
+
+Surface formats: 7, chosen B8G8R8A8_SRGB + SRGB_NONLINEAR
+Present modes: FIFO, FIFO_RELAXED, MAILBOX, IMMEDIATE, FIFO_LATEST_READY; chosen MAILBOX
+Extent: 800x600
+Image count: 3 (min 2 + 1, max 8)
+Swapchain created: 3 images
+Image views created: 3
+
+SPIR-V: 1304 bytes (triangle.spv)
+Shader module created: entry points vertexMain, fragmentMain
+Pipeline layout created: 0 descriptor set layouts, 0 push constant ranges
+Graphics pipeline created for color format B8G8R8A8_SRGB (dynamic rendering, no render pass)
+Shader module destroyed
+
+Command pool + 1 primary command buffer
+Sync objects: 1 fence, 1 + 3 semaphores (one frame in flight)
+
+Rendering. Close the window to exit.
+Window closed
+```
+
+The C++ version prints the same lines. With validation on, the only message is the bandicam layer warning from the
+[validation lesson](lesson:validation).
+
+## The result
+
+{/* PNG, not the default WebP: the pixel values quoted below must survive the build unchanged. */}
+<Image src={triangle} format="png" alt="The step 09 window: a triangle with red, green and blue corners on a dark blue-gray background" />
+
+The colors are worth a second look, because they show the `_SRGB` format at work. Measured in this screenshot:
+
+- the background is `39, 39, 48`: the linear clear color `0.02, 0.02, 0.03` encoded to sRGB;
+- at the triangle's center (pixel 400, 350) the three corner colors mix in equal thirds. The shader outputs linear
+  `0.333` per channel, and the pixel holds `156, 157, 156`. Stored without the sRGB curve, a third would be `85`, a
+  much darker gray.
+
+The corners are pure red, green and blue, which look the same with and without the curve; only the mixtures reveal it.
+
+## Build it yourself
+
+The whole object tree of the program. Create everything in an order the rules allow, then tear it down without a single
+error. The order you find is the order of `Vk::new` and `destroy` in step 09.
+
+<ObjectGraph
+	mode="build"
+	scope={['instance', 'debug-messenger', 'surface', 'physical-device', 'device', 'queue', 'swapchain', 'swapchain-image', 'image-view', 'shader-module', 'pipeline-layout', 'pipeline', 'command-pool', 'command-buffer', 'fence', 'semaphore']}
+	caption="Step 09 in one picture. Glowing objects can be created now; dashed ones do not exist yet."
+/>
+
+## The map of this lesson
+
+<MindMap />
+
+## Underneath
+
+- The submitted command buffer is read by the command processor. When it reaches the semaphore wait it holds back the
+  work of the later stages; the barrier becomes whatever the hardware needs for that transition (sometimes nothing,
+  sometimes a cache flush or a change of the image's compression state); `vkCmdDraw` launches three vertex shader
+  invocations, the rasterizer finds about 60 000 covered pixels, and the fragment shader runs once for each.
+- The present is the hand-over to the OS: on Windows the Desktop Window Manager composes our window's image with the
+  desktop. Our frame is now part of what the display scans out.
+- With one frame in flight the GPU idles while the CPU records, and the CPU idles while the GPU renders. For a triangle
+  it does not matter; for a real scene it does, and that is where module 7 begins.
+
+<Quiz
+	questions={[
+		{
+			q: 'What is the fence for in step 09?',
+			options: [
+				{
+					text: 'It orders the acquire before the rendering on the GPU',
+					why: 'GPU-to-GPU ordering is a semaphore\'s job; image_available orders the acquire before the color writes.',
+				},
+				{
+					text: 'It lets the CPU wait until the previous frame finished on the GPU',
+					why: 'Right: a fence is GPU-to-CPU; once it is signaled, the command buffer and image_available may be reused.',
+				},
+				{
+					text: 'It tells the presentation engine when it may show the finished image',
+					why: 'The present waits on the render_finished semaphore. The fence is for the CPU only.',
+				},
+				{
+					text: 'It changes the image layout before presenting',
+					why: 'Layouts change through barriers recorded in the command buffer, not through fences.',
+				},
+			],
+			answer: 1,
+			ref: '#the-frame-loop',
+		},
+		{
+			q: 'Why is the fence created signaled?',
+			options: [
+				{
+					text: 'Unsignaled fences cannot be passed to vkQueueSubmit2 at all',
+					why: 'The opposite: the fence given to a submit must be unsignaled, which is why the loop resets it after the acquire.',
+				},
+				{
+					text: 'The first frame waits on it before anything was submitted',
+					why: 'Right: without the signaled start the first wait would never return, since no submission could signal it.',
+				},
+				{
+					text: 'Signaled fences are faster to wait on',
+					why: 'Speed has nothing to do with it; it is about the very first wait having something to wait for.',
+				},
+				{
+					text: 'The validation layer requires it for presentation',
+					why: 'No rule requires a signaled fence for presenting; the choice follows from where the loop waits.',
+				},
+			],
+			answer: 1,
+			ref: '#1-the-sync-objects',
+		},
+		{
+			q: 'Why is there one render_finished semaphore per swapchain image instead of one for all frames?',
+			options: [
+				{
+					text: 'Each image has a different format',
+					why: 'All images of a swapchain share one format; the reason is the timing of the present\'s wait.',
+				},
+				{
+					text: 'Semaphores can be signaled only once in their life',
+					why: 'Binary semaphores are reused all the time; the question is only when reuse is safe.',
+				},
+				{
+					text: 'Only the return of that image proves the present finished waiting',
+					why: 'Right: we cannot observe the present\'s wait, but acquiring the same image again proves it is over, so the semaphore is tied to the image index.',
+				},
+				{
+					text: 'vkQueuePresentKHR needs three semaphores to present three images',
+					why: 'A present waits on whatever semaphores it is given, one is enough; per-image semaphores are about safe reuse, not a count rule.',
+				},
+			],
+			answer: 2,
+			ref: '#1-the-sync-objects',
+		},
+		{
+			q: 'What must the image layout be when the image is presented?',
+			options: [
+				{
+					text: 'COLOR_ATTACHMENT_OPTIMAL, the layout it was rendered in',
+					why: 'That layout is for rendering. A presented image must be in PRESENT_SRC_KHR (VUID-VkPresentInfoKHR-pImageIndices-01430).',
+				},
+				{
+					text: 'UNDEFINED, because the screen reads any layout',
+					why: 'UNDEFINED means the contents may be discarded; the presentation engine needs a defined layout made for it.',
+				},
+				{
+					text: 'PRESENT_SRC_KHR, set by the last barrier',
+					why: 'Right: the barrier after the rendering moves the image to PRESENT_SRC_KHR, as VUID-VkPresentInfoKHR-pImageIndices-01430 requires.',
+				},
+				{
+					text: 'Any layout; vkQueuePresentKHR converts it',
+					why: 'Presenting converts nothing; the application must transition the image itself, with a barrier.',
+				},
+			],
+			answer: 2,
+			ref: '#image-layouts',
+		},
+	]}
+/>

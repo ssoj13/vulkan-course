@@ -11,8 +11,8 @@ import { NOTE_OVERLAYS, OBJECTS, labelOf, noteOf, obj, objectErrors, overlayErro
 import { courseText } from '../i18n';
 import { canvasHeight, layout } from 'course-kit/lib/layout.ts';
 import { graphIn } from 'course-kit/lib/terms.ts';
+import { tfmt } from '../lib/text';
 import { DEFAULT_LANG, LANGUAGES, courseIn, langOf } from 'course-kit/lib/course.ts';
-import { fmt } from 'course-kit/i18n.mjs';
 
 interface Props {
 	mode?: 'map' | 'build';
@@ -33,8 +33,14 @@ const scope = Astro.props.scope ?? OBJECTS.map((o) => o.id);
 scope.forEach((id) => obj(id));
 const inScope = new Set(scope);
 
-// Parent -> child, so creation flows top to bottom and the instance sits at the top.
-const edges = scope.flatMap((id) => obj(id).parents.filter((p) => inScope.has(p.id)).map((p) => ({ from: p.id, to: id, optional: p.optional === true })));
+// Parent -> child, so creation flows top to bottom and the instance sits at the top. A parent outside the scope is
+// drawn through the in-scope objects that are a kind of it (`isA`), the same rule the simulator applies: in a
+// presentation exercise without `image`, the swapchain images are what the image views are made from.
+const edges = scope.flatMap((id) =>
+	obj(id).parents.flatMap((p) =>
+		(inScope.has(p.id) ? [p.id] : scope.filter((s) => obj(s).isA === p.id)).map((from) => ({ from, to: id, optional: p.optional === true })),
+	),
+);
 // The device parents most objects; in one rank they would make the map too wide to read. Objects of the later
 // stages hang one rank lower, which turns one long row into two shorter ones.
 const LOWER = new Set(['memory', 'images', 'descriptors', 'pipeline']);
@@ -67,8 +73,8 @@ const termHref = Object.fromEntries(scope.flatMap((id) => (obj(id).term ? [[obj(
 					return (
 						<li>
 							<b>{labelOf(o)}</b> — {o.call}
-							{o.parents.length > 0 && `, ${fmt(t.madeFrom, { parents: o.parents.map((p) => labelOf(obj(p.id))).join(' + ') })}`}
-							{o.destroy && `; ${fmt(t.releasedWith, { call: o.destroy })}`}. {noteOf(o, v.lang, DEFAULT_LANG)}
+							{o.parents.length > 0 && `, ${tfmt(v.lang, t.madeFrom, { parents: o.parents.map((p) => labelOf(obj(p.id))).join(' + ') })}`}
+							{o.destroy && `; ${tfmt(v.lang, t.releasedWith, { call: o.destroy })}`}. {noteOf(o, v.lang, DEFAULT_LANG)}
 						</li>
 					);
 				})

@@ -193,9 +193,9 @@
 .bm-key.is-allowed {
 	border-color: var(--lab-ok);
 }
+/* Same look as a blocked type, but drawn in the muted text color so the empty sample stays visible. */
 .bm-key.is-blocked {
-	border-style: dashed;
-	opacity: 0.6;
+	border: 1px dashed var(--lab-text-muted);
 }
 .bm-key.is-picked {
 	border-color: var(--lab-accent);
@@ -203,4 +203,7 @@
 }
 .bm-facts {
 	font-size: var(--sl-text-sm);
+}
+.bm-group > .lab-field {
+	margin-top: 0.5rem;
 }

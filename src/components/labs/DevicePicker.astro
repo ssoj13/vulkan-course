@@ -7,10 +7,9 @@
 import DevicePickerView from './DevicePickerView.tsx';
 import gpu from '../../data/gpu.json';
 import { CANDIDATES, STEP03_RULE, hex, pick, pickerErrors, shortType } from '../../lib/labs/device-picker';
-import { pick as pickText } from '../../lib/text';
+import { pick as pickText, tfmt } from '../../lib/text';
 import { TEXT } from './device-picker.text';
 import { courseIn, langOf } from 'course-kit/lib/course.ts';
-import { fmt } from 'course-kit/i18n.mjs';
 
 const v = courseIn(langOf(Astro.url.pathname));
 const t = pickText(TEXT, v.lang, 'device-picker');
@@ -34,7 +33,7 @@ const d = gpu.device;
 			<li><code>{t.pDriver}</code>: {hex(d.driverVersionRaw, 8)} ({d.driverVersion})</li>
 			<li><code>{t.pVendor}</code>: {hex(d.vendorID)}, <code>{t.pDevice}</code>: {hex(d.deviceID)}</li>
 		</ul>
-		<p>{fmt(t.fbPicked, { api: d.apiVersion })}</p>
+		<p>{tfmt(v.lang, t.fbPicked, { api: d.apiVersion })}</p>
 	</details>
 </figure>
 

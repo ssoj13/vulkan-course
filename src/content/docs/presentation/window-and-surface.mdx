@@ -1,0 +1,377 @@
+---
+title: A window and its surface
+description: 'Vulkan knows no windows: the WSI extensions, VkSurfaceKHR, and asking the GPU what it can show in our window.'
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import MindMap from 'course-kit/components/MindMap.astro';
+import Quiz from 'course-kit/components/Quiz.astro';
+import Step from '../../../components/Step.astro';
+import ObjectGraph from '../../../components/ObjectGraph.astro';
+
+Vulkan draws into images in GPU memory, and nothing in core Vulkan knows what a window is. So how does a picture we
+render end up inside an ordinary window on the desktop? This lesson builds the first half of that bridge: a window, its
+**surface** (`VkSurfaceKHR`), and the questions we ask the GPU about it.
+
+## Where this fits
+
+This opens the **presentation** module, the layer where Vulkan meets the operating system. Before it we had a complete
+chain down to the hardware: instance, physical device, logical device, queue. All of it can render, but only into
+memory. Presentation adds the path out to the screen:
+
+`OS window (HWND) → VkSurfaceKHR → "can this queue family present to it?" → VkSwapchainKHR → swapchain images → image views`
+
+The surface is built on two things: the **instance** (it is an instance-level object, created before we pick a GPU)
+and the **native window** of the OS. This lesson creates the surface and reads what it allows; the
+[swapchain lesson](lesson:swapchain) turns those answers into a ring of images, and the
+[image views lesson](lesson:image-views) makes them drawable.
+
+## Vulkan has no windows
+
+Think of an offline renderer. Karma or Arnold renders a frame into a buffer in memory; a separate program, a viewer
+like MPlay or the render view, takes that buffer and shows it. The renderer itself never talks to the display.
+
+Core Vulkan is the renderer in this picture. Showing images is the job of a set of extensions called
+[window system integration](term:wsi) (WSI). They form a small hierarchy:
+
+- **`VK_KHR_surface`** - the portable part: the `VkSurfaceKHR` handle itself and the queries about it (formats, present
+  modes, capabilities). An *instance* extension.
+- **One platform extension** that creates a surface from a native window: `VK_KHR_win32_surface` on Windows (from an
+  `HWND`), `VK_KHR_xlib_surface` / `VK_KHR_wayland_surface` on Linux, `VK_EXT_metal_surface` on macOS. Also *instance*
+  extensions.
+- **`VK_KHR_swapchain`** - the images that are shown in a surface. A *device* extension, because those images live in
+  one GPU's memory. That is the next lesson.
+
+A [surface](term:vk-surface) is "the window, as Vulkan sees it". Why is it an instance object and not a device object?
+Because a window exists before we decide which GPU will draw into it. With the surface in hand we can ask *every* GPU,
+and every queue family of every GPU, whether it can show images there - and pick a GPU by the answer.
+
+## 1. A window
+
+<Step file="06_window_surface" region="create-window" />
+
+The Rust version uses **winit**, the C++ version **GLFW**: two common ways to get a native window without writing
+Win32 code. Both do the same thing here: an 800x600 window in physical pixels, not resizable. A new window size would
+invalidate the swapchain we build next; recreating it is module 7, so for now the size is fixed.
+
+GLFW needs one extra hint, `GLFW_NO_API`: by default GLFW creates an OpenGL context for the window, and Vulkan does not
+want one. winit never creates a graphics context at all.
+
+## 2. The surface extensions
+
+<Step file="06_window_surface" region="surface-extensions" />
+
+Which surface extensions exist depends on the OS, so we ask the windowing library: ash-window (Rust) and GLFW (C++)
+both know which ones the current platform needs. On this machine the answer is `VK_KHR_surface, VK_KHR_win32_surface`.
+We add `VK_EXT_debug_utils` for the validation messages from [the validation lesson](lesson:validation) and pass the
+whole list to `vkCreateInstance`.
+
+The order of things matters here: instance extensions are fixed when the instance is created. Forget them, and
+`vkCreateWin32SurfaceKHR` simply does not exist for this instance - there is no way to add an extension later.
+
+## 3. Create the surface
+
+<Step file="06_window_surface" region="create-surface" />
+
+On Windows, a surface is created from two handles: the `HWND` of the window and the `HINSTANCE` of the module that
+owns it. Both libraries fill `VkWin32SurfaceCreateInfoKHR` with them and call `vkCreateWin32SurfaceKHR` - the
+same Vulkan call behind two different APIs.
+
+One rule follows from what a surface is: **the window must outlive the surface**. The surface only refers to the OS
+window; if the window is destroyed first, the surface points at nothing. In Rust the window is the last field of `Vk`,
+so it is dropped after `destroy` has destroyed the surface; in C++ the window is declared before the surface, so RAII
+destroys it after.
+
+## 4. Who can present?
+
+<Step file="06_window_surface" region="present-family" />
+
+Presenting an image is a **queue operation** (`vkQueuePresentKHR` takes a `VkQueue`). So the question "can this GPU
+show images in my window?" is really asked per queue family *and* per surface:
+`vkGetPhysicalDeviceSurfaceSupportKHR(physicalDevice, familyIndex, surface)`. A GPU with no connection to the display
+the window is on, or a family without access to the presentation path, answers no.
+
+We extend the GPU choice of [step 03](lesson:physical-devices) with this requirement: we want one family that can both
+draw (`GRAPHICS`) and present, so a single queue can render a frame and then hand it to the screen. Using two
+different families for these two jobs is allowed, but costs extra work (the image has to be passed between the
+families, or shared by both), and on the course GPU one family does both, as the table below shows.
+
+<Step file="06_window_surface" region="family-table" />
+
+Here is the real answer for the course GPU (the numbers of the families are those of the
+[queue families lesson](lesson:queue-families)):
+
+```text
+  family 0: graphics yes, present yes
+  family 1: graphics no, present no
+  family 2: graphics no, present yes
+  family 3: graphics no, present no
+  family 4: graphics no, present no
+  family 5: graphics no, present no
+Graphics + present family: 0
+```
+
+Family 0 is the universal graphics family, so it wins. The interesting line is family 2, the async compute family: it
+cannot draw, but it can present. The transfer-only and video families cannot. Nothing in the specification promises
+either answer, which is exactly why we ask.
+
+## 5. What the surface allows
+
+<Step file="06_window_surface" region="surface-capabilities" />
+
+[Surface capabilities](term:surface-capabilities) are the window system's rules for the images we may show in this
+surface, on this GPU:
+
+```text
+Surface capabilities:
+  image count: min 2, max 8
+  current extent: 800x600
+  extent range: 800x600 .. 800x600
+  max array layers: 1
+  supported transforms: IDENTITY
+  current transform: IDENTITY
+  composite alpha: OPAQUE | PRE_MULTIPLIED
+  image usage: TRANSFER_SRC | TRANSFER_DST | SAMPLED | STORAGE | COLOR_ATTACHMENT | INPUT_ATTACHMENT
+```
+
+- **Image count**: a swapchain on this surface must have at least 2 images and at most 8 (`max 0` would mean "no
+  limit").
+- **Extent**: on Windows the images must match the window's client area exactly, so the range collapses to one size,
+  800x600. On Wayland the current extent is the special value `0xFFFFFFFF`: there the window takes its size from the
+  swapchain instead.
+- **Transforms**: phones rotate their screens, and the presentation engine can rotate an image for you. A desktop does
+  not, so only `IDENTITY` exists.
+- **Composite alpha**: how the window's alpha is blended with the desktop behind it. `OPAQUE` ignores alpha;
+  `PRE_MULTIPLIED` would let a window be partly transparent.
+- **Image usage**: what else the shown images may be used for besides being drawn into: copied, sampled, written by a
+  compute shader (`STORAGE`).
+
+## 6. Formats and color spaces
+
+<Step file="06_window_surface" region="surface-formats" />
+
+A [surface format](term:surface-format) is a pair. If you have set up a Write node in Nuke or an OCIO display, you know
+both halves:
+
+- the **format** says how a pixel is *stored*: `B8G8R8A8_UNORM` is 8 bits per channel read as 0..1,
+  `R16G16B16A16_SFLOAT` is half float;
+- the **color space** says how the display *interprets* the values: `SRGB_NONLINEAR` is an ordinary sRGB monitor,
+  `HDR10_ST2084_EXT` is HDR10 with the PQ curve, `EXTENDED_SRGB_LINEAR_EXT` is linear scRGB for HDR.
+
+The course GPU offers seven pairs:
+
+```text
+Surface formats (7):
+  B8G8R8A8_UNORM + SRGB_NONLINEAR
+  B8G8R8A8_SRGB + SRGB_NONLINEAR
+  R8G8B8A8_UNORM + SRGB_NONLINEAR
+  R8G8B8A8_SRGB + SRGB_NONLINEAR
+  R16G16B16A16_SFLOAT + EXTENDED_SRGB_LINEAR_EXT
+  A2B10G10R10_UNORM_PACK32 + HDR10_ST2084_EXT
+  A2B10G10R10_UNORM_PACK32 + SRGB_NONLINEAR
+```
+
+Notice the `_UNORM` / `_SRGB` twins with the same color space. Both are shown on an sRGB monitor; the difference is who
+applies the sRGB curve. With `_SRGB` the hardware encodes linear shader output to sRGB on every write (and decodes on
+every read), so shaders and blending work in linear light, the way a compositor does. With `_UNORM` the values are
+written as they are, and the shader would have to apply the curve itself. The next lesson picks `B8G8R8A8_SRGB`.
+
+## 7. Present modes
+
+<Step file="06_window_surface" region="present-modes" />
+
+```text
+Present modes (5): FIFO, FIFO_RELAXED, MAILBOX, IMMEDIATE, FIFO_LATEST_READY
+```
+
+A [present mode](term:present-mode) decides how finished images replace each other on the screen: wait for the
+display's vertical blank (no tearing) or not, and what to do with a frame that arrives while another one is waiting.
+`FIFO` is the only mode every implementation must support. The [swapchain lesson](lesson:swapchain#4-pick-a-present-mode)
+compares them and chooses one. One note on the last entry: `FIFO_LATEST_READY` comes from an extension, and a
+swapchain may use it only if the device enabled its `presentModeFifoLatestReady` feature
+(`VUID-VkSwapchainCreateInfoKHR-presentModeFifoLatestReady-10161`). A surface lists what the presentation engine can do,
+not what your device has switched on.
+
+## 8. The event loop and cleanup
+
+<Step file="06_window_surface" region="event-loop" />
+
+The two libraries drive the program differently. Since winit 0.30 the program does not loop itself: it hands an
+`ApplicationHandler` to `run_app`, and winit calls `resumed` (the moment windows may be created - which is why all the
+Vulkan setup lives in `Vk::new`, called from there) and `window_event`. GLFW is the classic loop: wait for events until
+the close button sets a flag. Either way, nothing is drawn yet; the window shows whatever the OS paints into an empty
+window.
+
+<Step file="06_window_surface" region="cleanup" />
+
+The surface is a child of the instance, so it is destroyed before the instance. Destroying the instance while a
+surface still exists is an error (`VUID-vkDestroyInstance-instance-00629`), just like with any other child.
+
+## What the program prints
+
+The whole run on the course machine (RTX 3080 Ti; the bandicam warning on stderr is the implicit layer we met in the
+[validation lesson](lesson:validation)):
+
+```text
+Window: 800x600 pixels
+Surface extensions: VK_KHR_surface, VK_KHR_win32_surface
+Surface created
+Found 1 GPU(s)
+GPU 0: NVIDIA GeForce RTX 3080 Ti
+
+Picked: NVIDIA GeForce RTX 3080 Ti
+  family 0: graphics yes, present yes
+  family 1: graphics no, present no
+  family 2: graphics no, present yes
+  family 3: graphics no, present no
+  family 4: graphics no, present no
+  family 5: graphics no, present no
+Graphics + present family: 0
+
+Surface capabilities:
+  image count: min 2, max 8
+  current extent: 800x600
+  extent range: 800x600 .. 800x600
+  max array layers: 1
+  supported transforms: IDENTITY
+  current transform: IDENTITY
+  composite alpha: OPAQUE | PRE_MULTIPLIED
+  image usage: TRANSFER_SRC | TRANSFER_DST | SAMPLED | STORAGE | COLOR_ATTACHMENT | INPUT_ATTACHMENT
+Surface formats (7):
+  B8G8R8A8_UNORM + SRGB_NONLINEAR
+  B8G8R8A8_SRGB + SRGB_NONLINEAR
+  R8G8B8A8_UNORM + SRGB_NONLINEAR
+  R8G8B8A8_SRGB + SRGB_NONLINEAR
+  R16G16B16A16_SFLOAT + EXTENDED_SRGB_LINEAR_EXT
+  A2B10G10R10_UNORM_PACK32 + HDR10_ST2084_EXT
+  A2B10G10R10_UNORM_PACK32 + SRGB_NONLINEAR
+Present modes (5): FIFO, FIFO_RELAXED, MAILBOX, IMMEDIATE, FIFO_LATEST_READY
+
+Close the window to exit.
+Window closed
+```
+
+The C++ version prints the same lines.
+
+## Build it yourself
+
+The surface hangs off the instance, next to the physical device - not under it. Create the four objects, then try to
+destroy the instance while the surface is alive, and read the message.
+
+<ObjectGraph
+	mode="build"
+	scope={['instance', 'surface', 'physical-device', 'device']}
+	caption="Click an object, then Create or Destroy. The surface needs only the instance; the device needs the physical device."
+/>
+
+## The map of this lesson
+
+<MindMap />
+
+## Underneath
+
+- `vkCreateWin32SurfaceKHR` is an instance-level call, so it travels through the loader and the enabled layers like
+  `vkCreateInstance` did. The surface it returns records the platform handles (`HINSTANCE`, `HWND`); every driver can
+  later look up the window through it, which is how one surface can be asked about several GPUs.
+- The questions of sections 4 to 7 are answered by the driver together with the OS. On Windows the windows on the
+  desktop are composed by the Desktop Window Manager; whether a queue family can present, and which formats and modes
+  are offered, is the driver's statement about its path to that compositor and to the display.
+- `VK_KHR_win32_surface` also has `vkGetPhysicalDeviceWin32PresentationSupportKHR`, which asks about presentation
+  support before any window exists. We do not need it: our window is created first.
+
+<Quiz
+	questions={[
+		{
+			q: 'Why is VkSurfaceKHR created from the instance and not from a device?',
+			options: [
+				{
+					text: 'Surfaces are older than devices in the Vulkan specification',
+					why: 'History has nothing to do with it. The reason is the order of decisions: the window exists before the GPU is chosen.',
+				},
+				{
+					text: 'So every GPU can be asked whether it presents to the window',
+					why: 'Right: the window exists before we pick a GPU, and the instance-level surface lets us ask each physical device and each queue family about it, then choose.',
+				},
+				{
+					text: 'Because a surface owns the images that the screen shows',
+					why: 'The images belong to the swapchain, which is a device object. The surface only stands for the window.',
+				},
+				{
+					text: 'A device cannot use instance extensions without a surface',
+					why: 'Instance extensions do not depend on surfaces. The surface is simply the first object of the presentation path, and it does not need a GPU yet.',
+				},
+			],
+			answer: 1,
+			ref: '#vulkan-has-no-windows',
+		},
+		{
+			q: 'You forgot VK_KHR_win32_surface in vkCreateInstance. What can you do after the instance exists?',
+			options: [
+				{
+					text: 'Enable it later with a separate call on the instance',
+					why: 'There is no such call: the extensions of an instance are fixed at vkCreateInstance.',
+				},
+				{
+					text: 'Enable it on the logical device instead',
+					why: 'It is an instance extension; a device takes only device extensions such as VK_KHR_swapchain.',
+				},
+				{
+					text: 'Nothing; create the instance again with the extension',
+					why: 'Right: instance extensions are chosen once, at creation. Without it vkCreateWin32SurfaceKHR does not exist for this instance.',
+				},
+				{
+					text: 'Call vkCreateWin32SurfaceKHR anyway, the loader adds it',
+					why: 'The loader does not enable extensions behind your back; the function of an extension you did not enable is not available.',
+				},
+			],
+			answer: 2,
+			ref: '#2-the-surface-extensions',
+		},
+		{
+			q: 'How do you find out whether a GPU can show images in your window?',
+			options: [
+				{
+					text: 'Check the GRAPHICS flag of its queue families',
+					why: 'GRAPHICS means a family can draw, not that it can present. On the course GPU the compute family 2 can present, and that is no graphics family.',
+				},
+				{
+					text: 'Ask per queue family with vkGetPhysicalDeviceSurfaceSupportKHR',
+					why: 'Right: presenting is a queue operation, so support is a property of a queue family together with one surface.',
+				},
+				{
+					text: 'Read it from VkPhysicalDeviceProperties',
+					why: 'The device properties know nothing about windows. Support depends on the surface, so it is asked with the surface in hand.',
+				},
+				{
+					text: 'Create a swapchain and see whether it fails',
+					why: 'Creating a swapchain for a surface the device does not support is invalid usage (VUID-VkSwapchainCreateInfoKHR-surface-01270), not a test. Ask first.',
+				},
+			],
+			answer: 1,
+			ref: '#4-who-can-present',
+		},
+		{
+			q: 'B8G8R8A8_SRGB and B8G8R8A8_UNORM are both offered with SRGB_NONLINEAR. What is the difference?',
+			options: [
+				{
+					text: 'SRGB is meant for HDR monitors, UNORM for ordinary ones',
+					why: 'Both are shown on an ordinary sRGB monitor; the HDR pairs on this GPU are the 10-bit and the half-float formats.',
+				},
+				{
+					text: 'UNORM images cannot be presented at all',
+					why: 'Both are presentable formats, which is why the surface lists them. They differ in how values are written.',
+				},
+				{
+					text: 'SRGB stores more bits per channel',
+					why: 'Both store 8 bits per channel. The difference is the curve applied when writing and reading.',
+				},
+				{
+					text: 'With SRGB the hardware applies the sRGB curve on write',
+					why: 'Right: shaders output linear values and the hardware encodes them to sRGB when storing; with UNORM the values are stored as written.',
+				},
+			],
+			answer: 3,
+			ref: '#6-formats-and-color-spaces',
+		},
+	]}
+/>

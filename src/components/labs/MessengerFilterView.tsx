@@ -5,10 +5,9 @@
  */
 import { useState } from 'react';
 import { LabFrame } from 'course-kit/components/lab/LabFrame.tsx';
-import { fmt } from 'course-kit/i18n.mjs';
 import { COURSE, LOG, SEVERITIES, TYPES, blockedBy, hex, maskErrors, produced, runTotals, snippet, type Masks } from '../../lib/labs/messenger-filter';
 import { vuid } from '../../lib/vuids';
-import { pick } from '../../lib/text';
+import { pick, tfmt } from '../../lib/text';
 import { TEXT } from './messenger-filter.text';
 import './messenger-filter.css';
 
@@ -71,13 +70,13 @@ export default function MessengerFilterView({ lang }: { lang: string }) {
 					<b>
 						{got} / {lines.length}
 					</b>
-					<span>{fmt(t.sample, { got, of: lines.length })}</span>
+					<span>{tfmt(lang, t.sample, { got, of: lines.length })}</span>
 				</div>
 				<div className="lab-stat">
 					<b>
 						{run.got} / {run.of}
 					</b>
-					<span>{fmt(t.whole, run)}</span>
+					<span>{tfmt(lang, t.whole, run)}</span>
 				</div>
 			</div>
 
@@ -134,7 +133,7 @@ export default function MessengerFilterView({ lang }: { lang: string }) {
 				<summary>{t.choiceTitle}</summary>
 				<p>{t.choice}</p>
 			</details>
-			<p className="lab-muted mf-source">{fmt(t.source, { n: LOG.messages.length })}</p>
+			<p className="lab-muted mf-source">{tfmt(lang, t.source, { n: LOG.messages.length })}</p>
 		</LabFrame>
 	);
 }

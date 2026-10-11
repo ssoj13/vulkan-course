@@ -70,6 +70,11 @@ describe('destruction order', () => {
 		expect(s.alive).not.toContain('command-buffer');
 		expect(s.dangling).toEqual([]);
 	});
+	test('a shader module may go as soon as its pipeline exists (createOnly parent)', () => {
+		const s = run(mk('instance'), mk('physical-device'), mk('device'), mk('shader-module'), mk('pipeline-layout'), mk('pipeline'), rm('shader-module'));
+		expect(s.alive).toContain('pipeline');
+		expect(s.dangling).toEqual([]);
+	});
 	test('a surface cannot go before its swapchain', () => {
 		const s = run(mk('instance'), mk('surface'), mk('physical-device'), mk('device'), mk('swapchain'));
 		const l = destroy(s, 'surface').log[0]!;

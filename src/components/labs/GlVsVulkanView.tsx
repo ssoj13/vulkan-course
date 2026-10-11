@@ -7,7 +7,6 @@ import { useMemo, useState } from 'react';
 import { LabFrame } from 'course-kit/components/lab/LabFrame.tsx';
 import { Scrubber } from 'course-kit/components/lab/Scrubber.tsx';
 import { useTimeline } from 'course-kit/components/lab/useTimeline.ts';
-import { fmt } from 'course-kit/i18n.mjs';
 import {
 	DEPTH_DYNAMIC,
 	MAX_DRAWS,
@@ -21,7 +20,7 @@ import {
 	type Result,
 	type Step,
 } from '../../lib/labs/gl-vs-vulkan';
-import { pick } from '../../lib/text';
+import { pick, tfmt } from '../../lib/text';
 import { TEXT } from './gl-vs-vulkan.text';
 import './gl-vs-vulkan.css';
 
@@ -30,24 +29,24 @@ type T = (typeof TEXT)['en'];
 const DYNAMIC = dynamicByVersion();
 
 /** "lit shader, blending, mesh vertices" in the reader's language. */
-function combo(t: T, d: DrawState): string {
-	return fmt(t.combo, { shader: t[`sh_${d.shader}` as const], blend: d.blend ? t.blendOn : t.blendOff, vertex: t[`vx_${d.vertex}` as const] });
+function combo(lang: string, t: T, d: DrawState): string {
+	return tfmt(lang, t.combo, { shader: t[`sh_${d.shader}` as const], blend: d.blend ? t.blendOn : t.blendOff, vertex: t[`vx_${d.vertex}` as const] });
 }
 
 /** A pipeline key ("lit|blend|mesh|depth") in words, for the pipeline list. */
-function pipeLabel(t: T, key: string): string {
+function pipeLabel(lang: string, t: T, key: string): string {
 	const [shader, blend, vertex, depth] = key.split('|') as [Draw['shader'], string, Draw['vertex'], string | undefined];
-	const base = combo(t, { shader, blend: blend === 'blend', vertex, depth: false });
+	const base = combo(lang, t, { shader, blend: blend === 'blend', vertex, depth: false });
 	return depth ? `${base}, ${t.colDepth.toLowerCase()} ${depth === 'depth' ? t.on : t.off}` : base;
 }
 
-function caption(t: T, draws: readonly Draw[], r: Result, s: Step, dynDepth: boolean): string {
-	if (s.kind === 'load') return fmt(t.capLoad, { programs: r.programs.length, pipelines: r.pipelines.length });
+function caption(lang: string, t: T, draws: readonly Draw[], r: Result, s: Step, dynDepth: boolean): string {
+	if (s.kind === 'load') return tfmt(lang, t.capLoad, { programs: r.programs.length, pipelines: r.pipelines.length });
 	if (s.kind === 'frame2') return t.capFrame2;
 	const d = draws[s.i]!;
-	const gl = fmt(s.gl.compile ? t.capGlNew : t.capGlSeen, { i: s.i + 1, name: t[`n_${d.name}` as const], combo: combo(t, d) });
+	const gl = tfmt(lang, s.gl.compile ? t.capGlNew : t.capGlSeen, { i: s.i + 1, name: t[`n_${d.name}` as const], combo: combo(lang, t, d) });
 	const bound = s.vk.calls.some((c) => c.startsWith('vkCmdBindPipeline'));
-	const vk = fmt(bound ? t.capVkBind : t.capVkKeep, { p: s.pipeline });
+	const vk = tfmt(lang, bound ? t.capVkBind : t.capVkKeep, { p: s.pipeline });
 	const dyn = dynDepth && s.i > 0 && s.vk.calls.some((c) => c.startsWith('vkCmdSetDepthTestEnable')) ? ` ${t.capVkDyn}` : '';
 	return `${gl} ${vk}${dyn}`;
 }
@@ -142,7 +141,7 @@ export default function GlVsVulkanView({ lang }: { lang: string }) {
 										</select>
 									</td>
 									<td>
-										<button type="button" className="lab-button gv-remove" onClick={() => remove(i)} disabled={draws.length <= 1} aria-label={fmt(t.remove, { i: i + 1 })} title={fmt(t.remove, { i: i + 1 })}>
+										<button type="button" className="lab-button gv-remove" onClick={() => remove(i)} disabled={draws.length <= 1} aria-label={tfmt(lang, t.remove, { i: i + 1 })} title={tfmt(lang, t.remove, { i: i + 1 })}>
 											×
 										</button>
 									</td>
@@ -157,7 +156,7 @@ export default function GlVsVulkanView({ lang }: { lang: string }) {
 					</button>
 					<label className="gv-dyn">
 						<input type="checkbox" checked={dynDepth} onChange={(e) => setDynDepth(e.currentTarget.checked)} />
-						<span>{fmt(t.dynDepth, { state: DEPTH_DYNAMIC })}</span>
+						<span>{tfmt(lang, t.dynDepth, { state: DEPTH_DYNAMIC })}</span>
 					</label>
 				</div>
 			</div>
@@ -180,14 +179,14 @@ export default function GlVsVulkanView({ lang }: { lang: string }) {
 					<ol className="gv-pipes" start={0}>
 						{r.pipelines.map((k, i) => (
 							<li key={k} className={i === s.pipeline ? 'is-now' : undefined}>
-								<code>pipelines[{i}]</code> {pipeLabel(t, k)}
+								<code>pipelines[{i}]</code> {pipeLabel(lang, t, k)}
 							</li>
 						))}
 					</ol>
 				</section>
 			</div>
 
-			<Scrubber lang={lang} tl={tl} caption={caption(t, draws, r, s, dynDepth)} />
+			<Scrubber lang={lang} tl={tl} caption={caption(lang, t, draws, r, s, dynDepth)} />
 
 			<div className="lab-stats">
 				<div className="lab-stat">
@@ -214,7 +213,7 @@ export default function GlVsVulkanView({ lang }: { lang: string }) {
 				<summary>{t.dynTitle}</summary>
 				{DYNAMIC.map(([v, names]) => (
 					<div key={v}>
-						<p className="lab-muted">{fmt(t.dynSince, { v })}</p>
+						<p className="lab-muted">{tfmt(lang, t.dynSince, { v })}</p>
 						<ul>
 							{names.map((n) => (
 								<li key={n} className={n === DEPTH_DYNAMIC ? 'is-now' : undefined}>

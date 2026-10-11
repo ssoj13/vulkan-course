@@ -1,0 +1,253 @@
+---
+title: The graphics pipeline object
+description: Every stage from vertex input to color blending baked into one VkPipeline, and the state left dynamic.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import MindMap from 'course-kit/components/MindMap.astro';
+import Quiz from 'course-kit/components/Quiz.astro';
+import Step from '../../../components/Step.astro';
+import ObjectGraph from '../../../components/ObjectGraph.astro';
+import GraphicsPipeline from '../../../components/labs/GraphicsPipeline.astro';
+
+We have two shader stages. Between them and around them sit the parts of the GPU that are not programs: the one
+that assembles triangles, the rasterizer, the blender. How are all of them configured for one draw, and why does
+Vulkan freeze the whole configuration into a single object?
+
+## Where this fits
+
+Second lesson of the pipeline module, and its center. The [shaders lesson](lesson:shaders-and-spirv) produced the
+programmable stages; this one adds everything else and creates the object:
+
+`shader stages + fixed-function state + dynamic state list + pipeline layout + attachment formats → vkCreateGraphicsPipelines → VkPipeline`
+
+A `VkPipeline` is built on the device, the shader modules and a [pipeline layout](lesson:pipeline-layout); the formats of
+the images it draws into come from [dynamic rendering](lesson:dynamic-rendering). The idea of baking state up front is
+the one from [why Vulkan exists](lesson:why-vulkan#vulkan-say-everything-up-front); here it becomes code.
+
+## The stages of a draw
+
+The [graphics pipeline](term:graphics-pipeline) is the sequence of stages one draw call goes through. In the order of
+the specification's block diagram, with the ones a shader programs in bold:
+
+1. **Vertex input** - fetch vertex attributes from vertex buffers (none for our triangle).
+2. **Input assembly** - group vertices into primitives: points, lines, triangles.
+3. ***Vertex shader*** - one invocation per vertex, outputs a clip-space position.
+4. (*Tessellation* and *geometry* shaders - optional stages, unused here.)
+5. **Rasterization** - clipping, the perspective divide, the viewport transform, back-face culling, and finding the
+   pixels each triangle covers.
+6. ***Fragment shader*** - one invocation per covered pixel (per sample with multisampling), outputs colors.
+7. **Per-fragment tests** - depth and stencil.
+8. **Color blending** - combine the fragment's color with the color already in the attachment, then write.
+
+The stages that are not shaders are called [fixed-function](term:fixed-function): hardware with settings rather than a
+program. A Houdini analogy: the shaders are the wrangles you write, and the fixed-function stages are built-in SOPs with
+parameter panels. The pipeline object is the whole network with every parameter set - you only feed it vertices.
+
+## Why bake it all
+
+In OpenGL every one of these settings was global state, changed by separate calls at any time. On real hardware some
+of that state is compiled *into* the shader code (the format of the output, the vertex layout, sometimes blending), so
+a GL driver had to notice state changes at draw time and sometimes recompile a shader on the spot: a stutter nobody
+asked for. The [OpenGL state vs Vulkan pipelines](lab:gl-vs-vulkan) interactive shows exactly that.
+
+A [`VkPipeline`](term:vk-pipeline) turns this around: you state everything at creation, the driver compiles once for
+exactly that state, and a draw only *selects* a pipeline (`vkCmdBindPipeline`). The cost moves to load time, where it
+can be planned. The price is that a different state means a different pipeline - which is where dynamic state helps.
+
+## Explore the stages
+
+Walk through the stages, see which member of `VkGraphicsPipelineCreateInfo` configures each one, and which state may be
+dynamic in Vulkan 1.4 ([full page](lab:graphics-pipeline)):
+
+<GraphicsPipeline />
+
+## 1. The fixed-function state
+
+<Step file="08_pipeline" region="fixed-function" />
+
+Our triangle needs very little, and every line has a reason:
+
+- **Vertex input: empty.** No vertex buffers; the shader makes up its corners from the vertex index.
+- **Input assembly: `TRIANGLE_LIST`.** Every three vertices form one triangle; three vertices, one triangle.
+- **Viewport state: one viewport, one scissor.** Only their *count* is baked; the rectangles themselves are dynamic
+  (below).
+- **Rasterization:** filled polygons, back faces culled, and **clockwise is the front face**. That matches the shader:
+  with Vulkan's +Y-down clip space our corners run clockwise on screen. Declare `COUNTER_CLOCKWISE` instead and the
+  triangle counts as a back face and is culled: an empty window and no error, a classic first-day puzzle. The line width
+  must be 1.0 unless the `wideLines` feature is enabled.
+- **Multisampling: one sample.** MSAA comes with the images module.
+- **Color blending: off, write all four channels.** One entry per color attachment; the fragment color replaces what is
+  there.
+
+Two state blocks are simply left out (null): depth/stencil, because the rendering has no depth attachment, and
+tessellation, because there is no tessellation shader.
+
+## 2. Dynamic state
+
+<Step file="08_pipeline" region="dynamic-state" />
+
+[Dynamic state](term:dynamic-state) is state that is *declared* at pipeline creation as "not baked" and *set* while
+recording with a `vkCmdSet*` command. We make the viewport and scissor dynamic, so one pipeline works for any window
+size: when the swapchain is recreated for a new size (module 7), the pipeline stays.
+
+How much can be dynamic? The core list, generated for this course from the Vulkan registry: 9 states from Vulkan 1.0
+(viewport, scissor, line width, depth bias, blend constants, depth bounds, three stencil values), 15 promoted in 1.3
+(cull mode, front face, topology, depth test and write, stencil ops and more) and one in 1.4 (line stipple). Shaders
+are never on it: in core Vulkan another shader is always another pipeline.
+
+The promise has a counterpart: a dynamic state must be set before the draw that uses it. Draw without
+`vkCmdSetViewport` and the validation layer reports `VUID-vkCmdDraw-None-07831`.
+
+## 3. Create the pipeline
+
+<Step file="08_pipeline" region="create-pipeline" />
+
+`VkGraphicsPipelineCreateInfo` collects everything: the stages, each state block, the dynamic state list and the
+layout. Two members of the old Vulkan 1.0 style stay empty: `renderPass` is null, because the formats of the images we
+draw into come through the `pNext` chain instead (`VkPipelineRenderingCreateInfo`, see
+[dynamic rendering](lesson:dynamic-rendering#1-the-pipeline-states-formats-only)).
+
+`vkCreateGraphicsPipelines` creates several pipelines in one call, which gives a driver the chance to compile them
+together, and can take a pipeline cache; we pass one create info and no cache.
+
+Right after creation the shader module is destroyed, and this is legal: the specification says a shader module can be
+destroyed while pipelines created using its shaders are still in use. The pipeline keeps its own compiled code.
+
+## What the program prints
+
+The new lines of step 08 (the rest is the [swapchain output](lesson:swapchain#what-the-program-prints)):
+
+```text
+SPIR-V: 1304 bytes (triangle.spv)
+Shader module created: entry points vertexMain, fragmentMain
+Pipeline layout created: 0 descriptor set layouts, 0 push constant ranges
+Graphics pipeline created for color format B8G8R8A8_SRGB (dynamic rendering, no render pass)
+Shader module destroyed
+
+Close the window to exit.
+Window closed
+```
+
+## Build it yourself
+
+A pipeline has three parents here: the device, a pipeline layout and a shader module. Try creating it before the
+module, then create everything and destroy the shader module while the pipeline is alive - the way step 08 does.
+
+<ObjectGraph
+	mode="build"
+	scope={['instance', 'physical-device', 'device', 'shader-module', 'pipeline-layout', 'pipeline']}
+	caption="The shader module is needed only while the pipeline is created; the layout and the device must outlive the pipeline's use."
+/>
+
+## The map of this lesson
+
+<MindMap />
+
+## Underneath
+
+- `vkCreateGraphicsPipelines` is where the driver's shader compiler runs: SPIR-V of every stage plus the state that
+  affects code generation (attachment formats, vertex layout, sample count, and on many GPUs parts of blending) become
+  machine code. That is why creation takes milliseconds and draws do not.
+- Fixed-function state that the hardware keeps in registers (the viewport is the typical example) costs little to make
+  dynamic: it becomes a state write recorded in the command buffer. State that is compiled into shader code is the expensive
+  kind, which is why not everything has always been allowed to be dynamic.
+- `vkCmdBindPipeline` records a reference to the prebuilt state; the command processor loads it when the draw comes.
+  Switching pipelines is cheap compared to creating one, but not free, which is why renderers sort draws by pipeline.
+
+<Quiz
+	questions={[
+		{
+			q: 'Our triangle is clockwise on screen. What happens if the pipeline declares COUNTER_CLOCKWISE as the front face, with back-face culling on?',
+			options: [
+				{
+					text: 'The validation layer reports a front-face winding mismatch',
+					why: 'Winding is not validated: both orders are legal. The triangle is simply classified as a back face.',
+				},
+				{
+					text: 'The triangle is drawn with its colors reversed',
+					why: 'Facing does not change colors; it decides whether the triangle is culled at all.',
+				},
+				{
+					text: 'The triangle is culled and the window stays empty',
+					why: 'Right: with that setting our clockwise triangle counts as a back face, and CULL_MODE_BACK throws it away without any error.',
+				},
+				{
+					text: 'The vertex order is flipped and it draws anyway',
+					why: 'The rasterizer does not reorder vertices. It decides facing from the winding it sees and culls the back faces.',
+				},
+			],
+			answer: 2,
+			ref: '#1-the-fixed-function-state',
+		},
+		{
+			q: 'Why are the viewport and scissor dynamic in our pipeline?',
+			options: [
+				{
+					text: 'So one pipeline works for any window size',
+					why: 'Right: their values are set while recording, so a new swapchain size (module 7) needs no new pipeline.',
+				},
+				{
+					text: 'Because Vulkan 1.4 forbids baking them',
+					why: 'They can be baked: set pViewports and pScissors in the viewport state and leave them out of the dynamic list.',
+				},
+				{
+					text: 'Dynamic state makes the draw itself faster',
+					why: 'Dynamic state is about flexibility, not speed; a baked viewport is not slower to draw with.',
+				},
+				{
+					text: 'So the shaders can change the viewport',
+					why: 'Shaders do not set the viewport. Dynamic state is set by vkCmdSet* commands recorded in the command buffer.',
+				},
+			],
+			answer: 0,
+			ref: '#2-dynamic-state',
+		},
+		{
+			q: 'Step 08 destroys the shader module right after vkCreateGraphicsPipelines. Is the pipeline still usable?',
+			options: [
+				{
+					text: 'No, it must be recreated before every draw',
+					why: 'A pipeline is created once and reused for every draw; nothing about the module changes that.',
+				},
+				{
+					text: 'Only until the end of the frame',
+					why: 'There is no frame limit: the pipeline holds its own compiled code for its whole life.',
+				},
+				{
+					text: 'Yes; the module is needed only during creation',
+					why: 'Right: the specification allows destroying a shader module while pipelines created from it are still in use.',
+				},
+				{
+					text: 'No: the pipeline now points at freed shader code',
+					why: 'The pipeline does not refer to the module after creation; it keeps the machine code the driver compiled.',
+				},
+			],
+			answer: 2,
+			ref: '#3-create-the-pipeline',
+		},
+		{
+			q: 'Why does Vulkan bake so much state into a pipeline instead of letting you set it per draw like OpenGL?',
+			options: [
+				{
+					text: 'To make pipelines smaller in memory',
+					why: 'Memory is not the reason. The point is when the shaders are compiled.',
+				},
+				{
+					text: 'Some state is compiled into shader code; baking avoids draw-time recompiles',
+					why: 'Right: with all state known at creation the driver compiles once, and a draw only selects a finished pipeline.',
+				},
+				{
+					text: 'Because GPUs cannot change state between draws',
+					why: 'GPUs change state between draws all the time; dynamic state is exactly that. The issue is state that the shader code depends on.',
+				},
+				{
+					text: 'So that the validation layer has less to check',
+					why: 'Validation is not the reason, and it checks pipelines thoroughly anyway. The reason is predictable compilation.',
+				},
+			],
+			answer: 1,
+			ref: '#why-bake-it-all',
+		},
+	]}
+/>

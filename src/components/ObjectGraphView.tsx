@@ -13,9 +13,9 @@ import 'course-kit/components/graph/graph.css';
 import { Frame } from 'course-kit/components/graph/Frame.tsx';
 import { heat, useFlowNodes } from 'course-kit/components/graph/flow.ts';
 import { FIT_ZOOM, alignTop } from 'course-kit/lib/fit.ts';
-import { fmt } from 'course-kit/i18n.mjs';
 import './objects.css';
 import { EMPTY, STAGES, blockers, create, destroy, labelOf, noteOf, obj, type LogLine, type SimState } from '../lib/objects';
+import { tfmt } from '../lib/text';
 import { HOW_KEY, SIM_KEY, STAGE_KEY, courseText } from '../i18n';
 
 export interface ObjNode {
@@ -69,7 +69,7 @@ export default function ObjectGraphView({ lang, defaultLang, mode, nodes, edges,
 	const how = (id: string) => t[HOW_KEY[obj(id).how]];
 	const stage = (id: string) => t[STAGE_KEY[obj(id).stage]];
 	/** A console line in the reader's language: API calls and validation reports stay verbatim. */
-	const line = (l: LogLine) => ('text' in l ? l.text : fmt(t[SIM_KEY[l.msg]], l.vars));
+	const line = (l: LogLine) => ('text' in l ? l.text : tfmt(lang, t[SIM_KEY[l.msg]], l.vars));
 	const [sel, setSel] = useState<string | null>(mode === 'build' ? 'instance' : null);
 	const [state, setState] = useState<SimState>(EMPTY);
 	const [log, setLog] = useState<LogLine[]>([]);
@@ -155,9 +155,9 @@ export default function ObjectGraphView({ lang, defaultLang, mode, nodes, edges,
 						<p>{noteOf(o, lang, defaultLang)}</p>
 						<p className="ck-muted">
 							<code>{o.call}</code>
-							{o.destroy ? <> · {fmt(t.releasedWith, { call: o.destroy })}</> : null}
+							{o.destroy ? <> · {tfmt(lang, t.releasedWith, { call: o.destroy })}</> : null}
 							{o.parents.length > 0 && (
-								<> · {fmt(t.madeFrom, { parents: o.parents.map((p) => labelOf(obj(p.id)) + (p.optional ? ` ${t.optional}` : '')).join(', ') })}</>
+								<> · {tfmt(lang, t.madeFrom, { parents: o.parents.map((p) => labelOf(obj(p.id)) + (p.optional ? ` ${t.optional}` : '')).join(', ') })}</>
 							)}
 							{o.term && termHref[o.term] ? (
 								<>
@@ -170,7 +170,7 @@ export default function ObjectGraphView({ lang, defaultLang, mode, nodes, edges,
 							<div className="lab-row vk-actions">
 								{o.id === 'instance' && !state.alive.includes('instance') && (
 									<label className="vk-check">
-										<input type="checkbox" checked={debugUtils} onChange={(e) => setDebugUtils(e.target.checked)} /> {fmt(t.enableExt, { ext: DEBUG_UTILS })}
+										<input type="checkbox" checked={debugUtils} onChange={(e) => setDebugUtils(e.target.checked)} /> {tfmt(lang, t.enableExt, { ext: DEBUG_UTILS })}
 									</label>
 								)}
 								<button type="button" className="lab-button is-primary" onClick={() => apply(create(state, o.id, debugUtils ? [DEBUG_UTILS] : []))}>
@@ -190,7 +190,7 @@ export default function ObjectGraphView({ lang, defaultLang, mode, nodes, edges,
 			{mode === 'build' && (
 				<div className="vk-console">
 					<div className="lab-row vk-console-head">
-						<span>{fmt(t.progress, { n: created, total: ids.length, errors })}</span>
+						<span>{tfmt(lang, t.progress, { n: created, total: ids.length, errors })}</span>
 						<button type="button" className="lab-button" onClick={restart}>
 							{t.startOver}
 						</button>

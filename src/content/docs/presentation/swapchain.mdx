@@ -1,0 +1,285 @@
+---
+title: The swapchain and present modes
+description: 'A ring of images owned by the presentation engine: format, present mode, size and image count.'
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import MindMap from 'course-kit/components/MindMap.astro';
+import Quiz from 'course-kit/components/Quiz.astro';
+import Step from '../../../components/Step.astro';
+import ObjectGraph from '../../../components/ObjectGraph.astro';
+
+The surface is the window; now we need images that the screen can actually show. Who owns them, how many are there,
+and in which order do they reach the display? The answer is the **swapchain** (`VkSwapchainKHR`), and this lesson
+creates one, choosing every setting on purpose.
+
+## Where this fits
+
+Second lesson of the presentation module. The [previous lesson](lesson:window-and-surface) made a surface and asked
+what it allows; this one turns those answers into objects:
+
+`VkSurfaceKHR + VkDevice → VkSwapchainKHR → VkImage × 3 (owned by the swapchain)`
+
+The swapchain is built on **two** parents, which is new: the **surface** (where the images are shown) and the **logical
+device** (whose GPU memory holds them). It is also our first **device extension**, `VK_KHR_swapchain`. Next, the
+[image views lesson](lesson:image-views) makes its images usable for rendering, and the
+[first triangle](lesson:first-triangle) acquires and presents them every frame.
+
+## A ring of images
+
+Picture a playback system for a render: frames are written into a fixed set of buffers, and the player shows them
+one after another, in step with the monitor. While one buffer is on screen, the next one is being filled. Nobody
+allocates a new buffer per frame; the same few are reused in a circle.
+
+A [swapchain](term:vk-swapchain) is exactly that ring. Its images belong to the
+[presentation engine](term:presentation-engine) - the OS compositor together with the display driver - and the
+application borrows them one at a time:
+
+1. **acquire**: "give me an image I may draw into" (`vkAcquireNextImageKHR`) returns an index into the ring;
+2. **render** into that image;
+3. **present**: "show this one" (`vkQueuePresentKHR`) hands it back.
+
+The hierarchy is surface → swapchain → [swapchain images](term:swapchain-image). The images are real `VkImage`
+objects, but the swapchain creates and destroys them; we only receive their handles. This lesson builds the ring; the
+acquire-render-present loop comes in [the first triangle](lesson:first-triangle).
+
+## 1. Check for VK_KHR_swapchain
+
+<Step file="07_swapchain" region="swapchain-support" />
+
+A device extension must be supported by the physical device before we can enable it. A GPU that can present to a
+surface practically always has `VK_KHR_swapchain`, but "practically" is not a check: enabling an extension the
+device does not list makes `vkCreateDevice` fail with `VK_ERROR_EXTENSION_NOT_PRESENT`. So the GPU choice of steps 03 and
+06 gets one more condition.
+
+## 2. Enable it on the device
+
+<Step file="07_swapchain" region="create-device" />
+
+This is [step 05](lesson:logical-device)'s device plus one name in `ppEnabledExtensionNames`. The swapchain functions
+(`vkCreateSwapchainKHR`, `vkGetSwapchainImagesKHR`, `vkAcquireNextImageKHR`, `vkQueuePresentKHR`) are device-level
+functions that exist only on a device which enabled the extension. ash keeps them in their own function table
+(`swapchain::Device`); Vulkan-Hpp's `vk::raii` objects load them for you.
+
+Instance extensions (surface) and device extensions (swapchain) are split along a clear line: the surface is about the
+window and exists before a GPU is chosen; the swapchain is about images in one GPU's memory.
+
+## 3. Pick a format
+
+<Step file="07_swapchain" region="choose-format" />
+
+From the seven pairs of the previous lesson we want `B8G8R8A8_SRGB + SRGB_NONLINEAR`. The reason is linear light:
+shaders compute in linear values, and blending and filtering are correct only in linear. With an `_SRGB` format the
+hardware applies the sRGB curve when it writes a pixel, so the shader never has to. If the preferred pair is
+missing, the first pair the surface reports is still a valid choice; a swapchain format must be one of the reported
+pairs (`VUID-VkSwapchainCreateInfoKHR-imageFormat-01273`).
+
+The first triangle will show the effect in numbers: the clear color `0.02, 0.02, 0.03` (linear) arrives on screen as
+`39, 39, 48` out of 255.
+
+## 4. Pick a present mode
+
+<Step file="07_swapchain" region="choose-present-mode" />
+
+Every monitor refreshes at a fixed rate, and between two refreshes there is a short pause, the **vertical blank**
+(vblank). If the image changes in the middle of a refresh, the top of the screen shows the old frame and the bottom the
+new one: **tearing**. Present modes are the possible rules for when a new image may replace the old one:
+
+| Mode | When the new image appears | Tearing | If frames come faster than the display |
+|---|---|---|---|
+| `FIFO` | at the next vblank, in order | never | the queue fills, and acquiring waits: classic vsync |
+| `FIFO_RELAXED` | at the next vblank, or at once if it is late | when late | like FIFO |
+| `MAILBOX` | at the next vblank | never | a newer image replaces the waiting one |
+| `IMMEDIATE` | at once | yes | every image goes on screen, possibly mid-refresh |
+| `FIFO_LATEST_READY` | at the next vblank, the newest ready one | never | older ready images are skipped (needs a feature) |
+
+`FIFO` is the only mode every Vulkan implementation must support, so it is the fallback. We take `MAILBOX` when it
+exists: no tearing and the lowest latency, because the image shown at each vblank is the newest one. The price is
+work: with MAILBOX a fast GPU renders frames that are never shown, while FIFO lets it rest. A laptop on battery is better
+off with FIFO.
+
+## 5. Pick the size
+
+<Step file="07_swapchain" region="choose-extent" />
+
+On Windows the swapchain images must be exactly as large as the window's client area, which the surface reports as
+`current_extent` (800x600). Only when the surface says `0xFFFFFFFF` (Wayland) is the size ours to choose, within the
+allowed range. When the window is resized, `current_extent` changes and the swapchain no longer fits; that is why
+our window cannot be resized until module 7 teaches recreating the swapchain.
+
+## 6. Pick the image count
+
+<Step file="07_swapchain" region="choose-image-count" />
+
+`minImageCount` (2 here) is the number of images the presentation engine needs to work in this mode. Asking for one
+more gives the application an image to render into while the others are on screen or waiting for their vblank: three
+images, the classic triple buffering. The maximum (8 here) caps the request; `0` would mean no cap.
+
+## 7. Create the swapchain
+
+<Step file="07_swapchain" region="create-swapchain" />
+
+The fields we have not met yet:
+
+- **`imageUsage = COLOR_ATTACHMENT`**: we will render into the images. Any usage we ask for must be among the
+  surface's `supportedUsageFlags` (`VUID-VkSwapchainCreateInfoKHR-presentMode-01427`).
+- **`imageSharingMode = EXCLUSIVE`**: one queue family at a time uses the images. Our graphics family is also the
+  present family, so nothing has to be shared.
+- **`preTransform = current_transform`**: no rotation by the presentation engine (`IDENTITY` on a desktop).
+- **`compositeAlpha = OPAQUE`**: the window ignores alpha when it is composed with the desktop. We check that the
+  surface supports it, since the value must be one the surface reports (`VUID-VkSwapchainCreateInfoKHR-compositeAlpha-01280`).
+- **`clipped = true`**: the implementation may skip rendering for pixels hidden behind other windows; we never read
+  them back, so we do not care.
+- **`imageArrayLayers = 1`**: one layer; 2 would be for stereo displays.
+
+Then `vkGetSwapchainImagesKHR`. The request was a *minimum*: the implementation creates at least `minImageCount`
+images, or fails, and may create more. Always ask how many there are. On the course GPU the answer is exactly 3.
+
+## What the program prints
+
+```text
+Window: 800x600 pixels
+Found 1 GPU(s)
+GPU 0: NVIDIA GeForce RTX 3080 Ti
+
+Picked: NVIDIA GeForce RTX 3080 Ti
+Graphics + present family: 0
+VkDevice created with VK_KHR_swapchain
+
+Surface formats: 7, chosen B8G8R8A8_SRGB + SRGB_NONLINEAR
+Present modes: FIFO, FIFO_RELAXED, MAILBOX, IMMEDIATE, FIFO_LATEST_READY; chosen MAILBOX
+Extent: 800x600
+Image count: 3 (min 2 + 1, max 8)
+Swapchain created: 3 images
+Image views created: 3
+
+Close the window to exit.
+Window closed
+```
+
+The image views are the subject of [the next lesson](lesson:image-views). The window still shows nothing: we have
+images, but nobody draws into them or presents them yet.
+
+## Build it yourself
+
+The swapchain is the first object with two parents. Build the chain down to the swapchain images, then try two
+wrong moves: destroy the surface while the swapchain lives, and destroy the device first.
+
+<ObjectGraph
+	mode="build"
+	scope={['instance', 'surface', 'physical-device', 'device', 'swapchain', 'swapchain-image']}
+	caption="The swapchain needs both the device and the surface. Its images are retrieved, not created: destroying the swapchain releases them."
+/>
+
+## The map of this lesson
+
+<MindMap />
+
+## Underneath
+
+- The swapchain images are allocated by the driver, in GPU memory, in a form the presentation engine can read. On
+  Windows the compositor (the Desktop Window Manager) takes the presented image and composes it with the rest of the
+  desktop at the display's refresh rate; in exclusive full-screen mode an image can go to the display without composition
+  (`VK_EXT_full_screen_exclusive` controls that on Windows).
+- The FIFO queue of a present mode lives in the presentation engine, not in your program. When it is full, the
+  application soon finds no free image to acquire and waits: this is how vsync slows the application down to the display
+  rate without a single timer in our code.
+- Presenting does not copy pixels on the CPU. `vkQueuePresentKHR` is a queue operation: it is ordered after our
+  rendering on the GPU queue, and the image changes hands inside the driver and the OS.
+
+<Quiz
+	questions={[
+		{
+			q: 'Who owns the images of a swapchain?',
+			options: [
+				{
+					text: 'The application, which created each of them earlier with vkCreateImage',
+					why: 'Swapchain images are never created with vkCreateImage. The swapchain creates them, and destroying one yourself is invalid usage (VUID-vkDestroyImage-image-04882).',
+				},
+				{
+					text: 'The swapchain; the application borrows them via acquire and present',
+					why: 'Right: the presentation engine owns the ring; acquire lends an image to the application and present returns it.',
+				},
+				{
+					text: 'The surface, which hands them to the swapchain',
+					why: 'The surface owns no images; it only stands for the window. The images are made by the swapchain on the device.',
+				},
+				{
+					text: 'The window library (winit or GLFW)',
+					why: 'The window libraries only create the OS window and the surface. Vulkan images are made by the Vulkan swapchain.',
+				},
+			],
+			answer: 1,
+			ref: '#a-ring-of-images',
+		},
+		{
+			q: 'Which present mode can you rely on everywhere?',
+			options: [
+				{
+					text: 'MAILBOX, because it never tears',
+					why: 'MAILBOX is common on desktops but optional. Only one mode is guaranteed.',
+				},
+				{
+					text: 'IMMEDIATE, because it waits for nothing',
+					why: 'IMMEDIATE is optional too; a platform may simply not offer it.',
+				},
+				{
+					text: 'FIFO',
+					why: 'Right: FIFO is the only present mode every implementation must support, which is why it is the fallback.',
+				},
+				{
+					text: 'FIFO_LATEST_READY',
+					why: 'It comes from an extension and is usable only with its feature enabled (VUID-VkSwapchainCreateInfoKHR-presentModeFifoLatestReady-10161).',
+				},
+			],
+			answer: 2,
+			ref: '#4-pick-a-present-mode',
+		},
+		{
+			q: 'You asked for 3 images. How many does the swapchain have?',
+			options: [
+				{
+					text: 'Exactly 3: Vulkan does what it is told',
+					why: 'The count you pass is a minimum. The implementation may create more, so the program must ask.',
+				},
+				{
+					text: 'At least 3; vkGetSwapchainImagesKHR says how many',
+					why: 'Right: the implementation creates at least minImageCount images (or fails) and may create more; on the course GPU it made exactly 3.',
+				},
+				{
+					text: 'Always the minImageCount of the surface, which is 2 here',
+					why: 'The surface minimum is a lower bound for the request, not the result. We asked for 3 and got 3.',
+				},
+				{
+					text: 'Always maxImageCount of the surface, here 8',
+					why: 'The surface maximum only caps the request; nothing creates 8 images unless you ask for them.',
+				},
+			],
+			answer: 1,
+			ref: '#7-create-the-swapchain',
+		},
+		{
+			q: 'Why is our window not resizable yet?',
+			options: [
+				{
+					text: 'winit and GLFW windows cannot be resized while Vulkan uses them',
+					why: 'Both libraries resize fine. The limit is on the Vulkan side: the swapchain size is fixed.',
+				},
+				{
+					text: 'Vulkan forbids resizing a window that has a surface',
+					why: 'The OS window can change at any time; the surface follows it. What no longer fits is the swapchain.',
+				},
+				{
+					text: 'A new size needs a new swapchain, and that is module 7',
+					why: 'Right: on Windows the images must match the window, so a resize makes the swapchain out of date; recreating it is taught with synchronization.',
+				},
+				{
+					text: 'Resizing would change the surface format',
+					why: 'The format does not depend on the size. The extent does, and the extent is baked into the swapchain.',
+				},
+			],
+			answer: 2,
+			ref: '#5-pick-the-size',
+		},
+	]}
+/>

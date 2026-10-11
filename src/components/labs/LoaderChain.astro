@@ -5,10 +5,9 @@
  */
 import LoaderChainView from './LoaderChainView.tsx';
 import { CALLS, activeLayers, trace } from '../../lib/labs/loader-chain';
-import { pick } from '../../lib/text';
+import { pick, tfmt } from '../../lib/text';
 import { TEXT } from './loader-chain.text';
 import { courseIn, langOf } from 'course-kit/lib/course.ts';
-import { fmt } from 'course-kit/i18n.mjs';
 
 const v = courseIn(langOf(Astro.url.pathname));
 const t = pick(TEXT, v.lang, 'loader-chain');
@@ -16,7 +15,7 @@ const env = new Map<string, string>();
 const chain = activeLayers({ env, validation: true }).map((l) => l.name).join(', ');
 const paths = CALLS.map((call) => {
 	const tr = trace({ call, env, validation: true, second: false, gpu: 'nvidia', via: 'gdpa' });
-	return tr.hops.map((h) => fmt(t[h.key], h.vars));
+	return tr.hops.map((h) => tfmt(v.lang, t[h.key], h.vars));
 });
 ---
 
@@ -26,7 +25,7 @@ const paths = CALLS.map((call) => {
 	</div>
 	<details class="vk-lab-text">
 		<summary>{t.asText}</summary>
-		<p>{fmt(t.fbRule, { chain })}</p>
+		<p>{tfmt(v.lang, t.fbRule, { chain })}</p>
 		{
 			CALLS.map((call, i) => (
 				<>

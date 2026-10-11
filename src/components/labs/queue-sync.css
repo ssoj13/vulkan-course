@@ -23,13 +23,34 @@
 	font-size: var(--sl-text-sm);
 }
 
-/* Chart */
+/* Chart: scrolls sideways when the lab is narrower than the timeline; .qs-chart-more fades the cut edge. */
+.qs-chart-wrap {
+	position: relative;
+	margin-block: 0.75rem;
+}
 .qs-chart {
 	overflow-x: auto;
-	margin-block: 0.75rem;
 	border: 1px solid var(--lab-border);
 	border-radius: 0.45rem;
 	background: var(--lab-surface-2);
+}
+.qs-chart:focus-visible {
+	outline: 2px solid var(--lab-accent);
+	outline-offset: 2px;
+}
+.qs-chart-more {
+	position: absolute;
+	inset-block: 1px;
+	inset-inline-end: 1px;
+	display: flex;
+	align-items: flex-end;
+	padding: 0 0.5rem 0.35rem 3rem;
+	border-radius: 0 0.45rem 0.45rem 0;
+	background: linear-gradient(to right, transparent, var(--lab-surface-2) 65%);
+	color: var(--sl-color-white);
+	font-size: var(--sl-text-xs);
+	font-weight: 600;
+	pointer-events: none;
 }
 .qs-chart svg {
 	display: block;
@@ -90,9 +111,11 @@
 	opacity: 0.7;
 }
 .qs-seg.is-future,
-.qs-name.is-future,
 .qs-link.is-future {
-	opacity: 0.25;
+	opacity: 0.3;
+}
+.qs-name.is-future {
+	fill: var(--lab-text-muted);
 }
 .qs-seg.is-hot {
 	stroke: var(--lab-err);
@@ -247,9 +270,15 @@
 }
 .qs-inline {
 	display: inline-flex;
+	flex: none;
 	align-items: center;
 	gap: 0.3rem;
 	font-size: var(--sl-text-sm);
+}
+.qs-program code {
+	flex: none;
+	white-space: nowrap;
+	overflow-wrap: normal;
 }
 .lab-card .qs-inline input[type='number'] {
 	width: 4rem;

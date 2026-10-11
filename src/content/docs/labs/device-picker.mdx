@@ -23,8 +23,11 @@ Things to try:
 
 - unplug the RTX 3080 Ti: the integrated GPU wins, because it is the next eligible device;
 - turn off "prefer discrete": now the first eligible device in enumeration order wins, even though it is likely slower;
-- lower the required version to 1.3 and require `pushDescriptor`: the software rasterizer fails on a feature that
-  cannot even be asked, since its 1.4 struct may not be chained on a 1.3 device;
+- lower the required version to 1.3 and require `pushDescriptor`: the 1.3 software rasterizer is rejected, because
+  the rule asks through `VkPhysicalDeviceVulkan14Features`, and the spec ("Valid Usage for Newer Core Versions")
+  forbids using 1.4 functionality on a device whose `apiVersion` is 1.3. On such a device push descriptors come from
+  the extension `VK_KHR_push_descriptor`, which has no feature struct at all: a real picker would check that the
+  device lists the extension (and read `maxPushDescriptors` from `VkPhysicalDevicePushDescriptorPropertiesKHR`);
 - search the limits for `alignment` and compare the uniform and storage buffer offset rules.
 
 The rules are explained in [the physical devices lesson](lesson:physical-devices); what comes next is

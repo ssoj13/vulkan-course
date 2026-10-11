@@ -22,7 +22,7 @@ const steps = flow(['VK_BUFFER_USAGE_VERTEX_BUFFER_BIT', 'VK_BUFFER_USAGE_TRANSF
 	<details class="vk-lab-text">
 		<summary>{t.asText}</summary>
 		<ol>
-			{steps.map((s) => <li>{stepText(t, s)}</li>)}
+			{steps.map((s) => <li>{stepText(v.lang, t, s)}</li>)}
 		</ol>
 	</details>
 </figure>

@@ -6,10 +6,9 @@
  */
 import GlVsVulkanView from './GlVsVulkanView.tsx';
 import { DEPTH_DYNAMIC, DYNAMIC_STATES, SCENE, dynamicByVersion, simulate } from '../../lib/labs/gl-vs-vulkan';
-import { pick } from '../../lib/text';
+import { pick, tfmt } from '../../lib/text';
 import { TEXT } from './gl-vs-vulkan.text';
 import { courseIn, langOf } from 'course-kit/lib/course.ts';
-import { fmt } from 'course-kit/i18n.mjs';
 
 // The lab's depth toggle names a dynamic state; it must be core, or the lab would teach something false.
 if (!DYNAMIC_STATES.some((s) => s.name === DEPTH_DYNAMIC)) throw new Error(`gl-vs-vulkan: ${DEPTH_DYNAMIC} is not in dynamic-states.json`);
@@ -25,15 +24,15 @@ const r = simulate(SCENE, true);
 	</div>
 	<details class="vk-lab-text">
 		<summary>{t.asText}</summary>
-		<p>{fmt(t.fbGl, { programs: r.programs.length, n: r.glFrameCompiles })}</p>
-		<p>{fmt(t.fbVk, { pipelines: r.pipelines.length })}</p>
+		<p>{tfmt(v.lang, t.fbGl, { programs: r.programs.length, n: r.glFrameCompiles })}</p>
+		<p>{tfmt(v.lang, t.fbVk, { pipelines: r.pipelines.length })}</p>
 		<p>{t.model}</p>
 		<p>{t.dynTitle}:</p>
 		<ul>
 			{
 				dynamicByVersion().map(([ver, names]) => (
 					<li>
-						{fmt(t.dynSince, { v: ver })}: <code>{names.join(', ')}</code>
+						{tfmt(v.lang, t.dynSince, { v: ver })}: <code>{names.join(', ')}</code>
 					</li>
 				))
 			}

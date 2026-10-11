@@ -144,8 +144,15 @@
 	font-size: var(--sl-text-sm);
 	color: var(--lab-text-muted);
 }
+/* Identifiers (Id in the view) break only at the <wbr> after "_" and before ".", never inside a word. */
+.lc-id {
+	overflow-wrap: normal;
+	word-break: normal;
+}
+/* A container, so the table switches to cards by the width the lab actually has (lesson column or full page). */
 .lc-table-wrap {
 	overflow-x: auto;
+	container-type: inline-size;
 }
 .lc-env table {
 	width: 100%;
@@ -169,6 +176,58 @@
 .lc-env tr.is-on td:last-child {
 	color: var(--lab-ok);
 	font-weight: 600;
+}
+/* A variable and its value field wrap as two pieces when the cell is narrow, instead of overlapping. */
+.lc-var {
+	flex-wrap: wrap;
+}
+/*
+ * Narrow: one card per layer, the layer name as its title and every other cell as "column: value" (the header row is
+ * kept for screen readers only; the cells carry their column name in data-label).
+ */
+@container (max-width: 36rem) {
+	.lc-env table,
+	.lc-env tbody,
+	.lc-env tr,
+	.lc-env td {
+		display: block;
+	}
+	.lc-env thead {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		overflow: hidden;
+		clip-path: inset(50%);
+		white-space: nowrap;
+	}
+	.lc-env tr {
+		border: 1px solid var(--lab-border);
+		border-radius: 0.45rem;
+		padding: 0.35rem 0.6rem;
+		margin-top: 0.5rem;
+	}
+	.lc-env tr.is-on {
+		border-inline-start: 4px solid var(--lab-ok);
+	}
+	.lc-env td {
+		border: 0;
+		padding: 0.15rem 0;
+	}
+	.lc-env td:first-child {
+		font-size: var(--sl-text-sm);
+		font-weight: 600;
+		padding-bottom: 0.3rem;
+	}
+	.lc-env td[data-label] {
+		display: grid;
+		grid-template-columns: minmax(0, 7.5rem) minmax(0, 1fr);
+		gap: 0.6rem;
+		align-items: baseline;
+	}
+	.lc-env td[data-label]::before {
+		content: attr(data-label);
+		color: var(--lab-text-muted);
+	}
 }
 .lc-simplified {
 	margin-bottom: 0;

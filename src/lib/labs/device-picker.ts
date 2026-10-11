@@ -290,6 +290,11 @@ export interface LimitRow {
 	unit?: Unit;
 	/** Byte size in binary units when it reads better (`49152` -> `48 KiB`). */
 	size?: string;
+	/**
+	 * The number the unit agrees with: the value itself, or the last component of a vector (a unit after a list of
+	 * numbers takes the plural form of the last one: "1024, 1024, 64 вызова").
+	 */
+	n?: number;
 }
 
 const explainedUnit = new Map(EXPLAINED.map((e) => [e.name, e.unit]));
@@ -307,7 +312,8 @@ export function limitRows(query: string, onlyExplained = false): LimitRow[] {
 			const v = LIMITS[name]!;
 			const unit = explainedUnit.get(name);
 			const size = unit === 'bytes' && typeof v === 'number' ? binarySize(v) : null;
-			return { name, value: showValue(v), ...(unit ? { unit } : {}), ...(size ? { size } : {}) };
+			const n = Array.isArray(v) ? v.at(-1) : v;
+			return { name, value: showValue(v), ...(unit ? { unit } : {}), ...(size ? { size } : {}), ...(typeof n === 'number' ? { n } : {}) };
 		});
 }
 
