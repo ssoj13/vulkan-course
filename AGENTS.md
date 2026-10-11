@@ -169,9 +169,13 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
 
 ## State (2026-10-10)
 
-- Engine: `github:ssoj13/course-kit#v0.4.1` (public). Bump the tag in package.json for engine changes. v0.4.1 (prepared
-  locally, not released yet) ships `src/*.d.mts` declarations for the engine's .mjs modules; until it is released,
-  `bun run check` passes only with those files copied into node_modules/course-kit/src. v0.4.2 (prepared locally, not committed/tagged): /labs catalog h2 ids (module slug, `ahead`) + "On this page"; its labs.astro is copied into node_modules for local builds until released.
+- Engine: `github:ssoj13/course-kit#v0.5.0` (public, released 2026-10-11; v0.4.1 declarations and v0.4.2 labs catalog
+  are in it). Bump the tag in package.json for engine changes, then `bun install`. node_modules/course-kit files are
+  hard links into bun's cache: for local co-development delete a file before copying a new one over it.
+- Concept maps (engine v0.5.0, user-approved "D+E" + roadmap.sh design): MindMap and ObjectGraph are trees on the
+  engine's TreeView with four views chosen by the reader and remembered site-wide (Spine = default, Tree + collapse,
+  Tree, Outline); details open in a floating draggable window (not inside the card: the user did not want the map to
+  move). The react-flow look is gone from both (the course roadmap page keeps react-flow).
 - examples 01-05 in Rust (ash git master, Vulkan 1.4) and C++ (vk::raii, ApiVersion14, C++23 for std::print):
   built and run on RTX 3080 Ti; reviewed by two independent reviewers (code vs spec, lesson facts) and fixed.
   Rust and C++ print identical output except handle addresses (verified 2026-10-10 by diffing real runs; before that
@@ -183,7 +187,14 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
   unconditionally; RenderDoc, EOS, Steam overlay, Fossilize and Nsight need their enable_environment variable) (6 from apps,
   2 from the NVIDIA driver); VK_LAYER_bandicam_helper prints one expected warning, used as the live example.
 - ObjectGraph: data `src/data/objects.json`, VUID texts via `src/lib/vuids.ts` (`bun run sync:vuids`),
-  simulator `src/lib/objects.ts` (tests in tests/), view `src/components/ObjectGraph{.astro,View.tsx}`.
+  simulator `src/lib/objects.ts` (tests in tests/), view `src/components/ObjectGraph{.astro,View.tsx}` + `objects.css`.
+  Tree: each object hangs off its FIRST parent in objects.json; the others (descriptor set: + layout; pipeline: +
+  layout, + shader module (only while creating); swapchain: + surface; image view: + image) are dashed wires or "+ from"
+  notes (`scopedParents`: isA substitution for parents outside the scope). Groups/colors = stage in OBJ_GROUPS order
+  (instance, devices, presentation, memory, images, pipeline, descriptors, commands, sync; `--vk-g-<stage>` on :root,
+  light + dark); names = `stage*` texts in src/i18n.ts. Build mode: card states ghost/ready/alive/dangling in every
+  view; the details window holds note, call, parents, glossary link, state, the blocking VUID messages (ghost),
+  Create/Destroy and the last result; the console stays under the map. Map mode opens the device's children.
 - GPU snapshot for the device/queue/memory labs: `src/data/gpu.json` (RTX 3080 Ti, driver 616.64) from `bun run sync:gpu`
   (`scripts/sync-gpu.ts`: vulkaninfo `--json=0` for device/features/limits/queues + `--text` for memory heaps/types,
   which the profile JSON lacks); `tests/gpu.test.ts` pins it to the facts the lessons quote. Rerun after a driver update.
@@ -538,7 +549,81 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
   src/i18n.ts. README.md "Build the examples" has the step -> lesson table (generated from course.json + `<Step file>`
   usages; regenerate when steps are added).
 
+- Module 12 shader check (2026-10-11, slangc 2026.1 from SDK 1.4.341.1, flags of sync-shaders.ts, spirv-val vulkan1.4,
+  scratch shaders in scratchpad m12plan/): all four compile and validate, default and -O2.
+  (a) mesh + task: OpCapability MeshShadingEXT + SPV_EXT_mesh_shader; groupshared payload -> TaskPayloadWorkgroupEXT
+  (task and the `in payload` mesh parameter), DispatchMesh -> OpEmitMeshTasksEXT, SetMeshOutputCounts ->
+  OpSetMeshOutputsEXT, OutputVertices/Indices/Primitives -> OutputVertices/OutputPrimitivesEXT/OutputTrianglesEXT,
+  SV_CullPrimitive gets CullPrimitiveEXT + PerPrimitiveEXT. TWO BUGS with user per-primitive attributes: (1) the
+  fragment-shader input that reads a per-primitive value is NOT decorated PerPrimitiveEXT (interface matching needs
+  "equivalent decorations", spec 19.1.3), and Slang 2026.1 has no syntax for it (`perprimitive`/`perprimitiveEXT` are
+  GLSL-only keywords, parse errors in .slang); (2) an explicit [[vk::location(N)]] on an OutputPrimitives member is shifted
+  by the number of per-vertex locations (vertex 3 + primitive 5 -> emitted Location 9; vertex 0 + primitive 1 -> 2).
+  Workarounds for step 32: per-meshlet data as a flat per-vertex attribute, or SV_PrimitiveID (builtin; Slang then
+  declares the Geometry capability = geometryShader feature). (b) ray query: RayQueryKHR + SPV_KHR_ray_query; warning
+  41012 (profile auto-extended) unless the entry point has `[require(spvRayQueryKHR)]` (silences it, same SPIR-V).
+  (c) RT pipeline: RayTracingKHR + SPV_KHR_ray_tracing; payloads RayPayloadKHR/IncomingRayPayloadKHR, attributes
+  HitAttributeKHR, TraceRay flags folded to constants (12 = ACCEPT_FIRST_HIT|SKIP_CLOSEST_HIT). A plain
+  RWTexture2D<float4> adds StorageImageReadWithoutFormat + WriteWithoutFormat; `[[vk::image_format("rgba8")]]` removes
+  both (image format Rgba8). (d) printf: NonSemantic.DebugPrintf + SPV_KHR_non_semantic_info, only the Shader
+  capability; the OpString and the OpExtInst survive -O2.
+- examples 28-29 (module 12, 2026-10-11, both languages; fmt + clippy -D warnings, C++ /W4 clean; release runs with
+  VALIDATE_SYNC + SYNCVAL_SHADER_ACCESSES_HEURISTIC: only the bandicam warning; stdout identical without `[timing]` for
+  28, 28 --printf (with the printf env vars, printf lines included), 29 default / --frames 1 / --no-stats --frames 3).
+  Logs: scratchpad m12/. New shader `debug_printf.slang` (fragmentPrintf; pinned ['Shader']). CMake STEPS/WINDOW_STEPS
+  and both READMEs list 28/29.
+  28_debug_labels: scene of 22, 40 named objects (42 with --printf); cube 0/1 drawn as two draws (firstInstance 0/1)
+  under their own labels; cmd labels frame > attachments, main pass > cube 0 | cube 1, inserted "to present"; queue
+  label "frame N" around submit + present (closed on every path). The messenger prints pObjects (type, handle, name)
+  and the cmd/queue labels (stderr only). VUID facts (validusage.json): vkEndCommandBuffer-commandBuffer-01815 is for
+  SECONDARY command buffers only; primaries must balance per queue (vkCmdEndDebugUtilsLabelEXT-commandBuffer-01912;
+  spec: "When viewed from the linear series of submissions to a single queue ... matched and balanced"; a region may
+  span command buffers); queue labels: vkQueueEndDebugUtilsLabelEXT-None-01911. TRAP: naming the
+  VkDebugUtilsMessengerEXT crashes (access violation inside vkSetDebugUtilsObjectNameEXT, also with bandicam disabled;
+  component not identified) -> the messenger is not named (comment in both files).
+  printf: with only VK_KHRONOS_VALIDATION_PRINTF_ENABLE=true NOTHING is printed (the layer warns "DebugPrintf logs to
+  the Information message severity"; this messenger is WARNING|ERROR); with VK_KHRONOS_VALIDATION_PRINTF_TO_STDOUT=true
+  as well the layer writes to stdout (and warns it skips the debug callback). Real output (scene at time 0):
+  "pixel (400, 300): depth 0.967634, color (0.250000, 0.400000, 0.950000)" (cube 0, +z face, drawn first) and
+  "pixel (400, 300): depth 0.966468, color (0.950000, 0.250000, 0.400000)" (cube 1 = .brg of blue, nearer, wins);
+  identical in Rust and C++. With printf on, the layer forces device features (fragmentStoresAndAtomics,
+  vertexPipelineStoresAndAtomics, shaderInt64, timelineSemaphore, vulkanMemoryModel, bufferDeviceAddress,
+  scalarBlockLayout, 8/16-bit storage) and reports it as a WARNING.
+  Named-object validation message (temporary edit of Rust 28: depth barrier src NONE/NONE; reverted, sha256 identical,
+  rebuilt): "vkQueueSubmit2(): WRITE_AFTER_WRITE hazard detected. vkCmdPipelineBarrier2[frame::attachments] (from
+  VkCommandBuffer 0x...[frame 1 command buffer] submitted on the current VkQueue 0x...[graphics + present queue]) writes
+  to VkImage 0x1e000000001e[depth image], which was previously written by vkCmdEndRendering[frame::main pass] (from
+  VkCommandBuffer 0x...[frame 0 command buffer] submitted on VkQueue 0x...[graphics + present queue])." + pObjects
+  QUEUE "graphics + present queue", COMMAND_BUFFER "frame 1 command buffer", queue labels "frame 1" (m12/neg28.txt).
+  The layer writes names in [brackets] after handles and cmd labels as [frame::attachments].
+  RenderDoc 1.39 (portable, registered implicit layer C:\Programs\Ntutil\apps\prog\ide\renderdoc\renderdoc.json,
+  enable_environment ENABLE_VULKAN_RENDERDOC_CAPTURE=1, layer api_version 1.3.131): with the layer the device reports
+  apiVersion 1.3.0 (1.4.351 without), so every 1.4 step refuses to start: `renderdoccmd capture -w -c <file>
+  28_debug_labels.exe --seconds 3` -> "No Vulkan 1.4 GPU ...", no capture. vulkaninfo --text diff (instance + device
+  extension names, m12/vi_*.txt): 343 -> 216 entries; hidden e.g. pipeline_binary, maintenance6-11, device_fault,
+  swapchain_maintenance1, surface_maintenance1, host_image_copy, descriptor_buffer/heap, layer_settings,
+  cooperative_matrix, video_*, NV_device_diagnostic_checkpoints; still present: mesh_shader, ray_query,
+  acceleration_structure, ray_tracing_pipeline, calibrated_timestamps, dynamic_rendering, debug_utils, swapchain.
+  Nsight Systems 2026.1.3 (`nsys profile --trace=vulkan,vulkan-annotations`, 2 s of 28): works; with `--trace=vulkan`
+  alone `nsys stats` reports "does not contain Vulkan Debug Extension (Vulkan Debug Util) data". vulkan_gpu_marker_sum
+  (medians): main pass 7.4 us, cube 0 6.0 us, cube 1 0.065 us, attachments 0.065 us; vulkan_marker_sum (CPU) has the
+  cmd ranges and one range per "frame N" queue label.
+  29_gpu_queries: timestamps TOP_OF_PIPE + 3 x ALL_COMMANDS per frame (4 per slot), pipeline statistics (IA vertices,
+  IA primitives, VS, clipping invocations/primitives, FS) around the rendering, queries reset on the host after reading
+  (hostQueryReset), calibration (DEVICE + QPC) right before vkQueueSubmit2. The animation clock starts at frame 0, so
+  frame 0's statistics are deterministic: IA 72 / 24, VS 48 (= 24 unique x 2 instances; range 48..72), clipping 24 / 24,
+  FS 60794, identical in both languages and all runs. Calibrateable domains: DEVICE, QUERY_PERFORMANCE_COUNTER,
+  PRESENT_STAGE_LOCAL_EXT; timestampPeriod 1, 64 valid bits on family 0. Measured (release, sync validation on, MAILBOX,
+  3 s): GPU attachments 0.0 us, main pass 6.7-10 us, to present 0.0 us; submit -> first timestamp 95-160 us average
+  (min ~50-70, max up to 4 ms), maxDeviation ~2.0 us, about the same for --frames 1/2/3 (GPU nearly idle); QPC rate from
+  the first and last calibration: 9999702-9999706 ticks per device second (QPC is 10 MHz: the device clock runs ~30 ppm
+  fast against QPC). FS invocations average 61000-64000 per frame. Screenshots
+  examples/screenshots/{28_debug_labels,29_gpu_queries}.png (Rust release, PrintWindow client area, ~2.5 s in).
 ## TODO
+
+- [ ] Concept trees (engine v0.5.0): a reader check in a real browser (keyboard through all four views, window
+  drag/resize, phones); headless Chrome verified click, Create, content swap, Escape and focus return in all four
+  views (2026-10-11). Screenshots: scratchpad nodeview/final/ (session-local).
 
 Current plan (2026-10-11), in order:
 1. Module 12 per `notes/module-12-plan.md`: per pair of steps code (both languages) -> independent code review -> fixes
@@ -549,6 +634,15 @@ Current plan (2026-10-11), in order:
    15_staging.cpp comment, labs/graphics-pipeline wording, course-kit v0.4.1 release + `bun run check` in CI, C++ in CI).
 4. With the user: term-map direction; ReBAR-on snapshot after they enable it; optional RenderDoc 1.46 / Nsight Graphics
    install (not downloaded without the user).
+
+- [x] Module 12 wave 1 (2026-10-11): Slang check (State "Module 12 shader check") + examples 28/29 (State "examples 28-29").
+- [ ] 28/29: independent code review (code vs spec), then the EN lesson debugging-and-profiling; RU after.
+- [ ] RenderDoc 1.39 cannot capture any 1.4 step (the layer reports apiVersion 1.3): decide with the user (a newer
+  RenderDoc, or a lesson-only 1.3 path); until then the lesson describes a capture without a real capture of 28.
+- [ ] Step 32 (mesh shaders): avoid user per-primitive outputs (Slang 2026.1 bugs, State "Module 12 shader check") or
+  post-process the SPIR-V like decorateNonUniform; try a newer Slang before deciding.
+- [ ] 28 --printf: VK_EXT_layer_settings (printf_enable + printf_to_stdout set by the program) would remove the two env
+  vars; not done (the brief asked for env vars).
 
 - [x] Module 7 examples 10-12 (2026-10-11; resumed from WIP 7b36597): fmt + clippy -D warnings, C++ /W4 clean, run on
   the RTX 3080 Ti with VK_KHRONOS_VALIDATION_VALIDATE_SYNC=true: zero messages except the bandicam API-version warning;

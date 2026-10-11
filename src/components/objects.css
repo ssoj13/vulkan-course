@@ -1,86 +1,111 @@
 /*
- * ObjectGraph on top of the engine's node look (course-kit graph.css): node color = the course stage that introduces
- * the object, build-mode states (ghost / ready / alive / dangling), and the call + validation console.
+ * ObjectGraph on the engine's concept tree (course-kit tree.css): stage colors (`--vk-g-<stage>`, light and dark),
+ * build-mode card states (ghost / ready / alive / dangling) in every view, the details window content and the
+ * call + validation console. Colors are global custom properties: the details window lives outside the widget.
  */
-.vk-objects {
-	--vk-s0: #6f86ff; /* instance */
-	--vk-s1: #2fbf9b; /* devices */
-	--vk-s2: #f0a640; /* presentation */
-	--vk-s3: #b07cf0; /* pipeline */
-	--vk-s4: #ef6461; /* commands */
-	--vk-s5: #e65f9e; /* sync */
-	--vk-s6: #33b5c8; /* memory */
-	--vk-s7: #c4b245; /* descriptors */
-	--vk-s8: #8b97ab; /* images */
+:root {
+	--vk-g-instance: #8a93ff;
+	--vk-g-devices: #35c39b;
+	--vk-g-presentation: #f06aa6;
+	--vk-g-memory: #e2a94a;
+	--vk-g-images: #5cb8f0;
+	--vk-g-pipeline: #f0716a;
+	--vk-g-descriptors: #bccb45;
+	--vk-g-commands: #5fd3d8;
+	--vk-g-sync: #c690f0;
 }
-.vk-stage-0 { --ck-c: var(--vk-s0); }
-.vk-stage-1 { --ck-c: var(--vk-s1); }
-.vk-stage-2 { --ck-c: var(--vk-s2); }
-.vk-stage-3 { --ck-c: var(--vk-s3); }
-.vk-stage-4 { --ck-c: var(--vk-s4); }
-.vk-stage-5 { --ck-c: var(--vk-s5); }
-.vk-stage-6 { --ck-c: var(--vk-s6); }
-.vk-stage-7 { --ck-c: var(--vk-s7); }
-.vk-stage-8 { --ck-c: var(--vk-s8); }
+:root[data-theme='light'] {
+	--vk-g-instance: #4f5bd5;
+	--vk-g-devices: #0f8a6a;
+	--vk-g-presentation: #c2417a;
+	--vk-g-memory: #b7791f;
+	--vk-g-images: #1e7fc0;
+	--vk-g-pipeline: #c2413b;
+	--vk-g-descriptors: #6f7f0e;
+	--vk-g-commands: #23878c;
+	--vk-g-sync: #8a4fc0;
+}
 
-/* Build mode: not created yet, can be created now, alive, dangling (its parent was destroyed). */
-.ck-node.is-ghost {
-	opacity: 0.38;
+/* Build mode: cannot be created yet, can be created now, alive, dangling (its parent was destroyed). */
+.vk-objects .ck-tc.is-ghost {
+	/* Dimmed by color, not opacity: a see-through card would show the spine line behind it. */
+	color: var(--sl-color-gray-3);
+	background: var(--sl-color-gray-6);
 	border-style: dashed;
-	box-shadow: none;
+	border-left-style: solid;
 }
-.ck-node.is-ready {
+.vk-objects .ck-tc.is-ready {
 	border-style: dashed;
 	border-color: var(--ck-c);
-	box-shadow:
-		0 0 0 3px color-mix(in srgb, var(--ck-c) 30%, transparent),
-		var(--ck-shadow);
+	box-shadow: 0 0 0 3px color-mix(in srgb, var(--ck-c) 30%, transparent);
 	animation: vk-ready 1.6s ease-in-out infinite;
 }
-.ck-node.is-alive {
+.vk-objects .ck-tc.is-alive {
 	border-color: var(--ck-c);
+	background: color-mix(in srgb, var(--ck-c) 26%, var(--sl-color-black));
 }
-.ck-node.is-alive .ck-node-head {
-	background: color-mix(in srgb, var(--ck-c) 45%, var(--ck-node-bg));
-}
-.ck-node.is-dangling {
+.vk-objects .ck-tc.is-dangling {
 	--ck-c: var(--sl-color-red);
 	border-style: dashed;
 	border-color: var(--sl-color-red);
 }
 @keyframes vk-ready {
 	50% {
-		box-shadow:
-			0 0 0 6px color-mix(in srgb, var(--ck-c) 15%, transparent),
-			var(--ck-shadow);
+		box-shadow: 0 0 0 6px color-mix(in srgb, var(--ck-c) 15%, transparent);
 	}
 }
 @media (prefers-reduced-motion: reduce) {
-	.ck-node.is-ready {
+	.vk-objects .ck-tc.is-ready {
 		animation: none;
 	}
 }
 
+/* Details window content */
+.vk-facts {
+	color: var(--sl-color-gray-2);
+	font-size: 14px;
+}
+.vk-badge {
+	font-size: 13.5px;
+	padding: 0.05rem 0.5rem;
+	border: 1px solid var(--sl-color-gray-5);
+	border-radius: 1rem;
+}
+.vk-state {
+	font-weight: 600;
+}
+.vk-state.is-alive {
+	color: var(--sl-color-green);
+}
+.vk-state.is-dangling {
+	color: var(--sl-color-red);
+}
+.vk-last {
+	margin: 0.8rem 0 0.2rem;
+	font-size: 13.5px;
+	color: var(--sl-color-gray-3);
+}
 .vk-actions {
-	margin-top: 0.5rem;
+	margin: 0.5rem 0;
 }
 .vk-check {
 	display: flex;
 	align-items: center;
 	gap: 0.4rem;
-	font-size: var(--sl-text-sm);
+	font-size: 14px;
 }
 .vk-check input {
 	accent-color: var(--sl-color-accent);
 }
 
+/* Console under the map */
 .vk-console {
-	border-top: 1px solid var(--ck-node-line);
-	padding: 0.55rem 1rem 0.8rem;
+	border-top: 1px solid var(--sl-color-gray-5);
+	padding: 0.55rem 0.9rem 0.8rem;
 }
 .vk-console-head {
 	justify-content: space-between;
-	font-size: var(--sl-text-sm);
+	font-size: 14px;
 	color: var(--sl-color-gray-2);
 }
 .vk-log {
@@ -89,11 +114,11 @@
 	padding: 0.55rem 0.75rem;
 	max-height: 14rem;
 	overflow: auto;
-	background: var(--ck-canvas);
-	border: 1px solid var(--ck-node-line);
+	background: var(--sl-color-black);
+	border: 1px solid var(--sl-color-gray-5);
 	border-radius: 0.5rem;
 	font-family: var(--__sl-font-mono);
-	font-size: var(--sl-text-xs);
+	font-size: 13.5px;
 	overflow-wrap: anywhere;
 }
 .vk-log li {

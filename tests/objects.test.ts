@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import termsJson from '../src/data/terms.json';
-import { EMPTY, OBJECTS, create, destroy, objectErrors, overlayErrors, type LogLine, type SimState, type Step } from '../src/lib/objects';
+import { EMPTY, OBJECTS, OBJ_GROUPS, STAGES, create, destroy, objectErrors, overlayErrors, scopedParents, type LogLine, type SimState, type Step } from '../src/lib/objects';
 
 /** Readable form of a console line for failure messages: verbatim text, or the remark key with its values. */
 const show = (l: LogLine) => ('text' in l ? l.text : `${l.msg} ${JSON.stringify(l.vars)}`);
@@ -79,5 +79,29 @@ describe('destruction order', () => {
 		const s = run(mk('instance'), mk('surface'), mk('physical-device'), mk('device'), mk('swapchain'));
 		const l = destroy(s, 'surface').log[0]!;
 		expect('text' in l && l.vuid).toBe('VUID-vkDestroySurfaceKHR-surface-01266');
+	});
+});
+
+describe('map parents', () => {
+	const all = OBJECTS.map((o) => o.id);
+	const ids = (id: string, scope = all) => scopedParents(id, scope).map((p) => p.id);
+	test('the map groups are exactly the stages', () => {
+		expect([...OBJ_GROUPS].sort()).toEqual([...STAGES].sort());
+	});
+	test('second parents stay, in objects.json order (first = primary)', () => {
+		expect(ids('descriptor-set')).toEqual(['descriptor-pool', 'descriptor-set-layout']);
+		expect(ids('pipeline')).toEqual(['device', 'pipeline-layout', 'shader-module']);
+		expect(ids('swapchain')).toEqual(['device', 'surface']);
+		expect(ids('image-view')).toEqual(['device', 'image']);
+	});
+	test('a parent outside the scope is replaced by what is a kind of it (isA)', () => {
+		const scope = ['instance', 'surface', 'physical-device', 'device', 'swapchain', 'swapchain-image', 'image-view'];
+		expect(ids('image-view', scope)).toEqual(['device', 'swapchain-image']);
+		expect(ids('swapchain', ['device', 'swapchain'])).toEqual(['device']);
+	});
+	test('createOnly and optional flags travel with the parent', () => {
+		const p = scopedParents('pipeline', all).find((x) => x.id === 'shader-module');
+		expect(p?.createOnly).toBe(true);
+		expect(scopedParents('pipeline-layout', all).find((x) => x.id === 'descriptor-set-layout')?.optional).toBe(true);
 	});
 });

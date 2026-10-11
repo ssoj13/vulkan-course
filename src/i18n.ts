@@ -6,13 +6,14 @@
 import type { SimMsg } from './lib/objects';
 
 const EN = {
-	hint: 'Click an object to see what it is, how it is made and what it is made from. Drag boxes to untangle.',
-	legendNote: 'Roots on top; wires run down to the objects made from them.',
+	hint: 'Click an object to see what it is and what it is made from; in an exercise its window has Create and Destroy.',
+	mapLabel: 'Map of Vulkan objects',
 	asText: 'These objects as text',
 	madeFrom: 'made from {parents}',
 	releasedWith: 'released with {call}',
 	glossary: 'glossary',
 	optional: '(optional)',
+	createOnly: '(only while creating)',
 	enableExt: 'enable {ext} + validation layer',
 	create: 'Create',
 	enumerate: 'Enumerate',
@@ -23,13 +24,19 @@ const EN = {
 	destroyQ: 'Destroy?',
 	progress: 'Created {n}/{total} · validation errors: {errors}',
 	startOver: 'Start over',
-	startHint: 'Pick an object and press Create. Start at the top: that is where the wires start.',
+	startHint: 'Pick an object and press Create in its window. Start at the root: the instance.',
+	// Build exercise: state of the selected object, the result of the last action
+	stateAlive: 'Exists.',
+	stateReady: 'Can be created now.',
+	stateGhost: 'Cannot be created yet:',
+	stateDangling: 'Dangling: an object it was made from is gone. Any use is invalid; destroy it.',
+	lastResult: 'Last result',
 	// How a handle is obtained (node caption, badge)
 	howCreate: 'created',
 	howAllocate: 'allocated',
 	howEnumerate: 'enumerated',
 	howGet: 'retrieved',
-	// Course stages (legend, node caption)
+	// Course stages (legend, spine sections)
 	stageInstance: 'instance',
 	stageDevices: 'devices',
 	stagePresentation: 'presentation',
@@ -57,13 +64,14 @@ const EN = {
 export type CourseText = typeof EN;
 
 const RU: CourseText = {
-	hint: 'Щёлкните по объекту: что это, как получается и из чего делается. Блоки можно растаскивать мышью.',
-	legendNote: 'Корни наверху; связи идут вниз — к объектам, которые из них создаются.',
+	hint: 'Щёлкните по объекту: что это и из чего делается; в упражнении в его окне есть «Создать» и «Уничтожить».',
+	mapLabel: 'Карта объектов Vulkan',
 	asText: 'Эти объекты текстом',
 	madeFrom: 'создаётся из {parents}',
 	releasedWith: 'освобождается вызовом {call}',
 	glossary: 'глоссарий',
 	optional: '(необязательно)',
+	createOnly: '(только при создании)',
 	enableExt: 'включить {ext} и слой валидации',
 	create: 'Создать',
 	enumerate: 'Перечислить',
@@ -74,7 +82,12 @@ const RU: CourseText = {
 	destroyQ: 'Уничтожить?',
 	progress: 'Создано {n}/{total} · ошибок валидации: {errors}',
 	startOver: 'Начать заново',
-	startHint: 'Выберите объект и нажмите «Создать». Начинайте сверху — оттуда идут связи.',
+	startHint: 'Выберите объект и нажмите «Создать» в его окне. Начинайте с корня — с instance.',
+	stateAlive: 'Существует.',
+	stateReady: 'Можно создать прямо сейчас.',
+	stateGhost: 'Пока нельзя создать:',
+	stateDangling: 'Висячий: объект, из которого он сделан, уничтожен. Любое использование — ошибка; уничтожьте его.',
+	lastResult: 'Последний результат',
 	howCreate: 'создаётся',
 	howAllocate: 'выделяется',
 	howEnumerate: 'перечисляется',

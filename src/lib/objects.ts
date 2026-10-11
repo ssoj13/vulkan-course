@@ -113,6 +113,26 @@ export function objectErrors(termIds: ReadonlySet<string>): string[] {
 	return errs;
 }
 
+/**
+ * Map order of the stages (legend, spine sections, siblings): what an application creates, roughly in dependency
+ * order - resources before the pipelines that read them, commands and sync last. Same set as STAGES.
+ */
+export const OBJ_GROUPS: readonly Stage[] = ['instance', 'devices', 'presentation', 'memory', 'images', 'pipeline', 'descriptors', 'commands', 'sync'];
+
+/**
+ * Parents of `id` as drawn in a map of `scope`, in objects.json order (the first is the primary parent). A parent
+ * outside the scope is replaced by the in-scope objects that are a kind of it (`isA`), the rule the simulator applies:
+ * in a presentation exercise without `image`, the swapchain images are what the image views are made from.
+ */
+export function scopedParents(id: string, scope: readonly string[]): ParentRef[] {
+	const out: ParentRef[] = [];
+	for (const p of obj(id).parents) {
+		const ids = scope.includes(p.id) ? [p.id] : scope.filter((s) => obj(s).isA === p.id);
+		for (const s of ids) if (!out.some((x) => x.id === s)) out.push({ ...p, id: s });
+	}
+	return out;
+}
+
 /** Objects whose (non-optional or optional) parent list names `id`. */
 export const childrenOf = (id: string): VkObject[] => OBJECTS.filter((o) => o.parents.some((p) => p.id === id));
 
