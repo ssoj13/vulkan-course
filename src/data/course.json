@@ -30,7 +30,7 @@
       "summary": "Pick a GPU, learn what it can do, find its engines (queue families) and open a logical device with queues.",
       "lessons": [
         { "slug": "physical-devices", "title": "Physical devices: properties, features, limits", "short": "Physical devices", "summary": "Enumerating GPUs and reading what each one is and can do." },
-        { "slug": "queue-families", "title": "Queue families: the GPU's engines", "short": "Queue families", "summary": "Graphics, compute, transfer: how queue families map to hardware engines inside the GPU." },
+        { "slug": "queue-families", "title": "Queue families: the GPU's engines", "short": "Queue families", "summary": "Graphics, compute, transfer: how queue families relate to the hardware engines inside the GPU." },
         { "slug": "logical-device", "title": "Logical device and queues", "short": "Logical device", "summary": "Opening a VkDevice with the features and queues we chose, and getting VkQueue handles." }
       ]
     }

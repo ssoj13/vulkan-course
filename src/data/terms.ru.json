@@ -108,7 +108,7 @@
     "debug-messenger": {
       "label": "VkDebugUtilsMessengerEXT",
       "aka": ["debug messenger"],
-      "def": "Объект из расширения VK_EXT_debug_utils, построенный на instance: он доставляет сообщения слоёв и драйвера в функцию обратного вызова в нашем коде."
+      "def": "Объект из расширения VK_EXT_debug_utils, построенный на instance: он доставляет сообщения слоёв и драйвера в callback в нашем коде."
     },
     "vk-physical-device": {
       "label": "VkPhysicalDevice",

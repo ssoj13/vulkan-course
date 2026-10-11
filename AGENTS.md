@@ -49,7 +49,7 @@ wording, examples and emphasis.
 
 Lesson shape:
 1. The question the lesson answers (1-3 sentences).
-2. "Where this fits" (ru: "Где мы на карте"): the layer, what came before, what this unlocks, and the concept
+2. "Where this fits" (ru: "Место в курсе"): the layer, what came before, what this unlocks, and the concept
    chain in one line (e.g. GPU -> driver -> loader -> VkInstance -> VkPhysicalDevice -> VkDevice -> VkQueue).
 3. Body: CG analogies; every new term defined as "X is Y built on Z" and linked (`term:` / `<Term>`).
 4. Code through `<Step file region>`: say what the region does and why, not just what it is.

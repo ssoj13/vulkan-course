@@ -14,8 +14,8 @@ We have chosen a GPU and found the queue family that can draw. Now we **open** t
 
 ## Where this fits
 
-This is the last step of the first section and the point where the **Vulkan API** layer reaches into the **driver**
-for real: until now we only read facts, and this is the first point where the driver prepares the GPU itself for our
+This is the last step of the first section and the point where the **Vulkan API** layer reaches into the **loader &
+driver** layer for real: until now we only read facts, and this is the first point where the driver prepares the GPU itself for our
 process (`vkCreateInstance` already created per-driver instance state, but did not touch the GPU). Before: the
 [physical device](lesson:physical-devices) and its [queue families](lesson:queue-families). The whole chain is
 complete:

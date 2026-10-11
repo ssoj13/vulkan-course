@@ -95,7 +95,7 @@ dailies. Each has its own queue of jobs and they work at the same time. Queue fa
 - Each queue you submit to is a stream that the GPU's command processor ([talking to the GPU](lesson:talking-to-gpu))
   or a dedicated engine front end reads from. Multiple queues let independent work overlap instead of waiting in one line.
 - Submission order within one queue is the *logical* order that barriers and semaphores refer to; by itself it
-  guarantees neither the order in which work starts nor the order in which it finishes. Between different queues -
+  does not make later work wait for earlier work: they may overlap and finish out of order. Between different queues -
   even two queues of the same family, which **may run in parallel** - there is not even that order, and priorities do
   not create one. As soon as two pieces of work touch the same resource, you need explicit synchronization - a topic
   for the synchronization module.

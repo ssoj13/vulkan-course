@@ -18,9 +18,10 @@ use ash::{
 /// Called by the validation layer for every message it wants to report.
 ///
 /// The layer calls it through Vulkan's C ABI (`VKAPI_CALL` in C), and
-/// `extern "system"` gives the function exactly that calling convention. Returning `FALSE` means "do not abort the Vulkan call that caused
-/// this message": the application should always return FALSE; TRUE is
-/// reserved for layer development.
+/// `extern "system"` gives the function exactly that calling convention.
+/// Returning `FALSE` means "do not abort the Vulkan call that caused this
+/// message": the application should always return FALSE; TRUE is reserved
+/// for layer development.
 unsafe extern "system" fn debug_callback(
     severity: vk::DebugUtilsMessageSeverityFlagsEXT,
     msg_type: vk::DebugUtilsMessageTypeFlagsEXT,

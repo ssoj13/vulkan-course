@@ -52,6 +52,9 @@ The first section of the course walks this chain from the hardware to the queue,
 
 `GPU → driver → loader → VkInstance → VkPhysicalDevice → VkDevice → VkQueue`
 
+This is the "built on" order, not the call path: a call travels the other way, from your program through the loader to
+the driver (see the [loader lesson](lesson:loader-and-instance)).
+
 Each link is built on the one before it: the loader finds the drivers, the instance is your connection to the loader,
 GPUs are found through the instance, a device is opened on one GPU, and queues live inside the device. Everything
 later - windows, pipelines, memory, synchronization - hangs off the device and its queues.

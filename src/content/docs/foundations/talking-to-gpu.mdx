@@ -13,8 +13,9 @@ functions and you cannot call its. So how does a "draw" ever reach it?
 
 ## Where this fits
 
-[Lesson 1](lesson:gpu) showed the machine; this lesson is the road to it. It spans three layers: your **application**,
-the **driver** (and the operating system under it), and the GPU's **front end** in hardware. The chain of one draw:
+[Lesson 1](lesson:gpu) showed the machine; this lesson is the road to it. It is a **concept** lesson, but the road
+crosses the stack: from your **application**, through the **driver** (and the operating system under it) in the
+**loader & driver** layer, down to the GPU's **front end** in the **hardware** layer. The chain of one draw:
 
 `application → user-mode driver → command buffer → queue → kernel-mode driver (schedules) → command processor → shader cores`
 
