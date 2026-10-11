@@ -1,0 +1,126 @@
+name: C++ examples
+
+# Proves that examples/cpp builds from a clean clone with the presets of its README,
+# on Windows (MSVC) and Linux (GCC 14). Runners have no GPU: the non-window steps run
+# on Mesa's lavapipe (a CPU Vulkan driver) as a smoke test.
+on:
+  push:
+    paths:
+      - examples/cpp/**
+      - shaders/**
+      - .github/workflows/cpp.yml
+  pull_request:
+    paths:
+      - examples/cpp/**
+      - shaders/**
+      - .github/workflows/cpp.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cpp-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # The SDK the examples are written and run against (AGENTS.md "Decisions").
+  VULKAN_SDK_VERSION: 1.4.341.1
+  # vcpkg master of 2026-10-10: glfw3 3.5.1 and vulkan-memory-allocator 3.4.0, the versions
+  # used on the dev machine (the 2026.07.29 release still has glfw3 3.4).
+  VCPKG_COMMIT: e456309491fd875487bf02b8a0dca76c1b1b00cc
+
+# Actions are pinned by full commit SHA (a tag can be moved); the comment names the release.
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: Windows MSVC, os: windows-latest, preset: msvc-release, exe: .exe }
+          - { name: Ubuntu GCC 14, os: ubuntu-24.04, preset: linux-release, exe: '' }
+    defaults:
+      run:
+        shell: bash
+    env:
+      VCPKG_DISABLE_METRICS: 1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Vulkan SDK
+        uses: jakoch/install-vulkan-sdk-action@d17de7e2f5e50efb5d2123efed18497d3c58c533 # v1.7.0
+        with:
+          vulkan_version: ${{ env.VULKAN_SDK_VERSION }}
+          install_runtime: true
+          # Windows: Mesa's prebuilt lavapipe, registered as a driver; Linux: apt mesa-vulkan-drivers.
+          install_lavapipe: true
+          cache: true
+          stripdown: true
+
+      - name: Linux packages (GCC 14, Ninja, GLFW's X11 headers, autotools for vcpkg's libx11, lavapipe)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends g++-14 ninja-build pkg-config \
+            libxinerama-dev libxcursor-dev libxrandr-dev libxi-dev xorg-dev libglu1-mesa-dev \
+            autoconf autoconf-archive automake libtool bison
+          echo "CXX=g++-14" >> "$GITHUB_ENV"
+
+      - name: MSVC developer environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
+
+      - name: vcpkg at the pinned commit
+        run: |
+          # Forward slashes on Windows too: the presets paste VCPKG_ROOT into a CMake path.
+          root=$(cd "$RUNNER_TEMP" && { pwd -W 2>/dev/null || pwd; })
+          export VCPKG_ROOT="$root/vcpkg" VCPKG_DEFAULT_BINARY_CACHE="$root/vcpkg-cache"
+          echo "VCPKG_ROOT=$VCPKG_ROOT" >> "$GITHUB_ENV"
+          echo "VCPKG_DEFAULT_BINARY_CACHE=$VCPKG_DEFAULT_BINARY_CACHE" >> "$GITHUB_ENV"
+          git init -q "$VCPKG_ROOT"
+          git -C "$VCPKG_ROOT" fetch -q --depth 1 https://github.com/microsoft/vcpkg.git "$VCPKG_COMMIT"
+          git -C "$VCPKG_ROOT" checkout -q FETCH_HEAD
+          if [ "$RUNNER_OS" = Windows ]; then "$VCPKG_ROOT/bootstrap-vcpkg.bat" -disableMetrics; else "$VCPKG_ROOT/bootstrap-vcpkg.sh" -disableMetrics; fi
+          mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"
+
+      - name: Restore vcpkg binary cache
+        id: vcpkg-cache
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: vcpkg-${{ matrix.os }}-${{ env.VCPKG_COMMIT }}-${{ hashFiles('examples/cpp/vcpkg.json') }}
+
+      # vcpkg (manifest mode) builds GLFW and VMA here, on the first configure.
+      - name: Configure
+        working-directory: examples/cpp
+        run: cmake --preset ${{ matrix.preset }}
+
+      # Saved right after configure, so a later compile error does not throw the packages away.
+      - name: Save vcpkg binary cache
+        if: steps.vcpkg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: ${{ steps.vcpkg-cache.outputs.cache-primary-key }}
+
+      - name: Build all steps
+        working-directory: examples/cpp
+        run: cmake --build --preset ${{ matrix.preset }}
+
+      # The steps without a window, on lavapipe (Vulkan 1.4 on the CPU), validation layer on.
+      - name: Smoke test on lavapipe (01, 03, 13, 16, 25)
+        working-directory: examples/cpp/build/${{ matrix.preset }}
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then
+            # The SDK's own loader and layers: a cached SDK restores files, not the installer's registry entries.
+            export PATH="$VULKAN_SDK/runtime/x64:$PATH" VK_ADD_LAYER_PATH="$VULKAN_SDK/Bin"
+          fi
+          vulkaninfo${{ runner.os == 'Windows' && 'SDK' || '' }} --summary
+          for step in 01_instance 03_physical_devices 13_memory_types 16_allocator 25_compute; do
+            echo "::group::$step"
+            ./$step${{ matrix.exe }}
+            echo "::endgroup::"
+          done

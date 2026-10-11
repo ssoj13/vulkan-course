@@ -7,7 +7,16 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# The Vulkan SDK provides the loader (vulkan-1.lib) and the C++ headers
+# Fail at configure time, with the fix in the message, instead of 27 compile errors:
+# <print> needs MSVC 17.7+, GCC 14+, or Clang 18+ on libstdc++ 14+ / libc++ 18+.
+include(CheckCXXSourceCompiles)
+check_cxx_source_compiles("#include <print>\nint main() { std::println(\"{}\", 1); }" HAVE_STD_PRINT)
+if(NOT HAVE_STD_PRINT)
+    message(FATAL_ERROR "${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION} has no C++23 <print>. "
+                        "Use MSVC 17.7+, GCC 14+ or Clang 18+ (on Linux: CXX=g++-14 cmake --preset linux-release --fresh).")
+endif()
+
+# The Vulkan SDK provides the loader (vulkan-1.lib / libvulkan.so) and the C++ headers
 # (vulkan/vulkan_raii.hpp). VULKAN_SDK must be set by the SDK installer.
 find_package(Vulkan REQUIRED)
 
