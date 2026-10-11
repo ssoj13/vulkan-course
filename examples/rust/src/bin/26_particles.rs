@@ -971,7 +971,7 @@ impl Vk {
 
         // The time step: real time since the last frame, at most 1/60 s so
         // a stalled frame (window dragged, breakpoint) does not make the
-        // explicit Euler step explode.
+        // semi-implicit Euler step explode.
         let now = Instant::now();
         let dt = now.duration_since(self.last).as_secs_f32().min(1.0 / 60.0);
         self.last = now;

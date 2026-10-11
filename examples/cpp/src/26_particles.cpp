@@ -781,8 +781,8 @@ try {
         device.resetFences(*frame.inFlight);
 
         // The time step: real time since the last frame, at most 1/60 s so a
-        // stalled frame (window dragged, breakpoint) does not make the explicit
-        // Euler step explode.
+        // stalled frame (window dragged, breakpoint) does not make the
+        // semi-implicit Euler step explode.
         const auto now = Clock::now();
         const float dt = std::min(static_cast<float>(Seconds(now - last).count()), 1.0f / 60.0f);
         last           = now;

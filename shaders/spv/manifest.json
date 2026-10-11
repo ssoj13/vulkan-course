@@ -54,7 +54,7 @@
 		},
 		{
 			"source": "particles.slang",
-			"sourceSha256": "61b7dc0e2e8ef623bfed826d270b353dc898aacd39e08905f15aac961c3b0f37",
+			"sourceSha256": "b2bd48c243cdd4b9a8129283713993469538a1d8dd81b92352ef4448016d56dd",
 			"outputs": [
 				{
 					"file": "particles.spv",

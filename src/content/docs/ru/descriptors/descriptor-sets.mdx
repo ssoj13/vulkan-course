@@ -151,8 +151,8 @@ all descriptors are undefined». Привязать его в таком вид�
 <Step file="17_uniforms" region="bind-and-draw" />
 
 `vkCmdBindDescriptorSets` записывает «используй эти наборы, начиная с номера `firstSet`, в графической точке привязки,
-трактуя их через этот pipeline layout». У графики и compute разные точки привязки, так что dispatch не портит наборы
-отрисовки. Последний аргумент — список динамических смещений, здесь пустой.
+трактуя их через этот pipeline layout». У графики и [compute](lesson:compute-pipelines) разные точки привязки, так что dispatch не портит
+наборы отрисовки. Последний аргумент — список динамических смещений, здесь пустой.
 
 Когда GPU читает дескрипторы? Спецификация задаёт не момент, а окно: без `UPDATE_AFTER_BIND` содержимое «may be
 consumed ... during host execution of the command, or during shader execution of the resulting draws and dispatches, or

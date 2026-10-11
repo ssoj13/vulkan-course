@@ -86,8 +86,9 @@ the next one. Two descriptor sets fix the two directions once and for all, and s
 
 <Step file="27_async_compute" region="descriptor-sets" />
 
-The `pipelines` region of the step is step 26's, with `advance` in place of `simulate`; the
-`init` that writes state 0 into P[0] now runs on the compute queue:
+The `pipelines` region of the step is step 26's with two differences: `advance` in place of `simulate`, and a second
+storage-buffer binding (binding 1, `previous`) in the set layout. The `init` that writes state 0 into P[0] now runs on
+the compute queue:
 
 <Step file="27_async_compute" region="init" />
 
@@ -109,8 +110,9 @@ hand-over would serialize exactly the overlap the step is after. So the buffers 
 2. What the "lower performance" costs is up to the implementation; the usual concern is images, whose compression
 some GPUs disable for concurrent sharing. For buffers read once per frame it is a reasonable price.
 
-`--same-queue` uses one family, and then `EXCLUSIVE` is the only choice: `CONCURRENT` needs at least two distinct
-families (`VUID-VkBufferCreateInfo-sharingMode-00914`).
+`--same-queue` uses one family, and then `EXCLUSIVE` is the only choice: `CONCURRENT` needs more than one queue family
+index (`VUID-VkBufferCreateInfo-sharingMode-00914`), and the indices must be unique
+(`VUID-VkBufferCreateInfo-sharingMode-01419`), so at least two distinct families.
 
 ## Two timelines, four waits
 
@@ -240,10 +242,13 @@ everything down), 4 s per run, MAILBOX, 2^20 particles, three alternating runs p
 
 | | Graphics per frame | Compute per step | Overlap | Frames per second |
 |---|---|---|---|---|
-| async, first series | 269 - 277 us | 44.8 - 46.5 us | 2.1 - 5.8 us (5 - 12% of compute) | 895 - 1328 |
-| `--same-queue`, first series | 269 - 277 us | 44.8 - 46.5 us | 0.0 us | 1113 - 1400 |
+| async, first series¹ | 269 - 277 us | 44.8 - 46.5 us | 2.1 - 5.8 us (5 - 12% of compute) | 895 - 1328 |
+| `--same-queue`, first series¹ | 269 - 277 us | 44.8 - 46.5 us | 0.0 us | 1113 - 1400 |
 | async, second series | 274 - 277 us | 46.2 - 48.2 us | 3.2 - 9.4 us (7 - 20% of compute) | 1130 - 1546 |
 | `--same-queue`, second series | 274 - 276 us | 45.3 - 45.5 us | 0.0 us | 1114 - 1580 |
+
+¹ The notes of the first series kept one graphics range and one compute range for both modes together, so those two
+cells repeat in both rows; the overlap and frame-rate cells are per mode.
 
 The honest result: **no measurable gain on this GPU**. The queues do overlap, a little: a few microseconds of every
 46-microsecond step run while the frame draws, against exactly zero on one queue. But the frame rate does not improve,
@@ -277,8 +282,10 @@ FIFO with a GPU-bound frame) would show where the break-even lies on this GPU; i
   channels, and whether two queues of family 2 get separate ones, is not documented in the API and is the driver's
   choice.
 - **Same queue, zero overlap.** On one queue, Vulkan would still allow commands of different submissions to overlap
-  where no barrier or semaphore forbids it. In these runs the measured overlap was exactly 0.0 us: this driver ran the
-  submissions of one queue one after the other. That is an observation on this machine, not a rule.
+  where no barrier or semaphore forbids it. In these runs the measured overlap was exactly 0.0 us. That is an
+  observation on this machine, not a rule, and not even proof that the submissions ran one after the other:
+  implementations "may write the timestamp at any stage that is logically later than stage" (`vkCmdWriteTimestamp2`),
+  and a start timestamp latched late could hide a real overlap.
 - **Ownership transfers, if you need them.** `EXCLUSIVE` with release/acquire pairs is the right choice when a resource
   changes family rarely (an upload from a transfer queue, as in [staging uploads](lesson:staging-uploads)), or for
   images whose compression `CONCURRENT` might disable. The trade-off flips when both families use a resource every

@@ -625,11 +625,12 @@ try {
     const vk::raii::CommandBuffer& cmd = commandBuffers.front();
 
     // #region record
-    // The compute bind point has its own pipeline, descriptor sets and push
-    // constants, separate from the graphics ones. The two dispatches touch
-    // different buffers, so nothing orders them: the GPU may run them
-    // concurrently. Timestamp 0 at TOP_OF_PIPE, 1 after saxpy's COMPUTE_SHADER
-    // work, 2 after both.
+    // The compute bind point has its own pipeline and descriptor sets,
+    // separate from the graphics ones; push constants are kept per shader
+    // stage, not per bind point. The two dispatches touch different
+    // buffers, so nothing orders them: the GPU may run them concurrently.
+    // Timestamp 0 at TOP_OF_PIPE, 1 after saxpy's COMPUTE_SHADER work, 2
+    // after both.
     struct SaxpyParams {
         float a;
         uint32_t count;
@@ -659,9 +660,10 @@ try {
     // "Signaling a fence and waiting on the host does not guarantee that the
     // results of memory accesses will be visible to the host, as the access
     // scope of a memory dependency defined by a fence only includes device
-    // access." This barrier makes the shader writes available and visible to
-    // the HOST domain: source = the compute stage's storage writes,
-    // destination = host reads.
+    // access." This barrier makes the shader writes available in the HOST
+    // domain: source = the compute stage's storage writes, destination = host
+    // reads. Visible to the CPU they are through HOST_COHERENT, or else after
+    // vkInvalidateMappedMemoryRanges.
     const vk::MemoryBarrier2 toHost{
         .srcStageMask  = S::eComputeShader,
         .srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite,
@@ -715,7 +717,8 @@ try {
     const auto readStart = Clock::now();
     const size_t groups  = reduceGroups;
     // Both mappings hold at least this many elements, written by the completed
-    // submission and made visible to the host by the barrier.
+    // submission, made available to the host by the barrier and visible by
+    // coherence (or the invalidate above).
     std::vector<float> gpuResult(n);
     std::vector<uint32_t> gpuSums(groups);
     std::memcpy(gpuResult.data(), result.ptr, n * sizeof(float));

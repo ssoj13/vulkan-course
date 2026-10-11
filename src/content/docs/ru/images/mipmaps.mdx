@@ -95,7 +95,7 @@ Format support (vkGetPhysicalDeviceFormatProperties2):
 получают уровни другим путём. Блочно-сжатые форматы обычно не могут быть *целью* blit: на GPU курса `BC7_SRGB_BLOCK`
 перечисляет `BLIT_SRC`, но не `BLIT_DST` (vulkaninfo `--show-formats`), ведь запись означала бы кодирование блоков. У
 целочисленных форматов нет линейной фильтрации (на GPU курса — ни у одного). Их цепочки приходят с CPU, из внешнего
-инструмента или из compute-шейдера. И ещё два ограничения: blit требует очереди с графическими возможностями
+инструмента или из [compute-шейдера](lesson:compute-pipelines). И ещё два ограничения: blit требует очереди с графическими возможностями
 (`VUID-vkCmdBlitImage2-commandBuffer-cmdpool`), так что выделенная transfer-очередь mip-уровни не построит, и ни одно
 из двух изображений не может быть мультисэмпловым (`VUID-VkBlitImageInfo2-srcImage-00233`,
 `VUID-VkBlitImageInfo2-dstImage-00234`): мультисэмпловые изображения усредняет не blit, а *resolve*, о нём в

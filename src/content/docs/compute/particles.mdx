@@ -45,7 +45,8 @@ A particle is 16 bytes: a position and a velocity, two `float2` each. The shader
 <Snippet src="shaders/particles.slang" />
 
 One module, four entry points: `init` writes the starting state, `simulate` moves every particle by one time step
-(explicit Euler: accelerate toward an attractor that circles the window, apply a little drag, bounce off the edges),
+(semi-implicit, or symplectic, Euler: the velocity is updated first and the position then moves with the *new*
+velocity; accelerate toward an attractor that circles the window, apply a little drag, bounce off the edges),
 `vertexMain` and `fragmentMain` draw. (`advance`, the fifth, belongs to the [next lesson](lesson:async-compute).)
 
 <Step file="26_particles" region="particle-buffer" />
@@ -179,7 +180,7 @@ duplicated.
 
 What the barriers cost is overlap on the GPU: frame n's simulation waits until frame n-1's vertex fetch is done. Frames
 in flight still do their job, which is to keep the *CPU* from waiting: it records frame n+1 while the GPU works on
-frame n. The CPU side of the frame is unchanged from step 10:
+frame n. The CPU side of the frame is unchanged from step 10. The program states the arrangement at start-up:
 
 ```text
 Per frame: barrier -> dispatch simulate 4096 x 1 x 1 -> barrier COMPUTE_SHADER/SHADER_STORAGE_WRITE -> VERTEX_ATTRIBUTE_INPUT/VERTEX_ATTRIBUTE_READ -> draw 1048576 points
@@ -191,7 +192,7 @@ while the simulation writes state n+1, so they need two buffers, and the GPU nee
 That is [async compute](lesson:async-compute).
 
 The time step comes from the CPU clock but is capped at 1/60 s, so a stalled frame (the window dragged, a breakpoint)
-does not make the explicit Euler step jump particles across the window; it travels to the GPU in the push constants,
+does not make the Euler step jump particles across the window; it travels to the GPU in the push constants,
 the only per-frame data the CPU produces.
 
 ## What it looks like
@@ -208,7 +209,7 @@ the only per-frame data the CPU produces.
 />
 
 Slow particles are blue, fast ones orange: the orange spiral is where particles fall past the attractor at speed, and
-the dark streak is the path they have been pulled out of.
+the dark streak is probably the path they have been pulled out of (the picture alone does not prove it).
 
 ## What the program prints
 

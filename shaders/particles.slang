@@ -66,9 +66,10 @@ float2 attractor(float time)
     return 0.45 * float2(cos(time * 0.6), sin(time * 0.9));
 }
 
-// One explicit Euler step: acceleration towards the attractor (softened
-// inverse square, so a particle passing through the center is not flung
-// away), light drag, and the window's edges reflect.
+// One semi-implicit (symplectic) Euler step: the velocity is updated first,
+// then the position moves with the NEW velocity. Acceleration towards the
+// attractor (softened inverse square, so a particle passing through the center
+// is not flung away), light drag, and the window's edges reflect.
 Particle update(Particle p, float dt, float time)
 {
     float2 d = attractor(time) - p.pos;

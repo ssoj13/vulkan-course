@@ -665,7 +665,7 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
   (particles), async-compute, queue-concurrency, sharing-mode, ping-pong-buffer (async-compute); storage-buffer and
   subgroup stay owned by bindless; vk-pipeline def (EN+RU) widened to compute. Older EN lessons now link here
   (queue-families x2, fences-and-semaphores, window-and-surface, bindless, mipmaps, descriptor-sets); their RU
-  counterparts were NOT changed. VUIDs named (synced): RuntimeSpirv-x-06429/06432, vkCmdDispatch-groupCountX-00386,
+  counterparts got the same links on 2026-10-11 (see TODO). VUIDs named (synced): RuntimeSpirv-x-06429/06432, vkCmdDispatch-groupCountX-00386,
   vkCmdDispatch-None-10672, VkComputePipelineCreateInfo-stage-00701, VkWriteDescriptorSet-descriptorType-00333,
   VkGraphicsPipelineCreateInfo-topology-08773, VkBufferCreateInfo-sharingMode-00914. Runs for the lesson (scratchpad
   m11lesson/, fresh release binaries of 10:23, validation on, sync off; stdout Rust == C++ without [timing] for 25
@@ -686,9 +686,31 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
   area, Rust release, `--seconds 4`, ~2.5 s): 800x600, every lit color within 0.56 of the sRGB-encoded blue->orange
   ramp, 26: 175375 lit px, 359 colors, disk bbox 479x480; 27: 177328 lit px, 356 colors. Owner of examples/: replace
   the originals with these (copies in scratchpad m11lesson/).
-- [ ] Module 11: independent review of the EN lessons (facts vs spec/runs, quizzes), then the RU lessons; RU links to
-  compute in ru/{devices/queue-families, sync/fences-and-semaphores, presentation/window-and-surface,
-  descriptors/bindless, images/mipmaps, descriptors/descriptor-sets} as in EN.
+- [x] Module 11 EN review fixes (2026-10-11, vkspec 1.4.365 + validusage.json SDK 1.4.341): push constants are per
+  shader stage, not bind-point state ("Binding a pipeline with a layout that is not compatible with the push constant
+  layout does not disturb the push constant values"; lesson, terms.json/ru `compute-pipeline`, 25 record comment both
+  languages); HOST_CACHED Note quoted; vkCmdWriteTimestamp2 Note "may write the timestamp at any stage that is
+  logically later than stage" (compute-pipelines; async-compute: 0.0 us on one queue is an observation, a late start
+  timestamp could hide overlap); COMPUTE -> HOST barrier = AVAILABLE in the host domain, visible via HOST_COHERENT or
+  invalidate (lesson, quiz Q3, 25 readback-barrier + read-results comments both languages); skipping a workgroup
+  barrier = non-uniform control flow, undefined (hang OR wrong sums); integrator = semi-implicit (symplectic) Euler
+  (particles.mdx, 26 dt comment both languages, particles.slang comment; sync:shaders: particles.spv bytes unchanged,
+  only manifest sourceSha256); particles "The program states the arrangement at start-up"; "dark streak" hedged;
+  async-compute cites sharingMode-00914 + -01419 (synced), first-series footnote (one graphics/compute range for both
+  modes), pipelines region = 26's + `advance` + binding 1 `previous`; terms `async-compute` "mainly when" (+ru).
+  RE-MEASURED 25 default vs --uncached (release, validation on, sync off, 6 alternating pairs per language, 12 runs per
+  variant, logs scratchpad m11rev/): CPU copy type 4 0.81-1.34 ms (median 1.17) vs type 3 23.6-25.4 ms (median 24.4),
+  18-31x per pair (median ~21x); SAXPY GPU 590-954 us (median 676) vs 568-1260 us (median 697), uncached slower in 8
+  of 12 pairs, spread >> difference: the lesson says the GPU-side cost is not shown either way (old "same time" claim
+  removed). Rust fmt/clippy -D warnings, C++ release build of 25/26 clean.
+- [x] Module 11 RU lessons written (2026-10-11): ru/compute/{compute-pipelines, particles, async-compute}, authored
+  (Houdini wrangle/OpenCL SOP, POP solver, SOP Solver Prev_Frame, TOP/farm analogies), same Steps/Snippets/Shots/VUIDs/
+  program output/measurements (incl. the review fixes and the new 25 table), quizzes pass lint; all 616 lesson links
+  of both languages resolve (scratchpad m11rev/links.ts). RU links to compute added in ru/{devices/queue-families (2,
+  also "пригодятся в продвинутой части" -> staging + async compute), sync/fences-and-semaphores (also the stale "появится
+  вместе с async compute"), presentation/window-and-surface, descriptors/bindless (also textures link), images/mipmaps,
+  descriptors/descriptor-sets}.
+- [ ] Module 11: independent review of the RU lessons (language + facts vs EN), and a second review of the EN fixes.
 - [ ] objects.json: a compute pipeline object (vkCreateComputePipelines, parents device + pipeline-layout + shader
   module createOnly) would let compute-pipelines show an ObjectGraph build; needs ObjectGraph/test review.
 - [ ] Course-wide (Rust windowed steps): `Vk::new` returns through `?` after creating objects, leaking them on an

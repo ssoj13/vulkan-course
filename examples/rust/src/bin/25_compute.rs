@@ -673,11 +673,12 @@ fn run(
         .ok_or("no command buffer")?;
 
     // #region record
-    // The compute bind point has its own pipeline, descriptor sets and push
-    // constants, separate from the graphics ones. The two dispatches touch
-    // different buffers, so nothing orders them: the GPU may run them
-    // concurrently. Timestamp 0 at TOP_OF_PIPE, 1 after saxpy's COMPUTE_SHADER
-    // work, 2 after both.
+    // The compute bind point has its own pipeline and descriptor sets,
+    // separate from the graphics ones; push constants are kept per shader
+    // stage, not per bind point. The two dispatches touch different
+    // buffers, so nothing orders them: the GPU may run them concurrently.
+    // Timestamp 0 at TOP_OF_PIPE, 1 after saxpy's COMPUTE_SHADER work, 2
+    // after both.
     let push_saxpy = [A.to_ne_bytes(), args.count.to_ne_bytes()].concat();
     let push_reduce = args.count.to_ne_bytes();
     use vk::PipelineStageFlags2 as S;
@@ -741,8 +742,9 @@ fn run(
     // that the results of memory accesses will be visible to the host, as
     // the access scope of a memory dependency defined by a fence only
     // includes device access." This barrier makes the shader writes
-    // available and visible to the HOST domain: source = the compute stage's
-    // storage writes, destination = host reads.
+    // available in the HOST domain: source = the compute stage's storage
+    // writes, destination = host reads. Visible to the CPU they are through
+    // HOST_COHERENT, or else after vkInvalidateMappedMemoryRanges.
     let to_host = vk::MemoryBarrier2::default()
         .src_stage_mask(S::COMPUTE_SHADER)
         .src_access_mask(vk::AccessFlags2::SHADER_STORAGE_WRITE)
@@ -813,7 +815,8 @@ fn run(
     let start = Instant::now();
     let groups = usize::try_from(reduce_groups)?;
     // SAFETY: both mappings hold at least this many elements, written by the
-    // completed submission and made visible to the host by the barrier.
+    // completed submission, made available to the host by the barrier and
+    // visible by coherence (or the invalidate above).
     let (gpu_result, gpu_sums) = unsafe {
         (
             std::slice::from_raw_parts(result.ptr.cast::<f32>(), n).to_vec(),

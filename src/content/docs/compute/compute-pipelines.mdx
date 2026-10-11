@@ -49,8 +49,11 @@ depth test, blending, each configured in one big create-info. A compute pipeline
 
 What stays is everything a shader needs to reach data: a [pipeline layout](term:vk-pipeline-layout) with descriptor set
 layouts and push constant ranges. The pipeline is still a [`VkPipeline`](term:vk-pipeline), bound with
-`vkCmdBindPipeline`, but to the **compute bind point**, which has its own pipeline, descriptor sets and push constants:
-binding a compute pipeline does not disturb what a draw has bound, and the other way round.
+`vkCmdBindPipeline`, but to the **compute bind point**, which has its own bound pipeline and descriptor sets: binding
+a compute pipeline does not disturb what a draw has bound, and the other way round. Push constants are not part of
+that split. `vkCmdPushConstants` takes no bind point at all, only the shader stages (`stageFlags`) the values are for,
+so they are kept per stage, and the spec adds: "Binding a pipeline with a layout that is not compatible with the push
+constant layout does not disturb the push constant values."
 
 If you have written a Houdini wrangle, you have written a compute kernel. An Attribute Wrangle runs its VEX snippet
 once per point, in parallel, and `@ptnum` tells each run which point it is; a Nuke BlinkScript kernel runs once per
@@ -149,7 +152,9 @@ The interesting decision is the memory type, made with the two-pass rule of [mem
   HOST_COHERENT`, type 3 here: the upload type of [vertex buffers](lesson:vertex-and-index-buffers), uncached and
   typically write-combined (fast to write, slow to read back).
 - **Outputs** (`result`, `groupSums`): the GPU writes them, the CPU *reads* them. The spec describes
-  `HOST_CACHED` as the type for that: "Host memory read accesses to uncached memory are slower than to cached memory".
+  `HOST_CACHED` as the type for that: "Host memory read accesses to uncached memory are slower than to cached memory",
+  and a note in the memory chapter states the intent directly: "`VK_MEMORY_PROPERTY_HOST_CACHED_BIT` is expected to be
+  used when the host performs any read or read-modify-write operations on the memory."
   The choice requires `HOST_VISIBLE` and prefers `HOST_CACHED`, which picks type 4, `HOST_VISIBLE | HOST_COHERENT |
   HOST_CACHED`.
 
@@ -211,7 +216,9 @@ the host) and throughout the [next lesson](lesson:particles).
 
 Three [timestamps](lesson:barriers-and-layouts) bracket the work: `TOP_OF_PIPE` before, `COMPUTE_SHADER` after SAXPY
 (written once every earlier command has finished its compute stage, which here means SAXPY), `COMPUTE_SHADER` after
-both.
+both. "Once" is a lower bound: a note under `vkCmdWriteTimestamp2` says "Implementations may write the timestamp at any
+stage that is logically later than stage", so a timestamp may be latched later than the stage it names, never
+earlier, and the interval between two timestamps approximates the work it brackets rather than measuring it exactly.
 
 ## Cooperation inside a workgroup: groupshared memory and barriers
 
@@ -247,8 +254,9 @@ instruction, as the disassembly of `reduce.spv` shows:
 
 The same two halves as a [pipeline barrier](term:pipeline-barrier) (an execution dependency plus a memory dependency),
 only inside one workgroup and inside one shader. Because it is "wait until *all* arrive", every invocation must reach
-every barrier: if some invocations returned early and skipped it, the others would wait for invocations that never
-come, which SPIR-V leaves undefined. That is why `reduce` does not return for the 192 out-of-range invocations of the
+every barrier: if some invocations returned early and skipped it, the barrier would sit in non-uniform control flow,
+which SPIR-V leaves undefined. The workgroup may hang waiting for invocations that never come, or run on and produce
+wrong sums; nothing promises either. That is why `reduce` does not return for the 192 out-of-range invocations of the
 last group, as SAXPY does: they load 0 instead and walk through every round. And the loop bound is the same for all
 invocations, so all of them meet each barrier; only the additions are skipped by the upper half.
 
@@ -267,8 +275,9 @@ note: "Signaling a fence and waiting on the host does not guarantee that the res
 to the host, as the access scope of a memory dependency defined by a fence only includes device access. A memory
 barrier or other memory dependency must be used to guarantee this." So the command buffer ends with a memory barrier
 whose source is the compute stage's storage writes and whose destination is the **host**: stage `HOST`, access
-`HOST_READ`. It makes the shader writes available and visible to the host domain; the fence then tells the CPU when
-that has happened.
+`HOST_READ`. It makes the shader writes *available* in the host domain; the fence then tells the CPU when that has
+happened. *Visible* to the CPU's reads they become through the memory type: with `HOST_COHERENT` memory nothing more
+is needed, otherwise `vkInvalidateMappedMemoryRanges` does that last step (below).
 
 <Step file="25_compute" region="submit-and-wait" />
 
@@ -288,18 +297,23 @@ correct on this machine. The barrier is there because the spec requires it, not 
 
 `--uncached` rules out every `HOST_CACHED` type, so the outputs land in type 3, the write-combined upload type, and
 the CPU's copy of the 4 MB of results is timed in both cases. Release builds, validation on, synchronization
-validation off, 2026-10-11, nine runs per variant (Rust and C++ alternating):
+validation off, 2026-10-11, six alternating pairs (default, then `--uncached`) per language, 12 runs per variant:
 
-| Outputs in | CPU copy of 4015628 bytes | Throughput |
-|---|---|---|
-| type 4, `HOST_CACHED` (default) | 0.80 - 1.21 ms (2.69 ms in the first C++ run) | 3.3 - 5.0 GB/s |
-| type 3, uncached (`--uncached`) | 23.5 - 29.9 ms | 0.13 - 0.17 GB/s |
+| Outputs in | CPU copy of 4015628 bytes | Throughput | SAXPY on the GPU |
+|---|---|---|---|
+| type 4, `HOST_CACHED` (default) | 0.81 - 1.34 ms, median 1.17 ms | 3.0 - 5.0 GB/s | 590 - 954 us, median 676 us |
+| type 3, uncached (`--uncached`) | 23.6 - 25.4 ms, median 24.4 ms | 0.16 - 0.17 GB/s | 568 - 1260 us, median 697 us |
 
-About 20 to 30 times slower without the cache. Uncached, typically write-combined memory is built for streaming
-*writes*: the CPU combines them into full lines and sends them off. A *read* from it cannot use the CPU caches or their
-prefetching, so every load waits for a round trip to memory. The GPU side does not notice the difference (SAXPY took
-the same time with either type). The rule that follows: memory the CPU reads is `HOST_CACHED`, memory the CPU only
-writes need not be.
+The copy is about 18 to 31 times slower without the cache (about 21x in a typical pair). Uncached, typically
+write-combined memory is built for streaming *writes*: the CPU combines them into full lines and sends them off. A
+*read* from it cannot use the CPU caches or their prefetching, so every load waits for a round trip to memory. The rule
+that follows: memory the CPU reads is `HOST_CACHED`, memory the CPU only writes need not be.
+
+The GPU column is less clear. SAXPY writes its results across PCIe into this host memory either way, and whether the
+CPU-side caching of the target pages changes the cost of those writes (cached pages may have to be kept coherent with
+the CPU's caches, for instance) is up to the platform. In these runs the uncached variant was slower in 8 of the 12
+pairs and its median 21 us higher, but the spread from run to run (568 to 1260 us) is far larger than that difference:
+this measurement does not show a GPU-side cost either way.
 
 ## Checking the answers
 
@@ -444,8 +458,8 @@ from the known bandicam layer warning.
 			q: 'Step 25 waits for a fence before reading the results. Why does it also record a COMPUTE_SHADER -> HOST barrier?',
 			options: [
 				{
-					text: 'A fence only orders and makes visible device accesses; the barrier makes the shader writes visible to the host',
-					why: 'Right: the spec note says a fence does not guarantee host visibility; a memory dependency with destination HOST does.',
+					text: 'A fence covers only device accesses; the barrier makes the shader writes available to the host',
+					why: 'Right: the spec note says a fence does not guarantee host visibility; a memory dependency with destination HOST makes the writes available, and HOST_COHERENT (or an invalidate) makes them visible.',
 				},
 				{
 					text: 'To keep the reduction from starting before SAXPY has finished',
@@ -464,11 +478,11 @@ from the known bandicam layer warning.
 			ref: '#getting-the-results-to-the-cpu',
 		},
 		{
-			q: 'With --uncached, the CPU copy of the results took 23.5 - 29.9 ms instead of 0.80 - 1.21 ms. What follows?',
+			q: 'With --uncached, the CPU copy of the results took 23.6 - 25.4 ms instead of 0.81 - 1.34 ms. What follows?',
 			options: [
 				{
 					text: 'The GPU writes uncached memory more slowly, so SAXPY took longer too',
-					why: 'SAXPY took the same time in both runs; the difference is entirely on the CPU side.',
+					why: 'The runs do not show that: SAXPY medians were 676 and 697 us, with a run-to-run spread of 568 to 1260 us. The twenty-fold difference is the CPU reading the results.',
 				},
 				{
 					text: 'Memory the CPU reads should be HOST_CACHED; uncached, write-combined memory suits data the CPU only writes',
