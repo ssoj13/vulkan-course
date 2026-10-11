@@ -305,12 +305,28 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
   objects[]` + NonUniformResourceIndex). Verified facts: Slang default matrix layout = column-major in memory (SPIR-V
   shows `RowMajor` + MatrixStride 16 and OpVectorTimesMatrix for mul(M, v): HLSL rows map to SPIR-V columns), so the
   host uploads columns; SV_InstanceID needs DrawParameters (BaseInstance) like SV_VertexID, so the shaders use
-  SV_VulkanInstanceID; Slang 2026.1 warns 41012 for NonUniformResourceIndex (claims extra capabilities, the SPIR-V
-  only has RuntimeDescriptorArray + ShaderNonUniform) -> `#pragma warning(disable: 41012)` in bindless.slang.
+  SV_VulkanInstanceID. bindless SPIR-V (review fix 2026-10-11): Slang 2026.1 (SDK 1.4.341.1) did NOT declare
+  `StorageBufferArrayNonUniformIndexing` (5308) for the non-uniform storage-buffer array index = UB per
+  VUID-RuntimeSpirv-StorageBufferArrayNonUniformIndexing-10136 (worked only because NVIDIA is native). Slang has no
+  capability atom for it (`slangc -h capability`: only spvShaderNonUniform[EXT]), so bindless.slang states it with
+  `spirv_asm { OpCapability StorageBufferArrayNonUniformIndexing; }` (slangc hoists it). Second bug: Slang decorated
+  only the descriptor access chain NonUniform, not the derived chain the OpLoad uses (VUID-RuntimeSpirv-subgroupSize-
+  10149 wants the exact pointer operand; Mesa does not chase chains); Slang -O2 drops NonUniform entirely. Upstream
+  shader-slang/slang#10525 (merged 2026-06) - tested Slang 2026.19 (scratch download): emits 5308 itself, but its
+  member-wise loads still go through undecorated derived chains. Fix: `decorateNonUniform` in sync-shaders.ts adds
+  NonUniform to every OpAccessChain/InBounds/Ptr/CopyObject/OpLoad result derived from a NonUniform id (result =
+  glslang's pattern: chain + load decorated); tests pin each .spv's exact capability list (REQUIRED in
+  tests/shaders.test.ts, a new shader must be added) and assert no missing derived NonUniform. Warning 41012 stays
+  silenced: NonUniformResourceIndex is declared with the whole HLSL SM capability set (SPV_GOOGLE_user_type,
+  DerivativeControl, ImageQuery, ...), none of which reaches the SPIR-V; 2026.19 warns the same.
   17: per-slot uniform buffer, persistently mapped (never unmapped; vkFreeMemory unmaps), set layout/pool (maxSets 2,
   no FREE_DESCRIPTOR_SET)/2 sets/one vkUpdateDescriptorSets; `reflect()` parses the SPIR-V (OpName/OpMemberName/
-  OpTypePointer/OpVariable/OpDecorate set+binding/OpMemberDecorate Offset) and the program refuses to start on a
-  mismatch with offset_of!/offsetof. C++ keeps plain set handles via raii `release()` (raii DescriptorSet frees in
+  OpTypePointer/OpVariable/OpDecorate set+binding/OpMemberDecorate Offset, plus RowMajor 4/ColMajor 5/MatrixStride 7)
+  and the program refuses to start on a mismatch with offset_of!/offsetof or if `transform` is not RowMajor +
+  MatrixStride 16 (negative test: transform.spv built with -matrix-layout-row-major -> "layout mismatch: shader
+  transform is ColMajor MatrixStride 16, host expects RowMajor MatrixStride 16"). transform.slang lists the three
+  std140/std430 differences, measured with slangc: array stride rounded to 16; nested struct aligned/sized to 16;
+  MatrixStride 16 vs 8 for matrices with 2-float columns (float2x2, float2x3). C++ keeps plain set handles via raii `release()` (raii DescriptorSet frees in
   its destructor = needs FREE_DESCRIPTOR_SET). 18: `--push-descriptor`; push constants default (80-byte range,
   maxPushConstantsSize 256 here); push descriptors need Vulkan14Features.pushDescriptor enabled
   (VUID-vkCmdPushDescriptorSet-None-10356), maxPushDescriptors 32; device feature enabled only on that path.
@@ -319,16 +335,22 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
   both languages got 0x6f94000 every run, not guaranteed). 20: layout capacity 4096 (checked against UAB limits),
   set variable count 256, 63 written at start, the 64th written at frame 120 while the other slot may be pending;
   binding flags VARIABLE_DESCRIPTOR_COUNT|PARTIALLY_BOUND|UPDATE_AFTER_BIND|UPDATE_UNUSED_WHILE_PENDING, layout
-  UPDATE_AFTER_BIND_POOL, pool UPDATE_AFTER_BIND. Limits on the RTX 3080 Ti: classic and UAB storage-buffer limits
-  all 1048576, maxUpdateAfterBindDescriptorsInAllPools 4294967295, shaderStorageBufferArrayNonUniformIndexingNative
-  true. TRAP: VUID-vkUpdateDescriptorSets-None-03047 is satisfied by UPDATE_AFTER_BIND alone, so validation is silent
+  UPDATE_AFTER_BIND_POOL, pool UPDATE_AFTER_BIND. Capacity checked against min(maxPerStageDescriptorUAB
+  StorageBuffers, maxDescriptorSetUAB StorageBuffers, maxPerStageUpdateAfterBindResources); pool's 256 against
+  maxUpdateAfterBindDescriptorsInAllPools (no VUID: the spec says pool creation may fail beyond it). Limits on the
+  RTX 3080 Ti: classic and UAB storage-buffer limits all 1048576, maxPerStageUpdateAfterBindResources and
+  maxUpdateAfterBindDescriptorsInAllPools 4294967295, shaderStorageBufferArrayNonUniformIndexingNative true.
+  18: "at most one push-descriptor set per pipeline layout" = VUID-VkPipelineLayoutCreateInfo-pSetLayouts-00293
+  (00365 is the vkCmdPushDescriptorSet set-number rule). 19: DEVICE_ADDRESS allocation is required for binding a
+  SHADER_DEVICE_ADDRESS buffer (VUID-vkBindBufferMemory-bufferDeviceAddress-03339; the flag needs the feature,
+  VUID-VkMemoryAllocateInfo-flags-03331). TRAP: VUID-vkUpdateDescriptorSets-None-03047 is satisfied by UPDATE_AFTER_BIND alone, so validation is silent
   without UPDATE_UNUSED_WHILE_PENDING (tried) although only that flag's definition covers updates while pending.
   GPU-AV (VK_KHRONOS_VALIDATION_GPUAV_ENABLE=true): 17/19/20 clean apart from GPU-AV's own setup warnings (it forces
   features like shaderInt64/bufferDeviceAddress and lowers maxUpdateAfterBindDescriptorsInAllPools to 4194304, so 20's
   printed limit changes under GPU-AV). Negative tests (temporary edits, reverted): 19 drawing 65 instances -> GPU-AV
   "Out of bounds access: 32 bytes read at buffer device address 0x6f94800" (VUID-RuntimeSpirv-PhysicalStorageBuffer64-11819);
-  20 drawing one instance more than written (unwritten partially-bound element) -> VK_ERROR_DEVICE_LOST, no GPU-AV
-  message before the loss. Measured (release, sync validation on, 3 s, MAILBOX, not a benchmark): 2000-2900 fps for
+  20 drawing one instance more than written (unwritten partially-bound element) -> VK_ERROR_DEVICE_LOST; GPU-AV
+  printed nothing before the loss in that run (an observation on this machine, not something GPU-AV guarantees). Measured (release, sync validation on, 3 s, MAILBOX, not a benchmark): 2000-2900 fps for
   all four. Logs: scratchpad m9/ (session-local).
 - Module 8 review fixes, round 2 (2026-10-11, EN lessons only; RU memory pages are still placeholders):
   - gpu-allocator experiment (scratch cargo project, deleted after; logs check*.log in the session scratchpad gpualloc/):

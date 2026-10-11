@@ -17,10 +17,14 @@
 //
 // Compiled by `bun run sync:shaders` into shaders/spv/bindless.spv.
 
-// Slang 2026.1 (SDK 1.4.341.1) declares NonUniformResourceIndex with a broad
-// capability set and warns (41012) that it widened the spirv_1_6 profile. The
-// SPIR-V it emits needs only RuntimeDescriptorArray + ShaderNonUniform
-// (checked with spirv-dis), so the warning is silenced for this file.
+// Slang's core module declares NonUniformResourceIndex with the whole HLSL
+// shader-model capability set (image queries, derivatives, sparse residency,
+// ...), so slangc warns (41012) that it widened the spirv_1_6 profile with
+// them. The widening is the compiler's own bookkeeping: none of those
+// capabilities reaches the SPIR-V (checked with spirv-dis; Slang 2026.1 from
+// SDK 1.4.341.1 and Slang 2026.19 both warn and both emit none of them), so
+// the warning is silenced for this file. The capabilities the module DOES
+// declare are pinned in tests/shaders.test.ts.
 #pragma warning(disable: 41012)
 
 // One hexagon instance: 32 bytes, std430 (StructuredBuffer): offset 0,
@@ -62,15 +66,37 @@ struct VSOutput
     float3 color : COLOR0;
 };
 
+// Reads element 0 of buffer `index` of the array, where `index` may differ
+// between the invocations of one draw.
+Instance loadInstance(uint index)
+{
+    // A module may index an array of storage buffers non-uniformly only if it
+    // declares the StorageBufferArrayNonUniformIndexing capability (allowed by
+    // the shaderStorageBufferArrayNonUniformIndexing feature); without it the
+    // index must be dynamically uniform
+    // (VUID-RuntimeSpirv-StorageBufferArrayNonUniformIndexing-10136).
+    // Slang 2026.1 neither emits it nor has a capability atom for it, so it is
+    // stated here in inline SPIR-V; slangc moves OpCapability to the module's
+    // capability list.
+    spirv_asm { OpCapability StorageBufferArrayNonUniformIndexing; };
+    // NonUniformResourceIndex makes slangc decorate the access chain that
+    // selects the descriptor NonUniform. Vulkan wants the decoration on the
+    // pointer the load itself uses (VUID-RuntimeSpirv-subgroupSize-10149),
+    // and here that is a second access chain derived from the first (into the
+    // buffer's element 0). Slang 2026.1 leaves it undecorated, so
+    // `bun run sync:shaders` decorates every pointer derived from a NonUniform
+    // one (decorateNonUniform in scripts/sync-shaders.ts).
+    return objects[NonUniformResourceIndex(index)][0];
+}
+
 [shader("vertex")]
 VSOutput vertexMain(VSInput input, uint instance : SV_VulkanInstanceID)
 {
     // Vertices of different instances can run in the same subgroup (warp), so
-    // the index is not the same for all of them: NonUniformResourceIndex
-    // decorates the access NonUniform. Without it, a GPU that keeps
-    // descriptors in scalar (per-subgroup) registers may use one lane's
-    // descriptor for all lanes.
-    Instance inst = objects[NonUniformResourceIndex(instance)][0];
+    // the index is not the same for all of them. Without the NonUniform
+    // decoration, a GPU that keeps descriptors in scalar (per-subgroup)
+    // registers may use one lane's descriptor for all lanes.
+    Instance inst = loadInstance(instance);
     float a = inst.phase + push.time * inst.spin;
     float2 p = input.position * inst.scale;
     p = float2(p.x * cos(a) - p.y * sin(a), p.x * sin(a) + p.y * cos(a)) + inst.offset;

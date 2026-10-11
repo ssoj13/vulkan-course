@@ -10,12 +10,12 @@
 	"shaders": [
 		{
 			"source": "bindless.slang",
-			"sourceSha256": "95a694a76c817e288e3e565c9ae26464c8f9b93cf491bd16a6c20329148b2211",
+			"sourceSha256": "4152e3c601d6778ce9fd51f09fd1db115259fd3050a20aba09f9a54eeb2875a9",
 			"outputs": [
 				{
 					"file": "bindless.spv",
-					"bytes": 2704,
-					"sha256": "d3c3f9609adf13d4dabbf63fedb954a2db48d4c640704e84a4a6de181764c440"
+					"bytes": 2736,
+					"sha256": "ee5dd664fe13da817558860cef79a557721cd093226fe90a650765f613bf1e08"
 				}
 			]
 		},
@@ -43,7 +43,7 @@
 		},
 		{
 			"source": "transform.slang",
-			"sourceSha256": "ab5bc0027359c16ade04e5ba40643d01601e893d18921225fe614bedc2798d6c",
+			"sourceSha256": "58a096e96aedce13013dd6b5e84fdd37bd72d1aeb1e139ff8b5a5550d0b79817",
 			"outputs": [
 				{
 					"file": "transform.spv",

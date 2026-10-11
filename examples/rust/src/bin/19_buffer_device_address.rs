@@ -220,10 +220,12 @@ struct GpuBuffer {
 
 // #region create-buffer
 /// Step 14's manual path with one addition: `alloc_flags` goes into
-/// VkMemoryAllocateFlagsInfo. A buffer whose device address is queried must
-/// be bound to memory allocated with DEVICE_ADDRESS (the driver then places
-/// the allocation where it can hand out stable GPU addresses); empty flags
-/// are a plain allocation.
+/// VkMemoryAllocateFlagsInfo. DEVICE_ADDRESS is required, not a hint: a
+/// buffer with SHADER_DEVICE_ADDRESS usage may only be bound to memory
+/// allocated with it (VUID-vkBindBufferMemory-bufferDeviceAddress-03339), and
+/// the flag itself needs the bufferDeviceAddress feature
+/// (VUID-VkMemoryAllocateInfo-flags-03331). Empty flags are a plain
+/// allocation.
 fn create_buffer(
     device: &ash::Device,
     props: &vk::PhysicalDeviceMemoryProperties,

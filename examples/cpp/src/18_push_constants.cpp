@@ -605,8 +605,8 @@ try {
         // Step 17's set layout plus one flag: ePushDescriptor. Sets of this
         // layout are never allocated; the descriptors are pushed into the
         // command buffer. At most one set of a pipeline layout may be a
-        // push-descriptor set (VUID-vkCmdPushDescriptorSet-set-00365), and it
-        // holds at most maxPushDescriptors descriptors.
+        // push-descriptor set (VUID-VkPipelineLayoutCreateInfo-pSetLayouts-00293),
+        // and it holds at most maxPushDescriptors descriptors.
         const vk::DescriptorSetLayoutBinding setBinding{
             .binding         = 0,
             .descriptorType  = vk::DescriptorType::eUniformBuffer,

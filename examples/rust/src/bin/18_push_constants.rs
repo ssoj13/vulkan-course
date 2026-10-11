@@ -702,8 +702,8 @@ impl Vk {
                 // this layout are never allocated; the descriptors are pushed
                 // into the command buffer. At most one set of a pipeline
                 // layout may be a push-descriptor set
-                // (VUID-vkCmdPushDescriptorSet-set-00365), and it holds at
-                // most maxPushDescriptors descriptors.
+                // (VUID-VkPipelineLayoutCreateInfo-pSetLayouts-00293), and it
+                // holds at most maxPushDescriptors descriptors.
                 let set_bindings = [vk::DescriptorSetLayoutBinding::default()
                     .binding(0)
                     .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)

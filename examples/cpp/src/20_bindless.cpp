@@ -500,14 +500,26 @@ try {
     std::println("  maxPerStageDescriptorUpdateAfterBindStorageBuffers = {} (UPDATE_AFTER_BIND sets)",
                  props12.maxPerStageDescriptorUpdateAfterBindStorageBuffers);
     std::println("  maxDescriptorSetUpdateAfterBindStorageBuffers      = {}", props12.maxDescriptorSetUpdateAfterBindStorageBuffers);
+    std::println("  maxPerStageUpdateAfterBindResources                = {} (all resource types)",
+                 props12.maxPerStageUpdateAfterBindResources);
     std::println("  maxUpdateAfterBindDescriptorsInAllPools            = {}", props12.maxUpdateAfterBindDescriptorsInAllPools);
     std::println("  shaderStorageBufferArrayNonUniformIndexingNative   = {}",
                  props12.shaderStorageBufferArrayNonUniformIndexingNative == vk::True);
-    const uint32_t cap =
-        std::min(props12.maxPerStageDescriptorUpdateAfterBindStorageBuffers, props12.maxDescriptorSetUpdateAfterBindStorageBuffers);
+    // The layout gives the vertex stage capacity storage buffers and nothing
+    // else, so capacity counts against the per-stage and per-set storage buffer
+    // limits and the per-stage limit for all resources.
+    const uint32_t cap = std::min({props12.maxPerStageDescriptorUpdateAfterBindStorageBuffers,
+                                   props12.maxDescriptorSetUpdateAfterBindStorageBuffers, props12.maxPerStageUpdateAfterBindResources});
     if (capacity > cap) {
         throw std::runtime_error(
             std::format("the layout's {} storage buffers exceed this device's update-after-bind limit {}", capacity, cap));
+    }
+    // The pool holds allocated descriptors. All UPDATE_AFTER_BIND pools
+    // together share maxUpdateAfterBindDescriptorsInAllPools; beyond it, pool
+    // creation may fail.
+    if (allocated > props12.maxUpdateAfterBindDescriptorsInAllPools) {
+        throw std::runtime_error(std::format("the pool's {} descriptors exceed maxUpdateAfterBindDescriptorsInAllPools {}", allocated,
+                                             props12.maxUpdateAfterBindDescriptorsInAllPools));
     }
     std::println("This program: layout capacity {}, one set of {}, {} buffers written", capacity, allocated, initial + 1);
     // #endregion

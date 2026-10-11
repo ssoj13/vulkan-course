@@ -558,6 +558,10 @@ impl Vk {
             props12.max_descriptor_set_update_after_bind_storage_buffers
         );
         println!(
+            "  maxPerStageUpdateAfterBindResources                = {} (all resource types)",
+            props12.max_per_stage_update_after_bind_resources
+        );
+        println!(
             "  maxUpdateAfterBindDescriptorsInAllPools            = {}",
             props12.max_update_after_bind_descriptors_in_all_pools
         );
@@ -565,12 +569,26 @@ impl Vk {
             "  shaderStorageBufferArrayNonUniformIndexingNative   = {}",
             props12.shader_storage_buffer_array_non_uniform_indexing_native != 0
         );
+        // The layout gives the vertex stage CAPACITY storage buffers and
+        // nothing else, so CAPACITY counts against the per-stage and per-set
+        // storage buffer limits and the per-stage limit for all resources.
         let cap = props12
             .max_per_stage_descriptor_update_after_bind_storage_buffers
-            .min(props12.max_descriptor_set_update_after_bind_storage_buffers);
+            .min(props12.max_descriptor_set_update_after_bind_storage_buffers)
+            .min(props12.max_per_stage_update_after_bind_resources);
         if CAPACITY > cap {
             return Err(format!(
                 "the layout's {CAPACITY} storage buffers exceed this device's update-after-bind limit {cap}"
+            )
+            .into());
+        }
+        // The pool holds ALLOCATED descriptors. All UPDATE_AFTER_BIND pools
+        // together share maxUpdateAfterBindDescriptorsInAllPools; beyond it,
+        // pool creation may fail.
+        if ALLOCATED > props12.max_update_after_bind_descriptors_in_all_pools {
+            return Err(format!(
+                "the pool's {ALLOCATED} descriptors exceed maxUpdateAfterBindDescriptorsInAllPools {}",
+                props12.max_update_after_bind_descriptors_in_all_pools
             )
             .into());
         }

@@ -248,10 +248,11 @@ struct GpuBuffer {
 
 // #region create-buffer
 // Step 14's manual path with one addition: allocFlags goes into
-// VkMemoryAllocateFlagsInfo. A buffer whose device address is queried must be
-// bound to memory allocated with eDeviceAddress (the driver then places the
-// allocation where it can hand out stable GPU addresses); empty flags are a
-// plain allocation.
+// VkMemoryAllocateFlagsInfo. eDeviceAddress is required, not a hint: a buffer
+// with eShaderDeviceAddress usage may only be bound to memory allocated with it
+// (VUID-vkBindBufferMemory-bufferDeviceAddress-03339), and the flag itself
+// needs the bufferDeviceAddress feature (VUID-VkMemoryAllocateInfo-flags-03331).
+// Empty flags are a plain allocation.
 GpuBuffer createBuffer(const vk::raii::Device& device, const vk::PhysicalDeviceMemoryProperties& props, vk::DeviceSize size,
                        vk::BufferUsageFlags usage, vk::MemoryPropertyFlags flags, vk::MemoryAllocateFlags allocFlags) {
     vk::raii::Buffer buffer(device, vk::BufferCreateInfo{

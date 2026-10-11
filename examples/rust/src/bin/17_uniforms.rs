@@ -119,7 +119,8 @@ const INDICES: [u16; 18] = [
 /// gives the same offsets here (0, 64, 76) because every field is f32 and
 /// the struct is ordered to need no padding; a float3 followed by another
 /// float3 would NOT match (std140 puts the second at +16, repr(C) at +12).
-/// `reflect` below checks the offsets against the SPIR-V.
+/// `reflect` below checks the offsets and the matrix layout against the
+/// SPIR-V.
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct FrameUniforms {
@@ -132,11 +133,16 @@ struct FrameUniforms {
 }
 const _: () = assert!(size_of::<FrameUniforms>() == 80);
 
-/// Field names and host offsets, in declaration order, for the comparison.
-const HOST_LAYOUT: [(&str, usize); 3] = [
-    ("transform", std::mem::offset_of!(FrameUniforms, transform)),
-    ("tint", std::mem::offset_of!(FrameUniforms, tint)),
-    ("time", std::mem::offset_of!(FrameUniforms, time)),
+/// Field names, host offsets and whether the field is a matrix (stored as
+/// four 16-byte columns), in declaration order, for the comparison.
+const HOST_LAYOUT: [(&str, usize, bool); 3] = [
+    (
+        "transform",
+        std::mem::offset_of!(FrameUniforms, transform),
+        true,
+    ),
+    ("tint", std::mem::offset_of!(FrameUniforms, tint), false),
+    ("time", std::mem::offset_of!(FrameUniforms, time), false),
 ];
 // #endregion
 
@@ -161,11 +167,22 @@ fn transform(angle: f32, aspect: f32) -> [[f32; 4]; 4] {
 // #endregion
 
 // #region reflect
-/// A block as the SPIR-V module declares it: the struct's name and each
-/// member's (name, Offset decoration), in member order.
+/// A block as the SPIR-V module declares it: the struct's name and its
+/// members, in member order.
 struct Block {
     name: String,
-    members: Vec<(String, u32)>,
+    members: Vec<Member>,
+}
+
+/// One block member: its name, its Offset decoration and, for a matrix, how
+/// the matrix lies in memory.
+struct Member {
+    name: String,
+    offset: u32,
+    /// (RowMajor?, MatrixStride) for a matrix member, `None` otherwise.
+    /// RowMajor means consecutive floats walk along a SPIR-V row; MatrixStride
+    /// is the byte distance between two of the vectors stored that way.
+    matrix: Option<(bool, u32)>,
 }
 
 /// Decodes a SPIR-V literal string: UTF-8 bytes packed little-endian into
@@ -183,8 +200,9 @@ fn spv_string(words: &[u32]) -> String {
 /// the SPIR-V the pipeline uses - what reflection libraries (SPIRV-Reflect,
 /// slangc -reflection-json) do, reduced to the four instructions it needs:
 /// the variable with DescriptorSet/Binding decorations, its pointer type,
-/// the struct it points to, and that struct's OpMemberDecorate Offset. Names
-/// come from OpName/OpMemberName debug info, which slangc emits by default.
+/// the struct it points to, and that struct's OpMemberDecorate Offset (plus
+/// RowMajor/ColMajor and MatrixStride on matrix members). Names come from
+/// OpName/OpMemberName debug info, which slangc emits by default.
 fn reflect(words: &[u32], set: u32, binding: u32) -> Result<Block, Box<dyn Error>> {
     const OP_NAME: u32 = 5;
     const OP_MEMBER_NAME: u32 = 6;
@@ -192,6 +210,9 @@ fn reflect(words: &[u32], set: u32, binding: u32) -> Result<Block, Box<dyn Error
     const OP_VARIABLE: u32 = 59;
     const OP_DECORATE: u32 = 71;
     const OP_MEMBER_DECORATE: u32 = 72;
+    const ROW_MAJOR: u32 = 4;
+    const COL_MAJOR: u32 = 5;
+    const MATRIX_STRIDE: u32 = 7;
     const BINDING: u32 = 33;
     const DESCRIPTOR_SET: u32 = 34;
     const OFFSET: u32 = 35;
@@ -199,6 +220,8 @@ fn reflect(words: &[u32], set: u32, binding: u32) -> Result<Block, Box<dyn Error
     let mut names = HashMap::new();
     let mut member_names = HashMap::new();
     let mut offsets = HashMap::new();
+    let mut row_major = HashMap::new();
+    let mut strides = HashMap::new();
     let mut pointees = HashMap::new();
     let mut variables = Vec::new();
     let mut sets = HashMap::new();
@@ -232,6 +255,12 @@ fn reflect(words: &[u32], set: u32, binding: u32) -> Result<Block, Box<dyn Error
             (OP_MEMBER_DECORATE, [_, id, member, OFFSET, value]) => {
                 offsets.insert((*id, *member), *value);
             }
+            (OP_MEMBER_DECORATE, [_, id, member, major @ (ROW_MAJOR | COL_MAJOR)]) => {
+                row_major.insert((*id, *member), *major == ROW_MAJOR);
+            }
+            (OP_MEMBER_DECORATE, [_, id, member, MATRIX_STRIDE, value]) => {
+                strides.insert((*id, *member), *value);
+            }
             _ => {}
         }
         pos += count;
@@ -249,8 +278,16 @@ fn reflect(words: &[u32], set: u32, binding: u32) -> Result<Block, Box<dyn Error
         let Some(&offset) = offsets.get(&(block, i)) else {
             break;
         };
-        let name = member_names.get(&(block, i)).cloned().unwrap_or_default();
-        members.push((name, offset));
+        // A matrix member carries MatrixStride and RowMajor or ColMajor; one
+        // without RowMajor counts as ColMajor here.
+        let matrix = strides
+            .get(&(block, i))
+            .map(|&stride| (row_major.get(&(block, i)) == Some(&true), stride));
+        members.push(Member {
+            name: member_names.get(&(block, i)).cloned().unwrap_or_default(),
+            offset,
+            matrix,
+        });
     }
     Ok(Block {
         name: names.get(&block).cloned().unwrap_or_default(),
@@ -694,11 +731,37 @@ impl Vk {
             )
             .into());
         }
-        for ((name, spv), (host_name, host)) in block.members.iter().zip(HOST_LAYOUT) {
-            println!("  {name:<10} SPIR-V offset {spv:>2}, host struct offset {host:>2}");
-            if name != host_name || usize::try_from(*spv)? != host {
+        // A host matrix is 4 columns of 4 floats, 16 bytes apart. Slang's
+        // column-major matrix shows up in SPIR-V as RowMajor (an HLSL row is
+        // a SPIR-V column, see transform.slang), so the shader must say
+        // RowMajor + MatrixStride 16; ColMajor would read the transpose.
+        const HOST_MATRIX: (bool, u32) = (true, 16);
+        let describe = |m: Option<(bool, u32)>| match m {
+            Some((row_major, stride)) => {
+                let major = if row_major { "RowMajor" } else { "ColMajor" };
+                format!("{major} MatrixStride {stride}")
+            }
+            None => "not a matrix".to_owned(),
+        };
+        for (m, (host_name, host, host_matrix)) in block.members.iter().zip(HOST_LAYOUT) {
+            let (name, spv) = (&m.name, m.offset);
+            print!("  {name:<10} SPIR-V offset {spv:>2}, host struct offset {host:>2}");
+            if m.matrix.is_some() {
+                print!(", {} (host: 16-byte columns)", describe(m.matrix));
+            }
+            println!();
+            if name != host_name || usize::try_from(spv)? != host {
                 return Err(format!(
                     "layout mismatch: shader {name} at {spv}, host {host_name} at {host}"
+                )
+                .into());
+            }
+            let expected = host_matrix.then_some(HOST_MATRIX);
+            if m.matrix != expected {
+                return Err(format!(
+                    "layout mismatch: shader {name} is {}, host expects {}",
+                    describe(m.matrix),
+                    describe(expected)
                 )
                 .into());
             }

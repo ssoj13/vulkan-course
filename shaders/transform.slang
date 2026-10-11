@@ -16,9 +16,16 @@
 //     FrameUniforms_std140). A float3 is 16-byte aligned but 12 bytes long,
 //     so a following float packs into its last 4 bytes: tint at 64, time at 76.
 //   [[vk::push_constant]] (PushConstant storage) -> std430
-//     (FrameUniforms_std430). Same offsets for THIS struct; std140 differs
-//     from std430 for arrays of scalars/vectors (std140 rounds every array
-//     element up to 16 bytes) and for structs nested in arrays.
+//     (FrameUniforms_std430). Same offsets for THIS struct. std140 differs
+//     from std430 in three places (checked with slangc + spirv-dis):
+//     - arrays: std140 rounds the stride up to 16 bytes, so float[2] and
+//       float2[2] take 16 bytes per element (std430: 4 and 8);
+//     - nested structs, inside an array or not: std140 aligns a struct member
+//       to 16 and rounds its size up to 16, so a member after it moves too
+//       (struct { float a; } then a float: std140 +16, std430 +4);
+//     - matrices whose stored vectors are 2 floats (float2x2, float2x3 here:
+//       Slang stores columns, a float2xN column has 2 floats): MatrixStride
+//       16 in std140, 8 in std430. Columns of 3 or 4 floats are 16 in both.
 // Matrices: Slang's default is column-major in memory (consecutive floats walk
 // down a column, like GLM/glam), so the host uploads columns. In SPIR-V that
 // shows up as the RowMajor decoration, because Slang maps an HLSL row to a

@@ -171,7 +171,7 @@ constexpr std::array<uint16_t, 18> indices{
 // gives the same offsets here (0, 64, 76) because every field is float and the
 // struct is ordered to need no padding; a float3 followed by another float3
 // would NOT match (std140 puts the second at +16, C++ at +12). reflect() below
-// checks the offsets against the SPIR-V.
+// checks the offsets and the matrix layout against the SPIR-V.
 struct FrameUniforms {
     std::array<std::array<float, 4>, 4> transform; // column-major: transform[c] is column c (Slang's default)
     std::array<float, 3> tint;                     // linear RGB multiplier
@@ -179,11 +179,17 @@ struct FrameUniforms {
 };
 static_assert(sizeof(FrameUniforms) == 80);
 
-// Field names and host offsets, in declaration order, for the comparison.
-constexpr std::array<std::pair<std::string_view, size_t>, 3> hostLayout{{
-    {"transform", offsetof(FrameUniforms, transform)},
-    {"tint", offsetof(FrameUniforms, tint)},
-    {"time", offsetof(FrameUniforms, time)},
+// Field names, host offsets and whether the field is a matrix (stored as four
+// 16-byte columns), in declaration order, for the comparison.
+struct HostField {
+    std::string_view name;
+    size_t offset;
+    bool matrix;
+};
+constexpr std::array<HostField, 3> hostLayout{{
+    {"transform", offsetof(FrameUniforms, transform), true},
+    {"tint", offsetof(FrameUniforms, tint), false},
+    {"time", offsetof(FrameUniforms, time), false},
 }};
 // #endregion
 
@@ -209,11 +215,28 @@ std::array<std::array<float, 4>, 4> transform(float angle, float aspect) {
 // #endregion
 
 // #region reflect
-// A block as the SPIR-V module declares it: the struct's name and each
-// member's (name, Offset decoration), in member order.
+// How a matrix member lies in memory. RowMajor means consecutive floats walk
+// along a SPIR-V row; stride (MatrixStride) is the byte distance between two
+// of the vectors stored that way.
+struct MatrixLayout {
+    bool rowMajor;
+    uint32_t stride;
+    bool operator==(const MatrixLayout&) const = default;
+};
+
+// One block member: its name, its Offset decoration and, for a matrix, its
+// MatrixLayout.
+struct Member {
+    std::string name;
+    uint32_t offset;
+    std::optional<MatrixLayout> matrix;
+};
+
+// A block as the SPIR-V module declares it: the struct's name and its
+// members, in member order.
 struct Block {
     std::string name;
-    std::vector<std::pair<std::string, uint32_t>> members;
+    std::vector<Member> members;
 };
 
 // Decodes a SPIR-V literal string: UTF-8 bytes packed little-endian into
@@ -236,7 +259,8 @@ std::string spvString(std::span<const uint32_t> words) {
 // SPIR-V the pipeline uses - what reflection libraries (SPIRV-Reflect, slangc
 // -reflection-json) do, reduced to the four instructions it needs: the
 // variable with DescriptorSet/Binding decorations, its pointer type, the struct
-// it points to, and that struct's OpMemberDecorate Offset. Names come from
+// it points to, and that struct's OpMemberDecorate Offset (plus RowMajor/
+// ColMajor and MatrixStride on matrix members). Names come from
 // OpName/OpMemberName debug info, which slangc emits by default.
 Block reflect(std::span<const uint32_t> words, uint32_t set, uint32_t binding) {
     constexpr uint32_t opName           = 5;
@@ -245,14 +269,19 @@ Block reflect(std::span<const uint32_t> words, uint32_t set, uint32_t binding) {
     constexpr uint32_t opVariable       = 59;
     constexpr uint32_t opDecorate       = 71;
     constexpr uint32_t opMemberDecorate = 72;
+    constexpr uint32_t decRowMajor      = 4;
+    constexpr uint32_t decColMajor      = 5;
+    constexpr uint32_t decMatrixStride  = 7;
     constexpr uint32_t decBinding       = 33;
     constexpr uint32_t decDescriptorSet = 34;
     constexpr uint32_t decOffset        = 35;
 
-    using Member = std::pair<uint32_t, uint32_t>; // (struct id, member index)
+    using MemberKey = std::pair<uint32_t, uint32_t>; // (struct id, member index)
     std::map<uint32_t, std::string> names;
-    std::map<Member, std::string> memberNames;
-    std::map<Member, uint32_t> offsets;
+    std::map<MemberKey, std::string> memberNames;
+    std::map<MemberKey, uint32_t> offsets;
+    std::map<MemberKey, bool> rowMajor;
+    std::map<MemberKey, uint32_t> strides;
     std::map<uint32_t, uint32_t> pointees;
     std::vector<std::pair<uint32_t, uint32_t>> variables; // (id, type)
     std::map<uint32_t, uint32_t> sets;
@@ -282,6 +311,10 @@ Block reflect(std::span<const uint32_t> words, uint32_t set, uint32_t binding) {
             bindings[ins[1]] = ins[3];
         } else if (op == opMemberDecorate && count == 5 && ins[3] == decOffset) {
             offsets[{ins[1], ins[2]}] = ins[4];
+        } else if (op == opMemberDecorate && count == 4 && (ins[3] == decRowMajor || ins[3] == decColMajor)) {
+            rowMajor[{ins[1], ins[2]}] = ins[3] == decRowMajor;
+        } else if (op == opMemberDecorate && count == 5 && ins[3] == decMatrixStride) {
+            strides[{ins[1], ins[2]}] = ins[4];
         }
         pos += count;
     }
@@ -307,7 +340,18 @@ Block reflect(std::span<const uint32_t> words, uint32_t set, uint32_t binding) {
             break;
         }
         const auto name = memberNames.find({block, i});
-        out.members.emplace_back(name != memberNames.end() ? name->second : std::string{}, offset->second);
+        // A matrix member carries MatrixStride and RowMajor or ColMajor; one
+        // without RowMajor counts as ColMajor here.
+        std::optional<MatrixLayout> matrix;
+        if (const auto stride = strides.find({block, i}); stride != strides.end()) {
+            const auto major = rowMajor.find({block, i});
+            matrix           = MatrixLayout{.rowMajor = major != rowMajor.end() && major->second, .stride = stride->second};
+        }
+        out.members.push_back(Member{
+            .name   = name != memberNames.end() ? name->second : std::string{},
+            .offset = offset->second,
+            .matrix = matrix,
+        });
     }
     return out;
 }
@@ -650,12 +694,30 @@ try {
         throw std::runtime_error(
             std::format("the shader's block has {} members, the host struct {}", block.members.size(), hostLayout.size()));
     }
+    // A host matrix is 4 columns of 4 floats, 16 bytes apart. Slang's
+    // column-major matrix shows up in SPIR-V as RowMajor (an HLSL row is a
+    // SPIR-V column, see transform.slang), so the shader must say RowMajor +
+    // MatrixStride 16; ColMajor would read the transpose.
+    constexpr MatrixLayout hostMatrix{.rowMajor = true, .stride = 16};
+    const auto describe = [](const std::optional<MatrixLayout>& m) {
+        return m ? std::format("{} MatrixStride {}", m->rowMajor ? "RowMajor" : "ColMajor", m->stride) : std::string{"not a matrix"};
+    };
     for (size_t i = 0; i < hostLayout.size(); ++i) {
-        const auto& [name, spv]       = block.members[i];
-        const auto& [hostName, host] = hostLayout[i];
-        std::println("  {:<10} SPIR-V offset {:>2}, host struct offset {:>2}", name, spv, host);
-        if (name != hostName || spv != host) {
-            throw std::runtime_error(std::format("layout mismatch: shader {} at {}, host {} at {}", name, spv, hostName, host));
+        const Member& m          = block.members[i];
+        const HostField& field   = hostLayout[i];
+        std::print("  {:<10} SPIR-V offset {:>2}, host struct offset {:>2}", m.name, m.offset, field.offset);
+        if (m.matrix) {
+            std::print(", {} (host: 16-byte columns)", describe(m.matrix));
+        }
+        std::println("");
+        if (m.name != field.name || m.offset != field.offset) {
+            throw std::runtime_error(
+                std::format("layout mismatch: shader {} at {}, host {} at {}", m.name, m.offset, field.name, field.offset));
+        }
+        const std::optional<MatrixLayout> expected = field.matrix ? std::optional{hostMatrix} : std::nullopt;
+        if (m.matrix != expected) {
+            throw std::runtime_error(
+                std::format("layout mismatch: shader {} is {}, host expects {}", m.name, describe(m.matrix), describe(expected)));
         }
     }
     std::println("Host struct: {} bytes, every offset matches: the CPU can copy it byte for byte", sizeof(FrameUniforms));
