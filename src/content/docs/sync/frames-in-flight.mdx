@@ -7,6 +7,8 @@ import { Aside } from '@astrojs/starlight/components';
 import MindMap from 'course-kit/components/MindMap.astro';
 import Quiz from 'course-kit/components/Quiz.astro';
 import Step from '../../../components/Step.astro';
+import Shots from '../../../components/Shots.astro';
+import shot10 from '../../../assets/10_frames_in_flight.png';
 
 In step 09 the CPU waits for the GPU at the start of every frame, so the two take turns: while one works, the other
 idles. How do we let them work at the same time, what has to be duplicated so they do not step on each other, and how
@@ -106,6 +108,17 @@ The GPU half is `--draws` instances of the triangle (default 5000), all on the s
 The clear color changes every frame, and it is a value **inside** the command buffer (`vkCmdBeginRendering` records it).
 If frame N+1 re-recorded the buffer that frame N still executes, the GPU could read a half-rewritten buffer: that is
 exactly what the per-slot command buffers prevent. The same logic will apply to every per-frame resource later.
+
+<Shots
+	shots={[
+		{
+			src: shot10,
+			alt: 'The step 10 window: the step 09 triangle on a muted red background',
+			caption:
+				'One frame of step 10 (Rust, release, 800 x 600). The triangle is step 09\'s; the background is this frame\'s clear color. Its three channels are sines 2.1 rad (about 120°) apart, so their linear values always add up to about 0.3: measured 0.300 in this screenshot.',
+		},
+	]}
+/>
 
 ## 4. Next frame, next slot
 

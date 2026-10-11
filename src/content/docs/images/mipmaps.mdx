@@ -6,6 +6,9 @@ description: 'Why a textured floor shimmers in the distance and how a prefiltere
 import MindMap from 'course-kit/components/MindMap.astro';
 import Quiz from 'course-kit/components/Quiz.astro';
 import Step from '../../../components/Step.astro';
+import Shots from '../../../components/Shots.astro';
+import shot23 from '../../../assets/23_mipmaps.png';
+import shot23nomips from '../../../assets/23_mipmaps_no_mips.png';
 
 Step 23 lays step 21's sampling onto a checkerboard floor that runs to the horizon. Near the camera a texel covers many
 pixels and filtering looks smooth. Far away it is the other way round: dozens of texels fall into one pixel, the
@@ -201,13 +204,30 @@ default          Sampler: LINEAR filters, mipmapMode LINEAR, minLod 0, maxLod 10
 
 - **`--no-mips`** keeps the image and its ten levels and changes one sampler field: `maxLod = 0`. λ can no longer
   exceed 0, so only level 0 is ever read, and, as in step 21, the texture always counts as magnified and `magFilter`
-  is used. Expect the far floor to shimmer when the camera moves: this is the aliasing mipmaps exist to prevent.
-- **default** (trilinear): the far floor should settle into a steady average, the checkerboard fading toward gray in
-  the distance, which is what the prefiltered levels contain.
-- **`--anisotropy`**: the same, with the cells staying distinct further toward the horizon, because finer levels are
-  read along the squeezed axis.
+  is used. The far floor breaks into moiré: the aliasing mipmaps exist to prevent.
+- **default** (trilinear): the far floor settles into a steady average, the checkerboard fading toward gray in the
+  distance, which is what the prefiltered levels contain.
+- **`--anisotropy`**: expected to be the same, with the cells staying distinct further toward the horizon, because
+  finer levels are read along the squeezed axis (no screenshot of this run was taken).
 
-(These are the expected results of the sampling rules; no screenshots of step 23 were taken for this lesson.)
+The first two, captured from two runs (the camera glides, so its position differs slightly between them):
+
+<Shots
+	shots={[
+		{
+			src: shot23,
+			alt: 'Step 23 with mipmaps: a checkerboard floor fading smoothly into an even, slightly blurry gray toward the horizon',
+			caption:
+				'Default (trilinear, 10 levels), Rust, release, 800 x 600. The mean difference between horizontal neighbors (in 8-bit levels) on the far rows 205-230 is 0.1 (rows 230-260: 0.1): an even average. Near the camera (rows 500-600) it is 8.3. The far floor is blurry: isotropic trilinear filtering follows the larger footprint axis, which --anisotropy addresses.',
+		},
+		{
+			src: shot23nomips,
+			alt: 'Step 23 with --no-mips: the far part of the floor breaks into high-contrast moiré patterns',
+			caption:
+				'--no-mips (maxLod 0, level 0 only): the same measurement gives 114.5 on rows 205-230 and 63.4 on rows 230-260, the moiré you see; near the camera 8.5, the same as with mips. Shimmer over time is not something a single frame can show and was not measured.',
+		},
+	]}
+/>
 
 What it costs on the course GPU: nothing measurable in this scene. Three alternating 3-second runs of each (Rust,
 release, validation on): default 2646-2881 fps, `--no-mips` 2773-2847, `--anisotropy` 2722-2817. One floor quad at

@@ -431,6 +431,12 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
     VUID-04101 (whose text is "There must be less than ...maxMemoryAllocationCount..."). The maintenance8 feature rule
     for VK_DEPENDENCY_QUEUE_FAMILY_OWNERSHIP_TRANSFER_USE_ALL_STAGES_BIT_KHR exists for vkCmdPipelineBarrier (10206)
     and vkCmdWaitEvents2 (10205) only, not for vkCmdPipelineBarrier2 (validusage.json, SDK 1.4.341).
+- Screenshots (2026-10-11): originals in `examples/screenshots/` (800x600 client area, Rust release), captured with
+  PrintWindow PW_CLIENTONLY|PW_RENDERFULLCONTENT (screen grabs can catch overlapping windows); lesson copies plus
+  `*_zoom.png` crops (100x75 region, 4x nearest upscale, made with Pillow) in `src/assets/`, embedded only through
+  `src/components/Shots.astro` (PNG on purpose: captions quote measured pixels; verified the built PNGs are
+  pixel-identical). 17's binary predates later comment-only changes; the image is unaffected. 15, 18,
+  21_texture_nearest and 24 full frames are captured but not embedded.
 
 ## TODO
 
@@ -438,11 +444,10 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
   the RTX 3080 Ti with VK_KHRONOS_VALIDATION_VALIDATE_SYNC=true: zero messages except the bandicam API-version warning;
   stdout identical Rust vs C++ without `[timing]` lines (10: --frames 1/2/3; 11: both present paths; 12: --frames 1/2/3).
   Details in State "examples 10-12". Logs: scratchpad m7/ (session-local).
-- [ ] Screenshots of 10/11/12: NOT taken. On 2026-10-11 ~03:00 every Vulkan window (also step 09, which worked on 10-10)
-  showed a white client area in GDI/PrintWindow/MCP captures and in a full-screen capture; retake when the desktop shows
-  them again (`examples/screenshots/{10_frames_in_flight,11_resize,12_timeline}.png`, 11 after --demo-resize).
+- [x] Screenshots of 10/11/12 (2026-10-11, see State "Screenshots"): 10 in frames-in-flight, 11 (640x480 after
+  --demo-resize) in swapchain-recreation, 12 + zoom in barriers-and-layouts (EN + RU).
 - [x] Module 7 EN lessons (2026-10-11): sync/{fences-and-semaphores (embeds QueueSync), frames-in-flight,
-  barriers-and-layouts, timeline-semaphores, swapchain-recreation}; RU pages are placeholders. Regions shown once:
+  barriers-and-layouts, timeline-semaphores, swapchain-recreation}; RU lessons written later the same day. Regions shown once:
   10 sync-objects/submit (fences), 10 cli/frame-resources/command-buffers/wait-fence/cpu-work/animate/advance-frame/
   cleanup (frames), 12 offscreen-image/barriers/render/blit/timestamps/read-timestamps (barriers), 12 pick-device/timeline-semaphore/
   binary-semaphores/frame-resources/wait-timeline/submit/cleanup (timeline), 11 chain/create-chain/recreate/
@@ -462,8 +467,8 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
   without `[timing]`/`[lib]` lines (13; 14; 15 default/--transfer-queue/--bar, also with --mib 64; 16 default and
   --count 5000). New shader shaders/mesh.slang (+ spv, manifest; tests/shaders.test.ts passes). Details in State
   "examples 13-16". Logs: scratchpad m8/ (session-local).
-- [ ] Screenshots of 14/15: NOT taken - on 2026-10-11 (module 8 session) the capture of the 14 window was white again (same as
-  10-12). Retake `examples/screenshots/{14_vertex_buffer,15_staging}.png` when the desktop shows Vulkan windows.
+- [x] Screenshots of 14/15 (2026-10-11): identical pixel for pixel; 14 in vertex-and-index-buffers, staging-uploads cites
+  the identity in text (EN + RU).
 - [x] Module 8 EN lessons (2026-10-11): memory/{memory-types (embeds BufferMemory + RebarCheck, ObjectGraph build with
   device-memory/buffer), vertex-and-index-buffers, staging-uploads, allocators}; RU lessons written 2026-10-11 (same regions,
   outputs, measurements, VUIDs; memory-types embeds BufferMemory, RebarCheck, ObjectGraph). Regions shown once: 13 all; 14 vertex/mesh/vertex-input/create-buffer/vertex-buffer/
@@ -491,9 +496,8 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
   the RTX 3080 Ti with VK_KHRONOS_VALIDATION_VALIDATE_SYNC=true: only the bandicam warning; stdout identical Rust vs C++
   without `[timing]`/`[addr]` lines (17; 18 default and --push-descriptor; 19; 20). New shaders transform/device_address/
   bindless.slang (+ spv, manifest; tests/shaders.test.ts passes). Details in State "examples 17-20".
-- [ ] Screenshots of 17-20: NOT taken - the capture of the 17 window was white again on 2026-10-11 (same as 10-16).
-  Retake `examples/screenshots/{17_uniforms,18_push_constants,19_buffer_device_address,20_bindless}.png`; the
-  column-major matrix upload (17/18) is verified from the SPIR-V only, not visually.
+- [x] Screenshots of 17-20 (2026-10-11): 17 in uniform-buffers (regular hexagon = column-major upload verified
+  visually too), 19 in buffer-device-address, 20 in bindless (EN + RU); 18 captured, not embedded (same picture as 17).
 - [ ] Module 9: independent reviews of 17-20 (code vs spec), then the EN lessons descriptors/{uniform-buffers,
   descriptor-sets, push-constants, buffer-device-address, bindless}; `sync:vuids` for the VUIDs named in 17-20 comments.
 - [x] Module 9 EN lessons (2026-10-11): module `descriptors` ("Descriptors and shader data") in course.json/course.ru.json;
@@ -516,10 +520,10 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
   labels buffer-device-address/subgroup/update-after-bind/partially-bound/non-uniform-indexing now the English terms).
   [ ] Independent review of them.
 - [x] Module 10 examples 21-24 (2026-10-11): see State "examples 21-24"; CMake STEPS/WINDOW_STEPS and READMEs updated.
-- [ ] Screenshots of 21-24: NOT taken - the 21 window was white again in window and full-screen captures on 2026-10-11
-  (same as 10-20). Retake `examples/screenshots/{21_texture,22_depth,23_mipmaps,24_msaa}.png` (23: one with and one with
-  `--no-mips`; 24: `--samples 1` vs 4, zoomed edge). Nothing visual was verified: winding/culling, texture orientation,
-  mip quality and the resolve are checked only by validation and code review.
+- [x] Screenshots of 21-24 (2026-10-11): pixel-verified (texture orientation, sRGB round trip 40 -> 40, depth vs a
+  CPU reference, mips vs --no-mips neighbor differences, 55 vs 7 colors at 4x/1x); embedded as pairs in
+  textures-and-samplers (+ LINEAR/NEAREST zooms), depth, mipmaps, msaa (4x/1x zooms), EN + RU. Not captured:
+  23 `--anisotropy`, temporal shimmer.
 - [ ] Module 10: independent reviews of 21-24 (code vs spec), then the EN lessons images/{textures-and-samplers, depth,
   mipmaps, msaa}; `sync:vuids` for the VUIDs named in 21-24 comments (VkSamplerCreateInfo-anisotropyEnable-01071,
   VkImageMemoryBarrier2-image-03320).
@@ -546,7 +550,7 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
   graphics queue (VUID-vkCmdBlitImage2-commandBuffer-cmdpool). Depth precision numbers are computed from the formula,
   not measured. The sync-validation negative tests of 22/24 are described from the State notes (full message not
   logged); a 2026-10-11 rerun with VK_KHRONOS_VALIDATION_VALIDATE_SYNC=true printed only bandicam but showed no fps drop,
-  so it did not prove the setting was active. No visual claim is verified (no screenshots).
+  so it did not prove the setting was active. Visual claims verified from screenshots later (2026-10-11, State "Screenshots").
 - [x] Module 10: independent review of the EN lessons done; fixes applied 2026-10-11 (checked in vkspec 1.4.365):
   textures (maxLod 0 makes the rate irrelevant), depth (discard forces the depth write, often the test, late), mipmaps
   (bias clamp = clamp(mipLodBias + shader Bias, ±maxSamplerLodBias) per the limit's definition; BC "cannot be blit

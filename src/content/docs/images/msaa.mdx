@@ -6,6 +6,9 @@ description: 'Smooth geometry edges without shading every sample: sample counts 
 import MindMap from 'course-kit/components/MindMap.astro';
 import Quiz from 'course-kit/components/Quiz.astro';
 import Step from '../../../components/Step.astro';
+import Shots from '../../../components/Shots.astro';
+import shot24zoom from '../../../assets/24_msaa_zoom.png';
+import shot24onezoom from '../../../assets/24_msaa_1x_zoom.png';
 
 Step 22's cubes have jagged edges. The rasterizer tests one point per pixel, the pixel center, so a pixel is either
 fully inside a triangle or fully outside; an edge crossing the pixel grid at a shallow angle becomes a staircase that
@@ -183,9 +186,27 @@ The lines that change with `--samples` (Rust and C++ print the same):
 
 (Run labels and indentation added; each run prints the full output below with its own numbers.) The frame rates of
 these single 2-second runs (2060 to 2604 fps, with 8x not the slowest) show no trend at this load, so this lesson makes
-no claim about the cost of MSAA on the course GPU: two cubes at 800 x 600 do not stress it. Edge quality was not
-captured either (no screenshots of step 24 were taken): with 1 sample the staircases are full steps, with 4 samples an
-edge pixel can take 5 shades between the two sides (0 to 4 covered samples).
+no claim about the cost of MSAA on the course GPU: two cubes at 800 x 600 do not stress it. Edge quality is a different
+matter. With 1 sample the staircases are full steps; with 4 samples an edge pixel can take 5 shades between the two
+sides (0 to 4 covered samples). The screenshots show exactly that: the 4x frame contains 55 distinct colors, all the
+extra ones along edges, the 1x frame only 7, the background and the six flat face colors, with nothing in between.
+
+<Shots
+	shots={[
+		{
+			src: shot24zoom,
+			alt: 'Enlarged crop of a cube corner in step 24 with 4x MSAA: edges with intermediate shades',
+			caption: '--samples 4 (default): a 100 x 75 crop around a corner of the green face, enlarged 4x without filtering. Edge pixels take intermediate shades: 55 distinct colors in the whole frame.',
+			zoom: true,
+		},
+		{
+			src: shot24onezoom,
+			alt: 'The same crop with 1 sample: hard stair-stepped edges',
+			caption: '--samples 1: the same crop of the same scene. Every pixel is either face or background: hard stair steps, 7 colors in the whole frame.',
+			zoom: true,
+		},
+	]}
+/>
 
 ## What the program prints
 

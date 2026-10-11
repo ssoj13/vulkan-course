@@ -7,6 +7,9 @@ import { Aside } from '@astrojs/starlight/components';
 import MindMap from 'course-kit/components/MindMap.astro';
 import Quiz from 'course-kit/components/Quiz.astro';
 import Step from '../../../../components/Step.astro';
+import Shots from '../../../../components/Shots.astro';
+import shot12 from '../../../../assets/12_timeline.png';
+import shot12zoom from '../../../../assets/12_timeline_zoom.png';
 
 Fence и семафоры упорядочивают целые отправки. Внутри одной очереди, между одной командой и следующей, инструмент
 другой — **pipeline barrier**, и два барьера мы до сих пор ставили по рецепту. Этот урок разбирает рецепт: что именно
@@ -247,6 +250,23 @@ Offscreen-изображение **одно** на все кадры в полё
 находятся в этот момент, и они должны быть настоящими (`VUID-VkBlitImageInfo2-srcImageLayout-00221`,
 `VUID-VkBlitImageInfo2-dstImageLayout-00226`): об этом и позаботились барьеры 2 и 3. Барьеры 4 и 5, снова для
 независимых изображений и одним вызовом, закрывают command buffer.
+
+<Shots
+	shots={[
+		{
+			src: shot12,
+			alt: 'Окно шага 12: треугольник на фиолетовом фоне, края заметно грубее',
+			caption:
+				'Шаг 12 (Rust, release, 800 x 600): offscreen-изображение 400x300 после blit с NEAREST. Измерено: окно совпадает с offscreen-изображением, увеличенным повтором каждого пикселя блоком 2x2, — 0 отличающихся пикселей.',
+		},
+		{
+			src: shot12zoom,
+			alt: 'Увеличенный фрагмент края треугольника в шаге 12: ступеньки шириной и высотой в два пикселя экрана',
+			caption: 'Фрагмент правого края 100 x 75, увеличенный в 4 раза без фильтрации: лесенка идёт шагами по 2 пикселя экрана — это размер одного отрендеренного пикселя.',
+			zoom: true,
+		},
+	]}
+/>
 
 ## Доказательство: уберём одну стадию
 

@@ -8,6 +8,8 @@ import MindMap from 'course-kit/components/MindMap.astro';
 import Quiz from 'course-kit/components/Quiz.astro';
 import Snippet from 'course-kit/components/Snippet.astro';
 import Step from '../../../components/Step.astro';
+import Shots from '../../../components/Shots.astro';
+import shot19 from '../../../assets/19_buffer_device_address.png';
 
 Everything so far reached a buffer through a descriptor: a driver-owned record with the buffer, an offset and a range.
 C++ programmers reach memory with something much simpler, a pointer. Can a shader do that? Since Vulkan 1.2, yes: a
@@ -143,6 +145,17 @@ Pipeline layout: no set layouts, 1 push constant range
 
 Memory-model-wise, a read through a pointer is an ordinary read of the buffer's memory: the host wrote the records
 before the first submit, and the submission makes those writes visible, as for the uniform buffer.
+
+<Shots
+	shots={[
+		{
+			src: shot19,
+			alt: 'The step 19 window: an 8 by 8 grid of small spinning hexagons, bluish at the top left and white at the bottom right',
+			caption:
+				'Step 19 (Rust, release, 800 x 600): all 64 instances, each through its own record. The hexagon centers (white vertex times the record\'s color) measure 170, 170, 255 at the top left, 255, 170, 255 at the top right, 170, 255, 255 at the bottom left and 255, 255, 255 at the bottom right: the sRGB of linear (0.4 + 0.6 · column/7, 0.4 + 0.6 · row/7, 1). Row 0 is at the top, as its y = -0.875 says in Vulkan\'s clip space.',
+		},
+	]}
+/>
 
 ## A pointer has no size
 

@@ -8,6 +8,8 @@ import MindMap from 'course-kit/components/MindMap.astro';
 import Quiz from 'course-kit/components/Quiz.astro';
 import Snippet from 'course-kit/components/Snippet.astro';
 import Step from '../../../components/Step.astro';
+import Shots from '../../../components/Shots.astro';
+import shot20 from '../../../assets/20_bindless.png';
 
 A scene has thousands of objects, each with its own data and textures. With the sets of the
 [descriptor sets lesson](lesson:descriptor-sets), drawing them means "bind this object's set, draw, bind the next one,
@@ -199,6 +201,17 @@ still be pending on the GPU. Two flags make that legal, for two different comman
 
 This is why one set suffices instead of one per frame in flight: the data in each buffer never changes, and the
 descriptors only change in elements nobody is using.
+
+<Shots
+	shots={[
+		{
+			src: shot20,
+			alt: 'The step 20 window: the same 8 by 8 grid of hexagons as step 19, the bottom right one white',
+			caption:
+				'Step 20 after frame 120 (Rust, release, 800 x 600): 64 hexagons, each read through its own descriptor. The bottom right one, record 63, is the element streamed in at frame 120; its center measures 255, 255, 255, the color of that record, and the other corners match step 19 (170, 170, 255 top left, 255, 170, 255 top right, 170, 255, 255 bottom left).',
+		},
+	]}
+/>
 
 <Aside type="caution" title="The trap: validation stays silent without the right flag">
 `VUID-vkUpdateDescriptorSets-None-03047` forbids updating a set used by a pending command buffer for bindings "created

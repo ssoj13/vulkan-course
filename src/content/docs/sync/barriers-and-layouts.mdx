@@ -7,6 +7,9 @@ import { Aside } from '@astrojs/starlight/components';
 import MindMap from 'course-kit/components/MindMap.astro';
 import Quiz from 'course-kit/components/Quiz.astro';
 import Step from '../../../components/Step.astro';
+import Shots from '../../../components/Shots.astro';
+import shot12 from '../../../assets/12_timeline.png';
+import shot12zoom from '../../../assets/12_timeline_zoom.png';
 
 Fences and semaphores order whole submissions. Inside one queue, between one command and the next, the tool is the
 **pipeline barrier**, and so far we have used two of them by recipe. This lesson takes the recipe apart: what exactly
@@ -242,6 +245,23 @@ each rendered pixel becomes a 2x2 block on screen. `vkCmdBlitImage2` names the l
 and they must be the real ones (`VUID-VkBlitImageInfo2-srcImageLayout-00221`, `VUID-VkBlitImageInfo2-dstImageLayout-00226`):
 that is what barriers 2 and 3 arranged. Barriers 4 and 5, again independent images in one call, close the command
 buffer.
+
+<Shots
+	shots={[
+		{
+			src: shot12,
+			alt: 'The step 12 window: the triangle on a purple background, its edges visibly coarse',
+			caption:
+				'Step 12 (Rust, release, 800 x 600): the 400x300 offscreen image after the NEAREST blit. Measured: the window equals the offscreen image upscaled by repeating every pixel as a 2x2 block, with 0 differing pixels.',
+		},
+		{
+			src: shot12zoom,
+			alt: 'An enlarged crop of the triangle edge in step 12: stair steps two screen pixels wide and tall',
+			caption: 'A 100 x 75 crop of the right edge, enlarged 4x without filtering: the staircase moves in steps of 2 screen pixels, the size of one rendered pixel.',
+			zoom: true,
+		},
+	]}
+/>
 
 ## Proof: take one stage away
 

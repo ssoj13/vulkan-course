@@ -8,6 +8,8 @@ import MindMap from 'course-kit/components/MindMap.astro';
 import Quiz from 'course-kit/components/Quiz.astro';
 import Snippet from 'course-kit/components/Snippet.astro';
 import Step from '../../../components/Step.astro';
+import Shots from '../../../components/Shots.astro';
+import shot14 from '../../../assets/14_vertex_buffer.png';
 
 The first triangle kept its three corners as constants inside the shader. A real mesh has thousands of vertices, and
 they come from a file, not from shader source. How does the GPU find the vertices in a buffer, what tells it where
@@ -218,7 +220,18 @@ Window closed
 
 The rest of the program is step 10's frame loop with two frames in flight: wait for the slot's fence, acquire, record,
 submit, present. The window shows a hexagon with a white center and the six corner colors blended across each
-triangle by the rasterizer's interpolation.
+triangle by the rasterizer's interpolation:
+
+<Shots
+	shots={[
+		{
+			src: shot14,
+			alt: 'The step 14 window: a regular hexagon with a white center, its corners red, yellow, green, cyan, blue and magenta',
+			caption:
+				'Step 14 (Rust, release, 800 x 600). The center pixel measures 255, 255, 254: the white center vertex. The red corner is on the right (angle 0), and since the angles grow toward +y, which is down in Vulkan, yellow follows at the lower right and blue sits at the upper left. The 600/800 x scale keeps the hexagon regular.',
+		},
+	]}
+/>
 
 ## The map of this lesson
 

@@ -8,6 +8,8 @@ import MindMap from 'course-kit/components/MindMap.astro';
 import Quiz from 'course-kit/components/Quiz.astro';
 import Snippet from 'course-kit/components/Snippet.astro';
 import Step from '../../../components/Step.astro';
+import Shots from '../../../components/Shots.astro';
+import shot17 from '../../../assets/17_uniforms.png';
 
 The hexagon of the memory module never moves: its corners are fixed in the vertex buffer. A real viewport changes the
 camera every frame, and the shaders need the new matrix before they can place a single vertex. How does a value that
@@ -152,6 +154,21 @@ transposed SPIR-V matrix, walking along a row, hence `RowMajor`. The multiplicat
 column vector becomes `OpVectorTimesMatrix` (`v` times the transposed matrix), the same numbers. Two transpositions
 cancel, and the bytes in memory are what the host expects: four columns, 16 bytes apart. With
 `-matrix-layout-row-major` slangc emits `ColMajor` instead, and the host would have to upload rows.
+
+The picture confirms it. Had the host uploaded rows, the shader would multiply by the transpose, `(S * R)ᵀ = R(-angle) *
+S`: scale first, then rotate, the other way round. The hexagon would come out squashed instead of regular, and would turn
+backwards. The screenshot shows a regular one:
+
+<Shots
+	shots={[
+		{
+			src: shot17,
+			alt: 'The step 17 window: the hexagon of step 14, rotated and tinted warm',
+			caption:
+				'Step 17 (Rust, release, 800 x 600). Measured on the silhouette: farthest point 179.6 px from the center (a circumradius of 0.6 gives 180), nearest 155.1-155.4 px (expected 155.9), corners every 60°: regular, no skew. The center pixel 225, 209, 192 is linear 0.753, 0.638, 0.527, in the ratio 1 : 0.846 : 0.70 of TINT (1, 0.85, 0.7) applied to the white center vertex; the overall 0.75 is the time pulse.',
+		},
+	]}
+/>
 
 ## Trust, but read the SPIR-V
 

@@ -8,6 +8,10 @@ import Quiz from 'course-kit/components/Quiz.astro';
 import Snippet from 'course-kit/components/Snippet.astro';
 import Step from '../../../components/Step.astro';
 import ObjectGraph from '../../../components/ObjectGraph.astro';
+import Shots from '../../../components/Shots.astro';
+import shot21 from '../../../assets/21_texture.png';
+import shot21zoom from '../../../assets/21_texture_zoom.png';
+import shot21nearestzoom from '../../../assets/21_texture_nearest_zoom.png';
 
 So far every color on screen came from a vertex or a constant. A real material reads a texture: an image file painted
 in Mari or baked in Substance, looked up per pixel with a UV. In Vulkan that one lookup, `albedo.Sample(uv)`, rests on
@@ -129,6 +133,21 @@ swapchain then encodes them a **second** time, so the image comes out too bright
 non-linear values, so every transition between bright and dark texels is mixed with the wrong weights. It is the same mistake as reading an sRGB plate
 as linear in Nuke and then viewing it through the sRGB viewer LUT. The formats differ only in the conversion; the bytes
 uploaded are the same.
+
+The screenshot of step 21 shows the round trip. The dark cells are stored as sRGB 40, 40, 40; decoded to linear on
+sampling and encoded once by the swapchain, they come back as exactly 40, 40, 40. With a `_UNORM` texture the second
+encoding would lift them to about 110 (computed: 40 / 255 sRGB-encoded as if it were linear).
+
+<Shots
+	shots={[
+		{
+			src: shot21,
+			alt: 'The step 21 window: a rotated quad showing four copies of a checkerboard of color gradients and dark gray cells, each copy framed in white',
+			caption:
+				'Step 21 (Rust, release, 800 x 600): UVs 0 to 2 with REPEAT give four copies, each framed by its 2-texel white border. The dark cells measure exactly 40, 40, 40, the value stored. The dark blue corner of each copy is texel (0, 0), the first one uploaded; red grows along u toward magenta and green along v toward cyan, as the generator writes them: v = 0 is the image\'s top row, and nothing is mirrored.',
+		},
+	]}
+/>
 
 ## 3. The image and its memory
 
@@ -270,6 +289,26 @@ default                       Sampler: LINEAR filters, address mode REPEAT, anis
 
 (Run names on the left added for this table.) The sampler is the only thing that changes between these runs: same
 image, same view, same descriptor layout. That separation is the point of having a sampler object.
+
+In the whole window the default and `--nearest` look alike; the difference sits at the cell borders and shows when you
+zoom in:
+
+<Shots
+	shots={[
+		{
+			src: shot21zoom,
+			alt: 'Enlarged crop of step 21 with LINEAR filtering: cell borders with soft, blended edges',
+			caption: 'Default (LINEAR): a 100 x 75 crop of the window, enlarged 4x without filtering. The diagonal cell borders are smooth: border pixels blend the 2 x 2 texels around them.',
+			zoom: true,
+		},
+		{
+			src: shot21nearestzoom,
+			alt: 'Enlarged crop of step 21 with NEAREST filtering: cell borders as hard stair steps',
+			caption: '--nearest: the same crop of another frame (the quad turns). Every pixel takes the single closest texel, so the borders become hard staircases.',
+			zoom: true,
+		},
+	]}
+/>
 
 ## 7. One more binding in the set
 

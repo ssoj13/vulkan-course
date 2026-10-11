@@ -7,6 +7,8 @@ import { Aside } from '@astrojs/starlight/components';
 import MindMap from 'course-kit/components/MindMap.astro';
 import Quiz from 'course-kit/components/Quiz.astro';
 import Step from '../../../components/Step.astro';
+import Shots from '../../../components/Shots.astro';
+import shot11 from '../../../assets/11_resize.png';
 
 Every program so far stopped when the window changed: steps 09 and 10 print "recreation is step 11" and quit. A real
 renderer has to survive a resize, a minimize and a restore without a hiccup. How does it notice that the swapchain no
@@ -273,6 +275,17 @@ lived through a 0x0 surface and the program does not try to guess whether it sur
 recreation was triggered by a resize event: neither the acquire nor the present ever returned `OUT_OF_DATE` or
 `SUBOPTIMAL` on this machine (those would print `[timing]` lines). On other platforms and drivers they do, which is
 why the code handles all three triggers.
+
+<Shots
+	shots={[
+		{
+			src: shot11,
+			alt: 'The step 11 window at 640 x 480: the triangle on an olive background',
+			caption:
+				'Step 11 after --demo-resize, minimized and restored (Rust, release): the client area is 640 x 480, and the triangle covers the same fraction of it as at 800 x 600 (measured bounding box x 160-479, y 121-359; at 800 x 600 it is x 200-599, y 151-449, 1.25 times larger). The swapchain images were rebuilt at the new size, so nothing is stretched or cropped.',
+		},
+	]}
+/>
 
 ## The map of this lesson
 

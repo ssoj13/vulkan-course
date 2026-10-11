@@ -7,6 +7,8 @@ import { Aside } from '@astrojs/starlight/components';
 import MindMap from 'course-kit/components/MindMap.astro';
 import Quiz from 'course-kit/components/Quiz.astro';
 import Step from '../../../../components/Step.astro';
+import Shots from '../../../../components/Shots.astro';
+import shot11 from '../../../../assets/11_resize.png';
 
 До сих пор каждая программа останавливалась, стоило окну измениться: шаги 09 и 10 печатают «recreation is step 11» и
 выходят. Настоящий рендерер должен пережить изменение размера, сворачивание и разворачивание без заминки. Как он
@@ -274,6 +276,17 @@ Swapchain recreated: 640x480, 3 images; the old one destroyed after vkDeviceWait
 начиналось с события resize: ни acquire, ни present на этой машине ни разу не вернули `OUT_OF_DATE` или `SUBOPTIMAL`
 (иначе появились бы строки `[timing]`). На других платформах и драйверах возвращают, поэтому код обрабатывает все три
 повода.
+
+<Shots
+	shots={[
+		{
+			src: shot11,
+			alt: 'Окно шага 11 размером 640 x 480: треугольник на оливковом фоне',
+			caption:
+				'Шаг 11 после --demo-resize, сворачивания и разворачивания (Rust, release): клиентская область 640 x 480, и треугольник занимает в ней ту же долю, что и при 800 x 600 (измеренный bounding box: x 160–479, y 121–359; при 800 x 600 — x 200–599, y 151–449, в 1,25 раза больше). Изображения swapchain пересозданы под новый размер, поэтому ничего не растянуто и не обрезано.',
+		},
+	]}
+/>
 
 ## Карта урока
 

@@ -7,6 +7,9 @@ import MindMap from 'course-kit/components/MindMap.astro';
 import Quiz from 'course-kit/components/Quiz.astro';
 import Snippet from 'course-kit/components/Snippet.astro';
 import Step from '../../../components/Step.astro';
+import Shots from '../../../components/Shots.astro';
+import shot22 from '../../../assets/22_depth.png';
+import shot22nodepth from '../../../assets/22_depth_no_depth.png';
 
 Step 22 draws two cubes that cut through each other. Back-face culling makes each cube look right on its own, because a
 cube is convex. Where they intersect, though, which surface is in front changes from pixel to pixel along the
@@ -197,6 +200,23 @@ Depth state: test OFF, write OFF (--no-depth): the last cube drawn wins
 Each cube is still drawn correctly against itself (culling), but where they overlap, the second instance always covers
 the first: within one draw, primitive order runs "from lower numbered instances to higher" (spec, "Primitive Order"),
 and without a test the later fragment simply overwrites.
+
+<Shots
+	shots={[
+		{
+			src: shot22,
+			alt: 'Step 22 with the depth test: two intersecting cubes, the cyan face of one cutting through the pink and green faces of the other',
+			caption:
+				'Default (depth test on), Rust, release, 800 x 600. It matches a CPU reference render of the scene at t ≈ 1.878 s except for 38 pixels along edges. The small cyan wedge near the center of the green face is real geometry: a corner of cube 0 pokes through the +x face of cube 1.',
+		},
+		{
+			src: shot22nodepth,
+			alt: 'Step 22 with --no-depth: the pink face of the second cube painted over the cyan cube',
+			caption:
+				'--no-depth: exactly what a CPU reference of draw order plus back-face culling gives. Cube 1 is drawn after cube 0, so its pink face covers the cyan one even where the cyan face is nearer; 9893 pixels differ from a depth-tested render of the same moment.',
+		},
+	]}
+/>
 
 ## 5. Attaching it to the rendering
 
