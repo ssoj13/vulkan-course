@@ -1,0 +1,285 @@
+---
+title: Frames in flight
+description: 'Let the CPU record the next frame while the GPU renders this one: per-frame resources, fence slots, and what it measurably buys.'
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import MindMap from 'course-kit/components/MindMap.astro';
+import Quiz from 'course-kit/components/Quiz.astro';
+import Step from '../../../components/Step.astro';
+
+In step 09 the CPU waits for the GPU at the start of every frame, so the two take turns: while one works, the other
+idles. How do we let them work at the same time, what has to be duplicated so they do not step on each other, and how
+much does it really buy? This lesson answers with step 10 and a measurement.
+
+## Where this fits
+
+The second lesson of the synchronization module, on the concept and API layers. It takes the fence from
+[fences and semaphores](lesson:fences-and-semaphores) and multiplies it: one per frame that may be "in flight" at once.
+The chain of one frame becomes:
+
+`frame N → slot N % F → wait the slot's fence (frame N - F) → acquire → record the slot's command buffer → submit (signals the slot's fence) → present`
+
+[Frames in flight](term:frames-in-flight) are built on the [frame loop](term:frame-loop) of the
+[first triangle](lesson:first-triangle) with one set of per-frame resources per slot. The
+[timeline semaphores lesson](lesson:timeline-semaphores) later replaces the F fences with one counter.
+
+## Taking turns, then overlapping
+
+Think of an artist and a render farm. If the artist preps shot 2 only after shot 1 has come back from the farm, both
+sit idle half the time. The obvious fix: send shot 1, start prepping shot 2 at once, and only before sending shot 3
+check that the farm is done with shot 1. The farm always has the next job waiting; the artist never waits for the
+current one.
+
+With one frame in flight, step 09 does the first thing:
+
+```text
+CPU  [record 1]  wait.......  [record 2]  wait.......  [record 3]
+GPU              [render 1]               [render 2]
+```
+
+With two frames in flight, step 10 does the second:
+
+```text
+CPU  [record 1][record 2][record 3]  [record 4]  ...
+GPU            [render 1][render 2]  [render 3]  ...
+                          ^ frame 3 waits for frame 1, not for frame 2
+```
+
+The CPU now waits for the frame *two* back. If one side is much slower, it sets the pace and the other side still
+waits, but the waits no longer add up: the frame time becomes the time of the slower side instead of the sum of both.
+
+## What must exist once per frame
+
+The rule is simple to state: **everything the CPU writes for frame N+1 while the GPU may still use it for frame N**
+needs its own copy per frame in flight. In step 10 that is three things:
+
+- the **command buffer**: a buffer that is *pending* (submitted, not finished) must not be reset or re-recorded;
+- the **fence**: it tells when that slot's buffer is free again;
+- the **`image_available` semaphore**: its wait belongs to that slot's submit, and the fence proves the wait is over.
+
+Two other kinds of objects are not per frame. `render_finished` stays **per swapchain image** (the present's wait on it
+ends for sure only when that image is acquired again). The pipeline, its layout and the swapchain are shared: nothing
+writes them per frame. Later modules add more per-frame things: uniform buffers that the CPU fills every frame,
+descriptor sets pointing at them.
+
+<Step file="10_frames_in_flight" region="frame-resources" />
+
+The slot of frame N is `N % frames in flight`. One struct per slot keeps the three objects together, so a frame cannot
+pick up the command buffer of one slot and the fence of another.
+
+<Step file="10_frames_in_flight" region="command-buffers" />
+
+One primary command buffer per slot, all from the same pool. The pool has `RESET_COMMAND_BUFFER`, so each buffer can be
+reset on its own while its neighbor is still pending.
+
+## 1. Wait for the slot, not for the last frame
+
+<Step file="10_frames_in_flight" region="wait-fence" />
+
+The same `vkWaitForFences` as in step 09, but on the fence of *this slot*. With two frames in flight, frame N waits for
+frame N - 2; frame N - 1 may still be rendering, and that overlap is the point of the step. The fence is still reset
+only after a successful acquire, for the reason the first triangle gave: a reset fence that no submission will signal
+would hang the next wait.
+
+The time measured around the wait goes into the statistics: it is exactly the time the CPU spent doing nothing while
+the GPU caught up.
+
+## 2. Simulated work on both sides
+
+A triangle costs nothing on either side, and frames in flight only matter when both sides are busy. Step 10 therefore
+has two knobs:
+
+<Step file="10_frames_in_flight" region="cli" />
+
+The CPU half is a busy loop of `--cpu-ms` (default 2 ms) after the fence wait, standing in for game logic, culling and
+filling per-frame data:
+
+<Step file="10_frames_in_flight" region="cpu-work" />
+
+The GPU half is `--draws` instances of the triangle (default 5000), all on the same pixels: pure fill work.
+
+## 3. Why every frame records its own buffer
+
+<Step file="10_frames_in_flight" region="animate" />
+
+The clear color changes every frame, and it is a value **inside** the command buffer (`vkCmdBeginRendering` records it).
+If frame N+1 re-recorded the buffer that frame N still executes, the GPU could read a half-rewritten buffer: that is
+exactly what the per-slot command buffers prevent. The same logic will apply to every per-frame resource later.
+
+## 4. Next frame, next slot
+
+<Step file="10_frames_in_flight" region="advance-frame" />
+
+Incrementing the frame number is all it takes to move to the other slot. Nothing waits here: the CPU goes straight on
+to the next frame, and only the wait-fence of the *next use* of a slot brings the CPU and the GPU back in step.
+
+## 5. The end
+
+<Step file="10_frames_in_flight" region="cleanup" />
+
+With several frames in flight, more than one submission may still be running when the window closes, so one
+`vkDeviceWaitIdle` before destroying anything replaces "wait for the last fence". It waits for all work submitted to
+the queues, which is what destroying the swapchain requires (`VUID-vkDestroySwapchainKHR-swapchain-01282`).
+
+## What the program prints
+
+With the defaults (two frames in flight), Rust:
+
+```text
+Command pool + 2 primary command buffer(s)
+Sync objects: 2 fence(s), 2 + 3 semaphores (2 frame(s) in flight)
+Simulated work per frame: 2 ms on the CPU, 5000 triangle instances on the GPU
+
+Rendering. Close the window to exit.
+[timing] 1s: 384 frames, 384 fps; fence wait 0.055 ms/frame (2.1% of the time), acquire 0.009 ms/frame
+[timing] 2s: 408 frames, 407 fps; fence wait 0.052 ms/frame (2.1% of the time), acquire 0.009 ms/frame
+[timing] 3s: 369 frames, 369 fps; fence wait 0.053 ms/frame (1.9% of the time), acquire 0.009 ms/frame
+Window closed
+[timing] total with 2 frame(s) in flight: 1557 frames in 4.0 s, 389 fps; fence wait 0.053 ms/frame (2.1% of the time), acquire 0.009 ms/frame
+```
+
+(Shortened: the lines before are the setup of step 09.) Lines that start with `[timing]` depend on the machine and the
+moment; everything else is identical in the C++ version. With validation on, the only message is the bandicam layer
+warning from the [validation lesson](lesson:validation).
+
+## The measurement
+
+Each run: 4 seconds, defaults otherwise, validation on, the course machine (RTX 3080 Ti) shared with
+other work. The total lines of all six runs:
+
+| Frames in flight | fps, Rust / C++ | Fence wait per frame, Rust / C++ | Share of time in the fence wait |
+|---|---|---|---|
+| 1 | 217 / 217 | 1.868 / 1.922 ms | 40.4% / 41.8% |
+| 2 | 389 / 419 | 0.053 / 0.051 ms | 2.1% / 2.1% |
+| 3 | 393 / 395 | 0.053 / 0.061 ms | 2.1% / 2.4% |
+
+(The Rust binary of these runs was a debug build, the C++ one a release build; the work per frame is dominated by the
+fixed 2 ms busy loop and by the GPU, so the two agree closely.)
+
+Reading the numbers:
+
+- **One frame**: 217 fps is 4.6 ms per frame. Of that, 2 ms is the simulated CPU work and 1.87 ms is waiting for the
+  GPU; the remaining ~0.7 ms is the real CPU work of a frame (recording, the validation layer checking every call,
+  submit, present). The two sides add up.
+- **Two frames**: 389 fps is 2.6 ms per frame, the CPU's own 2.6 ms (2 ms of work, ~0.5 ms of the rest). The fence wait
+  has dropped from 1.87 ms to 0.05 ms: the GPU's work is now completely hidden behind the CPU's. The frame rate nearly
+  doubled without making anything faster.
+- **Three frames**: no further gain. The CPU is the bottleneck now, and a third slot only lets the CPU run further
+  ahead of a GPU that is already never waited for.
+
+The extra slot is not free either: each frame in flight is one more frame between "the CPU read the input" and "the
+image reaches the screen". That is why two is the usual choice, and why engines that care about latency keep it at two
+or even make it adaptive.
+
+## The map of this lesson
+
+<MindMap />
+
+## Underneath
+
+- With one frame in flight the GPU's queue runs dry at the end of every frame: the command processor finishes the
+  batch, and there is nothing behind it until the CPU has recorded and submitted the next one. With two, the next
+  batch is usually already queued when the current one ends, so the GPU goes from one frame straight to the next.
+- The CPU side of "waiting" is `vkWaitForFences` blocking a thread; the measured 1.87 ms per frame is time the driver
+  spent letting our thread sleep or spin until the GPU reported the frame complete.
+- MAILBOX lets the GPU render far faster than the display refreshes: a newer frame replaces the one waiting for the
+  vblank. With FIFO, the loop would block in the acquire or the present instead, and the frame rate would be capped
+  by the display's refresh, whatever the number of frames in flight.
+
+<Quiz
+	questions={[
+		{
+			q: 'With two frames in flight, which earlier frame does frame 7 wait for at its fence?',
+			options: [
+				{
+					text: 'Frame 6, the one submitted just before it',
+					why: 'Waiting for frame 6 would bring back the taking of turns of step 09; frame 6 uses the other slot.',
+				},
+				{
+					text: 'Frame 5, the last one that used the same slot',
+					why: 'Right: slot = frame % 2, so frame 7 reuses the command buffer, fence and semaphore of frame 5 and waits only for that frame.',
+				},
+				{
+					text: 'All earlier frames, since vkWaitForFences waits for the whole queue',
+					why: 'vkWaitForFences waits for the fences it is given; the slot\'s fence covers that slot\'s submission and everything before it on the queue, not later frames.',
+				},
+				{
+					text: 'None: with two frames in flight there is no fence wait',
+					why: 'The wait is still there, it just rarely blocks: it guards the reuse of the slot\'s command buffer.',
+				},
+			],
+			answer: 1,
+			ref: '#1-wait-for-the-slot-not-for-the-last-frame',
+		},
+		{
+			q: 'Which object stays one per swapchain image rather than one per frame in flight?',
+			options: [
+				{
+					text: 'The image_available semaphore',
+					why: 'It is waited on by the slot\'s own submit, and the slot\'s fence proves that wait is over, so one per slot is enough.',
+				},
+				{
+					text: 'The render_finished semaphore',
+					why: 'Right: only the return of the same image from an acquire proves the present has finished waiting on it.',
+				},
+				{
+					text: 'The command buffer, because it records one image',
+					why: 'A command buffer is reused per slot; which image it renders to is decided anew at every recording.',
+				},
+				{
+					text: 'The fence, because the present signals it',
+					why: 'In step 10 the submission signals the fence; present fences are a separate, optional feature.',
+				},
+			],
+			answer: 1,
+			ref: '#what-must-exist-once-per-frame',
+		},
+		{
+			q: 'Why did the third frame in flight not raise the frame rate in the measurement?',
+			options: [
+				{
+					text: 'The swapchain has only three images',
+					why: 'Each frame acquires and presents one image, so three images are not what limits the rate here.',
+				},
+				{
+					text: 'The CPU was already the bottleneck with two',
+					why: 'Right: with two frames the fence wait was 0.05 ms; the frame time was the CPU\'s own time, which a third slot cannot shorten.',
+				},
+				{
+					text: 'Validation layers forbid more than two frames',
+					why: 'There is no such rule; the runs with three frames were validation-clean.',
+				},
+				{
+					text: 'The GPU cannot hold more than two pending submissions',
+					why: 'A queue holds many pending submissions; the limit was the CPU\'s time per frame.',
+				},
+			],
+			answer: 1,
+			ref: '#the-measurement',
+		},
+		{
+			q: 'What is the price of more frames in flight?',
+			options: [
+				{
+					text: 'Higher latency between input and the image on screen',
+					why: 'Right: every extra slot lets the CPU run one more frame ahead of what is shown.',
+				},
+				{
+					text: 'More draw calls per frame',
+					why: 'The draw calls of a frame do not change; only how many frames are being worked on at once.',
+				},
+				{
+					text: 'Tearing, because frames overlap on the GPU',
+					why: 'Tearing is a matter of the present mode; frames in flight do not change how images reach the screen.',
+				},
+				{
+					text: 'A second VkQueue for every extra frame',
+					why: 'All frames go to the same queue; only command buffers, fences and acquire semaphores are multiplied.',
+				},
+			],
+			answer: 0,
+			ref: '#the-measurement',
+		},
+	]}
+/>

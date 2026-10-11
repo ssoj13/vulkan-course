@@ -1,0 +1,371 @@
+---
+title: Swapchain recreation
+description: 'Resizing and minimizing the window: OUT_OF_DATE and SUBOPTIMAL, oldSwapchain, and knowing when the old swapchain is free - present fences or vkDeviceWaitIdle.'
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import MindMap from 'course-kit/components/MindMap.astro';
+import Quiz from 'course-kit/components/Quiz.astro';
+import Step from '../../../components/Step.astro';
+
+Every program so far stopped when the window changed: steps 09 and 10 print "recreation is step 11" and quit. A real
+renderer has to survive a resize, a minimize and a restore without a hiccup. How does it notice that the swapchain no
+longer fits, how does it build a new one, and, the hard part, when may it destroy the old one, which the
+presentation engine may still be using?
+
+## Where this fits
+
+The last lesson of the synchronization module, and the place where synchronization meets the window system. It
+brings the swapchain from [module 4](lesson:swapchain) back, and uses every tool of this module on it: fences, a new
+kind of fence for presents, and `vkDeviceWaitIdle` as the blunt fallback. The chain:
+
+`window event / OUT_OF_DATE / SUBOPTIMAL → vkCreateSwapchainKHR(oldSwapchain) → the old swapchain is retired → wait until its presents are done (present fences, or vkDeviceWaitIdle) → destroy the old chain`
+
+[Swapchain recreation](term:swapchain-recreation) is built on the [swapchain](term:vk-swapchain); it turns the old one
+into a [retired swapchain](term:old-swapchain) and learns when that one is free from
+[present fences](term:present-fence), a kind of [fence](term:vk-fence).
+
+## Why a swapchain goes stale
+
+A swapchain is made for one size: its images are 800x600 and stay so. The window is not: the user drags its border,
+minimizes it, moves it to a monitor with another scale. Like a comp rendered for one plate size, it has to be redone
+when the plate changes, while the old version may still be on screen.
+
+Vulkan tells us in two ways. The window system reports the new size (a resize event). And the swapchain functions
+report it themselves; the spec: "If the swapchain images no longer match native surface properties, either
+`VK_SUBOPTIMAL_KHR` or `VK_ERROR_OUT_OF_DATE_KHR` must be returned."
+
+- `VK_SUBOPTIMAL_KHR` is a *success* code: the image was acquired or presented, it just no longer matches exactly (the
+  platform may scale it, for example). Keep going, recreate soon.
+- `VK_ERROR_OUT_OF_DATE_KHR` is an error: "no image is acquired and attempts to present previously acquired images to
+  the swapchain will also fail". The swapchain cannot be used any more.
+
+On Windows the rule is strict: the spec's platform note says a new swapchain can only be created with `imageExtent`
+equal to the window's current size, and that the size may become (0, 0), for example when the window is minimized, "and
+so a swapchain cannot be created until the size changes".
+
+## What has to be rebuilt
+
+Not everything. The pipeline stays: the viewport and scissor are dynamic state since the
+[graphics pipeline lesson](lesson:graphics-pipeline), and the format does not change with the size. What depends on the
+swapchain goes together into one struct, so that it is always replaced, kept and destroyed as a unit:
+
+<Step file="11_resize" region="chain" />
+
+The swapchain, its images (owned by it), their views, one `render_finished` semaphore per image (the present waits on
+it, so it lives as long as the presents to that chain) and the extent. A `Retired` chain remembers the frame number at
+which it was replaced: the key to destroying it later.
+
+## 1. Create a chain, handing over the old one
+
+<Step file="11_resize" region="create-chain" />
+
+Three details:
+
+- **ask the surface again.** `currentExtent` follows the window. The special value `0xFFFFFFFF` means "the swapchain
+  decides" (some platforms); then the window's size, clamped to the allowed range, is used;
+- **0x0 means minimized.** A swapchain cannot have that extent: width and height must be non-zero
+  (`VUID-VkSwapchainCreateInfoKHR-imageExtent-01689`). The function returns "nothing created", and rendering pauses;
+- **`oldSwapchain`.** Passing the current swapchain lets the presentation engine reuse its resources and switch over
+  without a gap. From that call on the old one is **retired**: "even if creation of the new swapchain fails". Nothing
+  can be acquired from it any more, but "the application can pass to `vkQueuePresentKHR` any images it had already
+  acquired from `oldSwapchain`". The old swapchain must not have been retired before
+  (`VUID-VkSwapchainCreateInfoKHR-oldSwapchain-01933`), and it is still ours to destroy.
+
+The first swapchain of the program is created by the same function, with a null `oldSwapchain`: there is only one way a
+swapchain comes into being.
+
+## 2. Two ways to retire the old chain
+
+<Step file="11_resize" region="recreate" />
+
+The function is the whole policy, and it has two branches, which is the main question of this lesson. When may the old
+chain be destroyed? The rule: "All uses of presentable images acquired from swapchain must have completed execution"
+(`VUID-vkDestroySwapchainKHR-swapchain-01282`). Our rendering into its images is covered by our fences. The present is
+not: by default the presentation engine gives no signal at all when it is done with what a present referred to.
+
+- **Without present fences**, the only certain answer is to wait until the device is idle: `vkDeviceWaitIdle` covers
+  all submitted work, including the presents' semaphore waits, and then the old chain can go at once. Simple and always
+  available; the price is a full stop of the GPU at every recreation.
+- **With present fences**, the old chain is parked in `retired`, the frames go on, and it is destroyed a few frames
+  later, when the fences prove its presents are done. The rendering never stops.
+
+## 3. Present fences
+
+A [present fence](term:present-fence) is a fence handed to `vkQueuePresentKHR`. It comes with
+`VK_KHR_swapchain_maintenance1`, a device extension that needs two instance extensions:
+
+<Step file="11_resize" region="instance-extensions" />
+
+<Step file="11_resize" region="device-extensions" />
+
+Both the extension and its feature `swapchainMaintenance1` must be there; the program uses present fences only then,
+and only without `--no-present-fences`. On the course GPU all of it is supported.
+
+What does the fence say? The spec: it "will signal after all such queue operations have completed, and after the
+presentation engine has taken a reference to the payloads of all objects provided in `VkPresentInfoKHR` that the
+presentation engine accesses as part of the present operation". And, important: "The fence may not wait for the
+present operation to complete." It does not mean "the image has been shown"; it means "the present no longer needs
+our objects". From that the spec draws the two conclusions we need: the wait semaphores of a present may be destroyed
+once one of its fences has signaled, and the swapchain "when the fences associated with all past presentation
+requests referring to that swapchain have signaled".
+
+One fence per frame slot, given to every present of that slot:
+
+<Step file="11_resize" region="frame-resources" />
+
+<Step file="11_resize" region="present" />
+
+`VkSwapchainPresentFenceInfoKHR` goes into the `pNext` chain of `VkPresentInfoKHR`, with one fence per swapchain of
+the call. The fence must be unsignaled (`VUID-VkSwapchainPresentFenceInfoKHR-pFences-07758`). Note what happens when
+the present returns `OUT_OF_DATE`: the spec says "the set of queue operations is still considered to be enqueued and
+thus any semaphore wait operation specified in `VkPresentInfoKHR` will execute". The semaphore is still consumed;
+only the image is not shown.
+
+Before a slot presents again, it waits for its last present fence:
+
+<Step file="11_resize" region="wait-present-fence" />
+
+The timeout is defensive, and the comment says why: the spec does not say whether the fence of a present that returned
+`OUT_OF_DATE` is signaled. If the wait ever times out, the program falls back to `vkDeviceWaitIdle` and never reuses
+that fence. In every run on the course machine the fallback did not trigger.
+
+### Which frame frees the old chain
+
+<Step file="11_resize" region="destroy-retired" />
+
+The reasoning, with F = 2 frames in flight and the old chain replaced at frame R:
+
+1. every present to the old chain belongs to a frame before R (from frame R on, frames present to the new chain);
+2. the present of frame F' is waited on at the start of frame F' + F, when its slot comes around again;
+3. so at the start of frame R + F - 1 the slot of frame R - 1, the last frame that presented to the old chain, has
+   waited on its present fence, and all earlier presents' fences were waited on before that. The spec also requires
+   that fences of presents "to the same swapchain on the same `VkQueue` must be signaled in the same order as the
+   present operations".
+
+At that point the old chain is destroyed, while the new one keeps presenting.
+
+## 4. Three triggers
+
+<Step file="11_resize" region="recreate-triggers" />
+
+Recreation can be triggered at three places, and each has its own consequence:
+
+- **a resize was reported, or the last present said `SUBOPTIMAL`**: recreate before acquiring;
+- **the acquire returns `OUT_OF_DATE`**: no image was acquired and the semaphore will not be signaled, so recreate and
+  acquire again from the new chain;
+- **the acquire returns `SUBOPTIMAL`**: an image *was* acquired and `image_available` *will* be signaled. Abandoning it
+  would leave an acquired image and a pending signal behind, so the frame is rendered and presented, and the swapchain
+  is recreated before the next one (an acquired image must be presented, or released with `vkReleaseSwapchainImagesKHR`
+  from the same extension).
+
+## Minimized windows
+
+When the window is minimized, `create_chain` finds a 0x0 surface and creates nothing. The program sets `paused`, skips
+drawing, and wakes up now and then to check (`about_to_wait` in Rust, `glfwWaitEventsTimeout` in C++). The restore
+brings a resize event, the recreation succeeds, and `paused` is cleared. No special case anywhere else: a minimized
+window is simply "a recreation that cannot happen yet".
+
+## A stale event
+
+<Step file="11_resize" region="event-loop" />
+
+One detail came from a real run, not from the spec. Right after the window is created, winit delivered a `Resized`
+event with a size the window did not have (2564x984 on the course machine, a size from before the window got its 800x600
+inner size). Recreating on every `Resized` would have built a second swapchain at once, for nothing. So the Rust event
+loop does not trust the size in the event: it compares the window's *current* `inner_size()` with the swapchain's
+extent, and recreates only when they differ (or when rendering is paused). GLFW's framebuffer-size callback in the C++
+version just sets the flag; on this machine it sent no such early event, and both versions print the same lines.
+
+The general lesson: window events are hints, the surface capabilities are the truth. `create_chain` asks the surface
+anyway.
+
+## 5. The end
+
+<Step file="11_resize" region="cleanup" />
+
+`vkDeviceWaitIdle` covers our submissions. The presents of the current and of any still retired chain are covered by
+their present fences, so those are waited on too, with the same timeout, before the chains are destroyed.
+
+## Who else uses the swapchain images
+
+There is one more party that can touch swapchain images, and the course machine shows it. In the
+[validation lesson](lesson:validation) we met the implicit layers installed by other programs; one of them,
+`VK_LAYER_bandicam_helper` from a screen recorder, loads into every Vulkan program. Layers like it capture or draw
+overlays, and to do that they work on the swapchain images themselves.
+
+Step 12 copies into the swapchain images with a blit, so they need `TRANSFER_DST` usage, and nothing of *ours*
+renders into them any more. An earlier version of step 12 therefore created them with `TRANSFER_DST` alone. The
+validation layer then reported two messages that did not come from our code:
+`VUID-VkImageViewCreateInfo-image-04441` (an image view on an image without a usage a view can serve) and
+`VUID-VkFramebufferCreateInfo-pAttachments-00877` (a color attachment of a framebuffer without `COLOR_ATTACHMENT`
+usage). Step 12 creates no image views on the swapchain images and no framebuffers at all: the Bandicam layer did, on
+images it assumed it could render into. With the layer disabled through its own switch
+(`VK_LAYER_bandicam_helper_DEBUG_1=1`, the `disable_environment` from its manifest) both errors disappeared; the
+loader's `VK_LOADER_LAYERS_DISABLE` did not disable it on this machine.
+
+<Step file="12_timeline" region="swapchain-usage" />
+
+So step 12 keeps `COLOR_ATTACHMENT` next to `TRANSFER_DST`. That is safe everywhere: the spec guarantees that
+`COLOR_ATTACHMENT` "must be included" in a surface's `supportedUsageFlags`, while every other usage, `TRANSFER_DST`
+included, has to be checked, which the program does. By the rules, those were the layer's own invalid calls; in practice
+your users have such layers installed, and the swapchain is a resource you share with them.
+
+## What the program prints
+
+With present fences (the default) and `--demo-resize`, which resizes the window to 1000x700 after 1 s, to 640x480
+after 2 s, minimizes it after 3 s and restores it after 4 s (Rust):
+
+```text
+Window: 800x600 pixels, resizable
+Picked: NVIDIA GeForce RTX 3080 Ti, graphics + present family 0
+Present fences (VK_KHR_swapchain_maintenance1): supported, used
+Surface format B8G8R8A8_SRGB + SRGB_NONLINEAR, present mode MAILBOX
+Swapchain created: 800x600, 3 images
+
+Rendering. Resize or minimize the window; close it to exit.
+Demo: resize to 1000x700
+Swapchain recreated: 1000x700, 3 images; the old one waits for its present fences
+Old 800x600 swapchain destroyed: the fences of all its presents have signaled
+Demo: resize to 640x480
+Swapchain recreated: 640x480, 3 images; the old one waits for its present fences
+Old 1000x700 swapchain destroyed: the fences of all its presents have signaled
+Demo: minimize
+Window minimized (surface 0x0): rendering paused
+Demo: restore
+Window restored
+Swapchain recreated: 640x480, 3 images; the old one waits for its present fences
+Old 640x480 swapchain destroyed: the fences of all its presents have signaled
+Window closed
+[timing] 7232 frames, 3 swapchain recreation(s)
+```
+
+With `--no-present-fences`, the recreation lines change:
+
+```text
+Present fences (VK_KHR_swapchain_maintenance1): supported, off (--no-present-fences)
+...
+Swapchain recreated: 1000x700, 3 images; the old one destroyed after vkDeviceWaitIdle
+Swapchain recreated: 640x480, 3 images; the old one destroyed after vkDeviceWaitIdle
+...
+Swapchain recreated: 640x480, 3 images; the old one destroyed after vkDeviceWaitIdle
+```
+
+(Shortened.) The C++ version prints the same lines; validation reports only the bandicam warning. Two things are
+worth noticing. After the restore the size is the same 640x480 as before, yet a new swapchain is built: the old one
+lived through a 0x0 surface and the program does not try to guess whether it survived. And in all these runs every
+recreation was triggered by a resize event: neither the acquire nor the present ever returned `OUT_OF_DATE` or
+`SUBOPTIMAL` on this machine (those would print `[timing]` lines). On other platforms and drivers they do, which is
+why the code handles all three triggers.
+
+## The map of this lesson
+
+<MindMap />
+
+## Underneath
+
+- On Windows the presentation engine is the Desktop Window Manager with the display driver: our swapchain images are
+  shared with the compositor, which reads them to build the desktop. A new window size means new images of the new
+  size; `oldSwapchain` lets the driver hand over without a black frame.
+- "The presentation engine has taken a reference": the compositor may keep using an image (and the memory behind it)
+  after our present has finished on the queue. That is why destroying a swapchain needs more than our own fences, and
+  why present fences were added as an extension rather than being implied by queue completion.
+- A minimized window has no area to compose into, hence the 0x0 surface. Nothing is wrong with the GPU or the swapchain
+  at that moment; there is simply no image size that would be valid.
+
+<Quiz
+	questions={[
+		{
+			q: 'vkAcquireNextImageKHR returns VK_SUBOPTIMAL_KHR. What should the frame do?',
+			options: [
+				{
+					text: 'Skip the frame and recreate at once, as for OUT_OF_DATE',
+					why: 'SUBOPTIMAL means an image WAS acquired and its semaphore will be signaled; abandoning it leaves both behind.',
+				},
+				{
+					text: 'Render and present it, then recreate before the next frame',
+					why: 'Right: the acquired image must be presented (or released); the swapchain still works, it just no longer fits exactly.',
+				},
+				{
+					text: 'Nothing, SUBOPTIMAL can be ignored forever',
+					why: 'Presenting keeps working, but the images no longer match the window; step 11 recreates soon after.',
+				},
+				{
+					text: 'Wait on the image_available semaphore on the host',
+					why: 'A binary semaphore cannot be waited on by the host, and the result code says nothing about the semaphore.',
+				},
+			],
+			answer: 1,
+			ref: '#4-three-triggers',
+		},
+		{
+			q: 'Why can the old swapchain not be destroyed right after vkCreateSwapchainKHR returns the new one?',
+			options: [
+				{
+					text: 'Images acquired from it may still be rendered into and presented',
+					why: 'Right: a retired swapchain still serves the presents of images acquired before; it may be destroyed only when all uses of its images are complete.',
+				},
+				{
+					text: 'The driver destroys it by itself a few frames later',
+					why: 'A retired swapchain is still the application\'s object; it must be destroyed with vkDestroySwapchainKHR.',
+				},
+				{
+					text: 'vkCreateSwapchainKHR has not finished copying the old images into the new ones yet',
+					why: 'Nothing is copied: the new swapchain has new images of the new size.',
+				},
+				{
+					text: 'A device may own only one swapchain at a time',
+					why: 'Several swapchains can exist, even for one surface (retired ones); only one per window is non-retired.',
+				},
+			],
+			answer: 0,
+			ref: '#2-two-ways-to-retire-the-old-chain',
+		},
+		{
+			q: 'What does a signaled present fence (VK_KHR_swapchain_maintenance1) prove?',
+			options: [
+				{
+					text: 'That the image has appeared on the display',
+					why: 'The spec says the fence may not wait for the present operation to complete; it is about our objects, not the screen.',
+				},
+				{
+					text: 'That the present no longer needs the objects it referred to',
+					why: 'Right: the queue operations completed and the presentation engine has taken its references, so the wait semaphores may be reused and, after all its presents, the swapchain destroyed.',
+				},
+				{
+					text: 'That the next vkAcquireNextImageKHR call will return this same image',
+					why: 'Which image the next acquire returns is up to the presentation engine.',
+				},
+				{
+					text: 'That the GPU is idle',
+					why: 'A present fence covers one present; other queue work may still be running.',
+				},
+			],
+			answer: 1,
+			ref: '#3-present-fences',
+		},
+		{
+			q: 'The window is minimized and its surface reports 0x0. What does step 11 do?',
+			options: [
+				{
+					text: 'Creates a 1x1 swapchain until the window comes back',
+					why: 'On Windows a new swapchain must match the window\'s current size, and 0x0 is not a valid extent at all.',
+				},
+				{
+					text: 'Destroys the device and recreates everything from scratch on restore',
+					why: 'Nothing but the swapchain depends on the window size; the device, pipeline and frames stay.',
+				},
+				{
+					text: 'Creates nothing, pauses rendering and retries on the next resize',
+					why: 'Right: imageExtent must be non-zero (VUID-VkSwapchainCreateInfoKHR-imageExtent-01689), so the recreation waits until the restore reports a size.',
+				},
+				{
+					text: 'Keeps presenting to the old swapchain',
+					why: 'The old swapchain no longer matches the window, and a minimized window shows nothing; the program stops drawing instead.',
+				},
+			],
+			answer: 2,
+			ref: '#minimized-windows',
+		},
+	]}
+/>

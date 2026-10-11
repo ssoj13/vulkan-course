@@ -285,12 +285,12 @@
     },
     "vk-semaphore": {
       "label": "VkSemaphore",
-      "aka": ["семафор", "semaphore", "бинарный семафор"],
+      "aka": ["семафор", "semaphore"],
       "def": "Сигнал на стороне GPU: его сигналит пакет команд (batch) или presentation engine (когда полученное изображение освободилось), а ждёт пакет команд или показ; CPU в этом не участвует."
     },
     "image-layout": {
       "label": "Layout изображения",
-      "aka": ["VkImageLayout", "image layout", "переход layout"],
+      "aka": ["VkImageLayout", "image layout"],
       "def": "Раскладка памяти изображения под один вид использования (color attachment, показ, выборка в шейдере...); переводит изображение из одного layout в другой барьер."
     },
     "pipeline-barrier": {
@@ -302,6 +302,71 @@
       "label": "Цикл кадра",
       "aka": ["frame loop", "acquire", "present", "vkAcquireNextImageKHR", "vkQueuePresentKHR"],
       "def": "Путь одного кадра по кругу: дождаться предыдущего кадра, получить изображение swapchain, записать команды, отправить, показать."
+    },
+    "execution-dependency": {
+      "label": "Зависимость исполнения",
+      "aka": ["execution dependency", "happens-before", "область синхронизации"],
+      "def": "Гарантия, что один набор операций происходит раньше другого (happens-before): первый набор завершается до того, как начнётся второй. Строится на порядке отправки; задаёт её команда синхронизации (fence, семафор, барьер) двумя своими областями синхронизации."
+    },
+    "binary-semaphore": {
+      "label": "Бинарный семафор",
+      "aka": ["binary semaphore", "VK_SEMAPHORE_TYPE_BINARY"],
+      "def": "VkSemaphore с двумя состояниями: сигнал взводит его, ровно одно ожидание забирает этот сигнал и снова сбрасывает семафор. Только такие семафоры принимают acquire и present."
+    },
+    "frames-in-flight": {
+      "label": "Кадры в полёте",
+      "aka": ["frames in flight", "MAX_FRAMES_IN_FLIGHT", "слот кадра"],
+      "def": "Несколько кадров в работе одновременно: CPU записывает кадр N+1, пока GPU ещё рендерит кадр N. Строится на цикле кадра, где у каждого кадра в полёте свой набор ресурсов: command buffer, fence, семафор для acquire."
+    },
+    "data-hazard": {
+      "label": "Конфликт доступа (hazard)",
+      "aka": ["data hazard", "read-after-write", "write-after-read", "write-after-write", "RAW", "WAR", "WAW", "гонка данных"],
+      "def": "Два обращения к одной памяти, хотя бы одно из них запись, и никакая зависимость их не упорядочивает. Чтению после записи и записи после записи нужна зависимость по памяти, записи после чтения хватает зависимости исполнения."
+    },
+    "memory-dependency": {
+      "label": "Зависимость по памяти",
+      "aka": ["memory dependency"],
+      "def": "Зависимость исполнения, в которую добавлены операции доступности и видимости: значения, записанные первым набором операций, второй набор может прочитать или перезаписать. Её задаёт большинство команд синхронизации."
+    },
+    "availability-visibility": {
+      "label": "Доступность и видимость",
+      "aka": ["availability", "visibility", "available", "visible", "сброс кэша", "инвалидация кэша"],
+      "def": "Две половины зависимости по памяти: доступность (availability) делает записи первой области доступа доступными в домене памяти (похоже на сброс кэшей того, кто писал), видимость (visibility) делает доступные значения видимыми обращениям второй области (похоже на инвалидацию кэшей того, кто читает)."
+    },
+    "stage-mask": {
+      "label": "Маска стадий",
+      "aka": ["stage mask", "VkPipelineStageFlags2", "srcStageMask", "dstStageMask"],
+      "def": "Стадии конвейера, которые входят в область синхронизации: srcStageMask называет стадии более ранней работы, которые должны завершиться, dstStageMask — стадии более поздней работы, которые должны подождать. Своя маска есть и у ожидания семафора."
+    },
+    "access-mask": {
+      "label": "Маска доступа",
+      "aka": ["access mask", "VkAccessFlags2", "srcAccessMask", "dstAccessMask"],
+      "def": "Виды обращений к памяти, входящие в область доступа: srcAccessMask — записи, которые надо сделать доступными, dstAccessMask — обращения, которым их надо сделать видимыми. Каждый вид доступа должен относиться к стадии из соответствующей маски стадий."
+    },
+    "layout-transition": {
+      "label": "Переход layout",
+      "aka": ["layout transition", "oldLayout", "newLayout"],
+      "def": "Смена layout изображения внутри барьера для изображения: чтение и запись памяти изображения, которые происходят после операций доступности барьера и до его операций видимости."
+    },
+    "timeline-semaphore": {
+      "label": "Timeline-семафор",
+      "aka": ["timeline semaphore", "VK_SEMAPHORE_TYPE_TIMELINE", "vkWaitSemaphores", "vkSignalSemaphore"],
+      "def": "VkSemaphore, построенный на 64-битном счётчике, который только растёт: сигнал ставит в него большее значение, ожидание (в отправке или на хосте) длится, пока счётчик не дойдёт до нужного. В ядре с Vulkan 1.2; один такой семафор может заменить набор fence."
+    },
+    "swapchain-recreation": {
+      "label": "Пересоздание swapchain",
+      "aka": ["swapchain recreation", "VK_ERROR_OUT_OF_DATE_KHR", "VK_SUBOPTIMAL_KHR", "resize"],
+      "def": "Создание нового swapchain, когда старый перестал подходить окну (изменился размер, OUT_OF_DATE, SUBOPTIMAL): старый передаётся как oldSwapchain и уничтожается, когда им больше никто не пользуется."
+    },
+    "old-swapchain": {
+      "label": "Списанный swapchain (oldSwapchain)",
+      "aka": ["oldSwapchain", "retired swapchain"],
+      "def": "Swapchain, переданный как oldSwapchain при создании замены: он становится списанным (retired) — получить из него новое изображение уже нельзя, уже полученные ещё можно показать, а уничтожить его приложение всё равно должно само."
+    },
+    "present-fence": {
+      "label": "Present fence",
+      "aka": ["VK_KHR_swapchain_maintenance1", "VkSwapchainPresentFenceInfoKHR"],
+      "def": "Fence, переданный в vkQueuePresentKHR (VK_KHR_swapchain_maintenance1): он сигналит, когда операции очереди этого показа завершились и presentation engine забрал всё, что ему нужно. После этого семафоры ожидания показа можно использовать снова, а swapchain, у всех показов которого fence просигналили, можно уничтожить."
     }
   },
   "edges": {
@@ -389,6 +454,25 @@
     "frame-loop|built-on|submission": "отправляет",
     "frame-loop|built-on|vk-swapchain": "получает и показывает",
     "frame-loop|uses|vk-fence": "ждёт",
-    "frame-loop|uses|vk-semaphore": "связывает через"
+    "frame-loop|uses|vk-semaphore": "связывает через",
+    "execution-dependency|built-on|queue": "упорядочивает работу",
+    "vk-fence|uses|execution-dependency": "задаёт: очередь → хост",
+    "vk-semaphore|uses|memory-dependency": "задаёт между операциями очередей",
+    "pipeline-barrier|uses|memory-dependency": "задаёт внутри очереди",
+    "memory-dependency|built-on|execution-dependency": "добавляет доступность и видимость к",
+    "data-hazard|related|memory-dependency": "устраняется",
+    "pipeline-barrier|uses|stage-mask": "ограничен",
+    "pipeline-barrier|uses|access-mask": "ограничен",
+    "access-mask|related|stage-mask": "должна соответствовать",
+    "layout-transition|built-on|memory-dependency": "происходит внутри",
+    "layout-transition|uses|image-layout": "меняет",
+    "pipeline-barrier|uses|layout-transition": "выполняет",
+    "timeline-semaphore|related|vk-fence": "заменяет fence на кадр",
+    "frames-in-flight|built-on|frame-loop": "совмещает несколько",
+    "frames-in-flight|uses|vk-fence": "по одному на кадр",
+    "frames-in-flight|uses|vk-command-buffer": "по одному на кадр",
+    "swapchain-recreation|built-on|vk-swapchain": "пересоздаёт",
+    "swapchain-recreation|uses|old-swapchain": "списывает",
+    "swapchain-recreation|uses|present-fence": "ждёт"
   }
 }

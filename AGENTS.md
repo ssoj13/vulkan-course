@@ -129,7 +129,7 @@ Files per lab `<slug>`: model `src/lib/labs/<slug>.ts` (pure, no DOM), view `src
 | device-picker | DevicePicker | devices/physical-devices |
 | queue-planner | QueuePlanner | devices/queue-families |
 | object-builder | ObjectGraph (`src/components/ObjectGraph*`, model `src/lib/objects.ts`) | devices/logical-device |
-| queue-sync | QueueSync | none yet (module 7) |
+| queue-sync | QueueSync | sync/fences-and-semaphores (EN; RU when the RU lesson replaces its placeholder) |
 | graphics-pipeline | GraphicsPipeline | pipeline/graphics-pipeline (EN; RU when the RU lesson replaces its placeholder) |
 | buffer-memory | BufferMemory | none yet (module 8) |
 
@@ -254,8 +254,19 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
 - [ ] Screenshots of 10/11/12: NOT taken. On 2026-10-11 ~03:00 every Vulkan window (also step 09, which worked on 10-10)
   showed a white client area in GDI/PrintWindow/MCP captures and in a full-screen capture; retake when the desktop shows
   them again (`examples/screenshots/{10_frames_in_flight,11_resize,12_timeline}.png`, 11 after --demo-resize).
-- [ ] Module 7: reviews of 10-12 (code vs spec), lessons EN/RU (fences-and-semaphores, frames-in-flight,
-  barriers-and-layouts, timeline-semaphores, swapchain-recreation), embed queue-sync lab.
+- [x] Module 7 EN lessons (2026-10-11): sync/{fences-and-semaphores (embeds QueueSync), frames-in-flight,
+  barriers-and-layouts, timeline-semaphores, swapchain-recreation}; RU pages are placeholders. Regions shown once:
+  10 sync-objects/submit (fences), 10 cli/frame-resources/command-buffers/wait-fence/cpu-work/animate/advance-frame/
+  cleanup (frames), 12 offscreen-image/barriers/render/blit (barriers), 12 pick-device/timeline-semaphore/
+  binary-semaphores/frame-resources/wait-timeline/submit/cleanup (timeline), 11 chain/create-chain/recreate/
+  instance-extensions/device-extensions/frame-resources/present/wait-present-fence/destroy-retired/recreate-triggers/
+  event-loop/cleanup + 12 swapchain-usage (recreation; Bandicam story). Not shown: 10's 09-identical regions, 11 cli/demo,
+  12 cli/event-loop. 13 terms added (execution-dependency, binary-semaphore, frames-in-flight, data-hazard,
+  memory-dependency, availability-visibility, stage-mask, access-mask, layout-transition, timeline-semaphore,
+  swapchain-recreation, old-swapchain, present-fence); vk-fence/vk-semaphore -> fences-and-semaphores, image-layout/
+  pipeline-barrier -> barriers-and-layouts. frame-loop STAYS on first-triangle: <MindMap /> throws for a lesson that
+  owns no term. The Rust runs of 10 in m7/ came from the debug build (m7run.ps1), C++ from release.
+- [ ] Module 7: independent reviews of 10-12 (code vs spec) and of the 5 EN lessons (facts vs spec); RU lessons.
 - Step numbering: 10-12 = module 7, so module 8+ examples shift by one vs the course plan (12_vertex_buffer -> 13_...).
 
 - [x] Stage 1: course-kit engine; [x] site on the kit; [x] examples 01-05 both languages; [x] lessons 1-10

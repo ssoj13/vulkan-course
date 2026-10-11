@@ -1,0 +1,307 @@
+---
+title: Fences and semaphores
+description: 'The three tools that order GPU work - fence, semaphore, barrier - what each one connects, and how they relate to CPU threads and locks.'
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import MindMap from 'course-kit/components/MindMap.astro';
+import Quiz from 'course-kit/components/Quiz.astro';
+import Step from '../../../components/Step.astro';
+import ObjectGraph from '../../../components/ObjectGraph.astro';
+import QueueSync from '../../../components/labs/QueueSync.astro';
+
+The first triangle already used a fence and two kinds of semaphores, almost without explanation. This module is about
+them: who waits for whom, and what exactly a wait guarantees. This first lesson answers the basic question: why does
+Vulkan need three different tools to say "do this after that", and which one fits which edge?
+
+## Where this fits
+
+The first lesson of the **synchronization** module. We stay on the concept and API layers: what an ordering guarantee
+is, and which Vulkan object gives it between which two parties. Everything later in the module builds on this lesson:
+[frames in flight](lesson:frames-in-flight) multiply the fences, [barriers](lesson:barriers-and-layouts) add the memory
+side, [timeline semaphores](lesson:timeline-semaphores) merge fences and semaphores into one counter. The chain:
+
+`queue (submission order) → execution dependency → fence: queue → host · semaphore: queue → queue · barrier: inside one queue`
+
+An [execution dependency](term:execution-dependency) is built on the order in which work was submitted to a
+[queue](term:queue); a [fence](term:vk-fence), a [semaphore](term:vk-semaphore) and a
+[pipeline barrier](term:pipeline-barrier) are three ways to create one, each for a different pair of parties.
+
+## Nothing is ordered until you say so
+
+A render farm again. You submit a simulation job and a render job that reads the simulation's cache. If the farm
+starts the render while the simulation still writes, the render reads half a cache. Every farm has the answer: a job
+dependency, "render after sim". The farm does not guess it from the order you clicked "submit".
+
+Neither does the GPU. The course-wide rule from [how a program talks to the GPU](lesson:talking-to-gpu#command-buffers-and-queues):
+**submission order** is the logical order that barriers and semaphores refer to; by itself it orders neither start
+nor finish, even within one queue (one exception: batches of one `vkQueueSubmit2` call begin in order); between
+different queues there is not even that. The spec says it plainly: submission order "does not itself define any
+execution or memory dependencies".
+
+So when two pieces of work touch the same memory and at least one of them writes, and nothing orders them, that is a
+**data race**: the result depends on timing, and it may be right on your machine and wrong on the next driver.
+
+The cure has a name. An [execution dependency](term:execution-dependency) is a guarantee that one set of operations
+*happens-before* another: the first set completes before the second set starts. Every synchronization command creates
+one between two **synchronization scopes**: the first scope says *which earlier operations* are waited for, the second
+*which later operations* wait. Most of the work of this module is choosing those scopes no wider than needed, so that
+everything else keeps running in parallel.
+
+## Three edges, three tools
+
+Who has to wait for whom in a frame? Three different pairs, and Vulkan has one tool for each:
+
+| Tool | Signaled by | Waited on by | Orders |
+|---|---|---|---|
+| fence | a queue submission (or a present, see [swapchain recreation](lesson:swapchain-recreation)) | the host: `vkWaitForFences` | GPU work before CPU code |
+| semaphore | a queue submission, or the presentation engine after an acquire | a queue submission or a present | GPU work before GPU work, also across queues |
+| pipeline barrier | - (it is one command) | - | commands before it before commands after it, in one queue |
+
+They form a hierarchy from coarse to fine: a fence orders whole submissions against the CPU, a semaphore orders one
+queue operation against another, a barrier orders individual commands inside a queue. A fourth tool, `VkEvent`, is a
+barrier split into a signal and a wait (`vkCmdSetEvent2`, `vkCmdWaitEvents2`) in the same queue; this course does not
+need it.
+
+## A ladder from CPU threads
+
+You have written threaded code, so it is tempting to map these to the CPU tools you know. The mapping helps, as long as
+you also know where it breaks:
+
+| CPU tool | Closest Vulkan tool | Where the analogy breaks |
+|---|---|---|
+| `std::thread::join`, `future.wait()` | fence | Only the device side signals it (a submission, or a present); the host waits on it and resets it before reuse, but never signals it. And the wait does not make GPU writes visible to the host by itself (that needs a memory dependency of its own, module 8). |
+| `std::binary_semaphore` | binary semaphore | Only queue operations signal and wait, never the host; every signal must be consumed by exactly one wait; and the wait must be submitted after its signal. |
+| `std::atomic<uint64_t>` + "wait until it reaches N" | timeline semaphore | Close, including host waits and host signals; the value may only grow ([its own lesson](lesson:timeline-semaphores)). |
+| `std::atomic_thread_fence` (release / acquire) | pipeline barrier | A barrier also *waits for work to finish* in chosen pipeline stages, and it acts on one queue's command stream, not on threads. |
+| `std::mutex` | none | Nothing in Vulkan says "one at a time, in any order". Every tool says "this **before** that": you pick the order. |
+| `std::barrier` (threads meet) | none | A false friend: a pipeline barrier is not a meeting point of many parties, it orders earlier commands before later ones. |
+
+The ladder underneath all of them is the same one as on the CPU: **order of execution** (happens-before) first, and on
+top of it **order of memory** (writes made visible to later readers). On a CPU the cache hardware keeps memory
+coherent and atomics give you the ordering; on a GPU the caches are not kept coherent for you, so most Vulkan
+synchronization commands carry both halves. That memory half is the subject of the
+[barriers lesson](lesson:barriers-and-layouts).
+
+## Fences: the GPU tells the host
+
+A [fence](term:vk-fence) has two states, *signaled* and *unsignaled*. Given to `vkQueueSubmit2`, it is set to signaled
+when the work of that submission completes; its first synchronization scope is every batch of that call plus every
+command earlier in submission order on the queue. The host waits with `vkWaitForFences` (or polls with
+`vkGetFenceStatus`), and only that host wait is in the second scope: a fence orders GPU work before **CPU code**, never
+before other GPU work.
+
+A fence is one-shot until you reset it, and its rules follow from that:
+
+- the fence given to a submission must be unsignaled (`VUID-vkQueueSubmit2-fence-04894`);
+- it may be reset only when no queue command that will signal it is still pending (`VUID-vkResetFences-pFences-01123`);
+- it may be destroyed only when every submission that refers to it has completed (`VUID-vkDestroyFence-fence-01120`).
+
+Like a sticky note on the render farm's job: "tell me when you are done". What it does *not* do is make the GPU's
+writes readable by the CPU: the spec notes that the access scope of a fence covers only device access, so reading GPU
+results through mapped memory needs a memory dependency as well. That comes with buffers in module 8.
+
+## Semaphores: one queue operation tells another
+
+A [binary semaphore](term:binary-semaphore) is the kind every Vulkan program has used since 1.0. A queue operation
+signals it, and exactly one later queue operation waits on it; the wait *consumes* the signal and leaves the semaphore
+unsignaled again, ready for the next pair. The spec puts it as advice that is really a rule: "Binary semaphore waits
+and signals should thus occur in discrete 1:1 pairs." Two more rules:
+
+- the signal a wait will consume must already be submitted when the wait is submitted
+  (`VUID-vkQueueSubmit2-semaphore-03873`): a binary semaphore never waits for something that does not exist yet;
+- the host never touches it: no host wait, no host signal.
+
+A semaphore is more than an execution dependency. Its signal makes *all device writes* of the work before it
+available, and its wait makes them visible to *all device accesses* after it (the spec: the signal's first access
+scope "includes all memory access performed by the device", the wait's second access scope likewise). So memory
+written by one queue and read by another after a semaphore needs no extra barrier for visibility (for a resource
+shared by two queue families this assumes `VK_SHARING_MODE_CONCURRENT`; an `EXCLUSIVE` one also needs a queue family
+ownership transfer, which comes with async compute). A change of image layout is different: that always needs a
+barrier, as the next lessons show.
+
+The wait comes with a **stage mask**, and this is where a semaphore gets precise. The batch waits only from the
+named stage onward: its second synchronization scope is "limited to operations in stages indicated by `stageMask`",
+plus the logically later stages. The signal has a stage mask too, limiting which earlier stages it waits for.
+
+## 1. The sync objects of a frame
+
+Step 10 (the next lesson's program) creates the objects of step 09 once per frame in flight. With the default of two
+frames:
+
+<Step file="10_frames_in_flight" region="sync-objects" />
+
+Per frame in flight: one fence `in_flight` and one semaphore `image_available`. Per swapchain image: one semaphore
+`render_finished`, for the reason the [first triangle](lesson:first-triangle#1-the-sync-objects) explained: the
+present's wait on it is over for sure only when the same image comes back from an acquire. The program prints:
+
+```text
+Sync objects: 2 fence(s), 2 + 3 semaphores (2 frame(s) in flight)
+```
+
+## 2. Where each edge is attached
+
+The submission is the one place where all three edges meet:
+
+<Step file="10_frames_in_flight" region="submit" />
+
+Read it as three edges:
+
+1. **acquire → batch**, through `image_available`. The presentation engine signals it when the image is really free.
+   The wait's stage mask is `COLOR_ATTACHMENT_OUTPUT`: the vertex shader of our draw may run before the image is ours,
+   only the writing of color must wait. A wider mask (`ALL_COMMANDS`) would also be correct, just slower.
+2. **batch → present**, through `render_finished`. The signal's stage mask is `COLOR_ATTACHMENT_OUTPUT`: the signal
+   comes after all color writes of this batch and of everything earlier on the queue.
+3. **batch → host**, through the fence `in_flight`. The next time the CPU wants this slot's command buffer, it waits
+   on this fence.
+
+The present is the third party in the chain: it waits on `render_finished` on the queue, signals nothing, and the CPU
+does not wait for it at all.
+
+```text
+acquire --image_available--> submit (waits at COLOR_ATTACHMENT_OUTPUT)
+submit  --render_finished--> present
+submit  --in_flight (fence)--> CPU, before the slot is reused
+```
+
+## The third tool, briefly
+
+Inside the command buffer there are two more orderings: the layout change before rendering, and the one before
+presenting. Those are pipeline barriers, and since they deal with memory as much as with order, they get their own
+lesson: [pipeline barriers and image layouts](lesson:barriers-and-layouts).
+
+## Try it: queues, semaphores and fences
+
+The [queue-sync interactive](lab:queue-sync) runs these rules on the real queues of the course GPU: submissions on the
+graphics, async compute and transfer queues, with wait and signal semaphores, stage masks and fences. Every problem it
+reports is found from the spec's rules, not from the drawn schedule. Things to try now:
+
+- in *Upload, then render*, change the wait's stage to `COLOR_ATTACHMENT_OUTPUT`: the fragment shader reads the texture
+  before the copy ends. Change it to `VERTEX_SHADER`: correct again, but the whole draw waits;
+- move the render submission above the upload: a binary wait whose signal was not submitted yet;
+- in *Frames in flight*, remove the second `vkWaitForFences`: the CPU re-records a command buffer the GPU may still
+  run.
+
+<QueueSync />
+
+## Build it yourself
+
+Fences and semaphores are the smallest objects of the tree: both are created from the device and need nothing else.
+
+<ObjectGraph
+	mode="build"
+	scope={['instance', 'physical-device', 'device', 'queue', 'fence', 'semaphore']}
+	caption="Fences and semaphores hang directly off the device. Destroying them while a submission still refers to them breaks the rules."
+/>
+
+## The map of this lesson
+
+<MindMap />
+
+## Underneath
+
+- The spec only defines the guarantees, not how they are kept. A common shape: the GPU's command processor, after the
+  work in a signal's first scope has drained, writes a value to a memory location; a semaphore wait on another queue
+  is the command processor holding back the next work until that location shows the value; a fence wait on the host
+  is the driver checking the same kind of location, spinning or sleeping on an OS event.
+- That is why a semaphore wait costs the CPU nothing: the waiting happens inside the GPU's front end. A fence wait, by
+  contrast, blocks a CPU thread, which is exactly what the [next lesson](lesson:frames-in-flight) measures.
+- Stage masks matter to the hardware: "wait at `COLOR_ATTACHMENT_OUTPUT`" lets the front end start vertex work early
+  and hold back only the pixel output, instead of draining the whole pipeline.
+
+<Quiz
+	questions={[
+		{
+			q: 'The CPU wants to re-record a command buffer it submitted earlier. Which tool tells it that the GPU is done with it?',
+			options: [
+				{
+					text: 'A binary semaphore signaled by that submission',
+					why: 'A binary semaphore is waited on by queue operations only; the host cannot wait on it.',
+				},
+				{
+					text: 'A fence given to that submission',
+					why: 'Right: a fence is the GPU-to-host edge; once vkWaitForFences returns, the submission is complete and its command buffer is no longer pending.',
+				},
+				{
+					text: 'A pipeline barrier at the end of the command buffer',
+					why: 'A barrier orders commands inside a queue; it never wakes up the CPU.',
+				},
+				{
+					text: 'Nothing: submission order guarantees it is done by the next submit',
+					why: 'Submission order orders nothing by itself; earlier work may still be running when later work is submitted.',
+				},
+			],
+			answer: 1,
+			ref: '#fences-the-gpu-tells-the-host',
+		},
+		{
+			q: 'Why does the submit wait on image_available at COLOR_ATTACHMENT_OUTPUT rather than at ALL_COMMANDS?',
+			options: [
+				{
+					text: 'ALL_COMMANDS is not allowed for a semaphore wait',
+					why: 'It is allowed and would be correct; it would only hold back more work than needed.',
+				},
+				{
+					text: 'The presentation engine requires that exact stage',
+					why: 'The presentation engine does not see the stage mask; the mask only limits which work of our batch waits.',
+				},
+				{
+					text: 'So the work before color output may start before the image is ours',
+					why: 'Right: the wait\'s second scope covers the named stage and later ones, so vertex shading can run early and only the color writes wait.',
+				},
+				{
+					text: 'Because the fence already covers the earlier stages',
+					why: 'The fence is a GPU-to-host edge; it does not order anything inside the batch.',
+				},
+			],
+			answer: 2,
+			ref: '#semaphores-one-queue-operation-tells-another',
+		},
+		{
+			q: 'Which CPU tool has no counterpart in Vulkan synchronization?',
+			options: [
+				{
+					text: 'Waiting on the host until a task has finished (join)',
+					why: 'That is what a fence is for: the host waits until a submission has completed.',
+				},
+				{
+					text: 'A mutex that lets one party in at a time, in any order',
+					why: 'Right: Vulkan has no mutual exclusion; every tool states an order, "this before that", and you choose it.',
+				},
+				{
+					text: 'A release/acquire memory fence between two threads',
+					why: 'A pipeline barrier is the closest relative: it makes earlier writes visible to later accesses, and adds an execution order.',
+				},
+				{
+					text: 'A counter that other threads wait on until it reaches a value',
+					why: 'That is a timeline semaphore: a 64-bit counter that queues and the host can wait on.',
+				},
+			],
+			answer: 1,
+			ref: '#a-ladder-from-cpu-threads',
+		},
+		{
+			q: 'A batch on the transfer queue writes a buffer (created with VK_SHARING_MODE_CONCURRENT) and signals a semaphore; a batch on the graphics queue waits on it and reads the buffer. What else is needed for the reads to see the writes?',
+			options: [
+				{
+					text: 'A pipeline barrier with the writes as its source access',
+					why: 'Not for visibility: the semaphore\'s signal and wait already cover all device memory accesses on both sides.',
+				},
+				{
+					text: 'A fence wait on the host between the two submissions',
+					why: 'That would stall the CPU for nothing; the semaphore already orders the two queue operations.',
+				},
+				{
+					text: 'Nothing for memory: the semaphore defines a memory dependency',
+					why: 'Right: a semaphore signal makes all device writes available and the wait makes them visible to all device accesses.',
+				},
+				{
+					text: 'Submitting both batches together, in order, in one vkQueueSubmit2 call',
+					why: 'One call submits to one queue; the batches are on two different queues, and only the semaphore connects them.',
+				},
+			],
+			answer: 2,
+			ref: '#semaphores-one-queue-operation-tells-another',
+		},
+	]}
+/>

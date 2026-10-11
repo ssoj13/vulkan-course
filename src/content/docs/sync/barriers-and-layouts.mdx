@@ -1,0 +1,360 @@
+---
+title: Pipeline barriers and image layouts
+description: 'Execution and memory dependencies, stage and access masks, availability and visibility, and layout transitions, on a render-then-blit frame.'
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import MindMap from 'course-kit/components/MindMap.astro';
+import Quiz from 'course-kit/components/Quiz.astro';
+import Step from '../../../components/Step.astro';
+
+Fences and semaphores order whole submissions. Inside one queue, between one command and the next, the tool is the
+**pipeline barrier**, and so far we have used two of them by recipe. This lesson takes the recipe apart: what exactly
+does a barrier guarantee, why does it need four masks and two layouts, and what does the validation layer say when one
+of them is wrong? Step 12 gives us a frame with real hand-overs: render into an offscreen image, copy it to the
+swapchain image, present.
+
+## Where this fits
+
+The third lesson of the synchronization module. It goes one layer deeper than the previous two, from the API down to
+what the driver and the GPU's caches do. The concepts form a ladder, each rung built on the one below:
+
+`submission order → execution dependency (stage masks) → memory dependency (access masks: availability + visibility) → layout transition (a write inside the memory dependency)`
+
+[Fences and semaphores](lesson:fences-and-semaphores) introduced the
+[execution dependency](term:execution-dependency); here it gains a memory half, the
+[memory dependency](term:memory-dependency), made of [availability and visibility](term:availability-visibility),
+chosen with [stage masks](term:stage-mask) and [access masks](term:access-mask). A
+[layout transition](term:layout-transition) of an [image layout](term:image-layout) rides inside it. The tool that
+carries all of it is the [pipeline barrier](term:pipeline-barrier).
+
+## Four kinds of conflict
+
+Two commands touch the same memory. Depending on who reads and who writes, there are four cases, and only three of
+them are [data hazards](term:data-hazard):
+
+| Earlier | Later | Name | What can go wrong | What it needs |
+|---|---|---|---|---|
+| write | read | read-after-write (RAW) | the reader sees old data | a memory dependency |
+| write | write | write-after-write (WAW) | the older write lands last | a memory dependency |
+| read | write | write-after-read (WAR) | the writer overwrites data still being read | an execution dependency |
+| read | read | read-after-read | nothing | nothing |
+
+The last column is the spec's own rule: "Write-after-read hazards can be solved with just an execution dependency,
+but read-after-write and write-after-write hazards need appropriate memory dependencies to be included between them."
+Why the difference? A WAR conflict is only about *time*: the write must not start before the read is done. RAW and WAW
+are also about *where the data is*, and that needs the second rung of the ladder.
+
+## Why order alone is not enough
+
+On a CPU, if thread A writes a value and thread B reads it later, the cache hardware makes sure B sees it (atomics only
+have to order the accesses). A GPU is built differently. The color writes of a draw may sit in the cache of the
+render-output units; the copy engine or the texture units have their own caches, possibly holding stale lines of the
+same memory. Nothing keeps them coherent automatically. So "the draw finished before the copy started" is not enough:
+the draw's writes must also be **pushed out** where the copy can find them, and the copy's view of that memory must be
+**refreshed**.
+
+The spec names exactly these two steps, without talking about caches:
+
+- an **availability operation** makes the values of chosen *writes* available to a memory domain (think: flushed out of
+  the writer's caches);
+- a **visibility operation** makes available values visible to chosen *accesses* (think: the reader's stale cache lines
+  dropped).
+
+A [memory dependency](term:memory-dependency) is an execution dependency with both inside it, in a fixed order: the
+first set of operations happens-before the availability operation, availability happens-before visibility, visibility
+happens-before the second set. "Most synchronization commands in Vulkan define a memory dependency": semaphore signals
+and waits do, with *all* device accesses; a barrier does, with the accesses you choose.
+
+The CPU analogy is release and acquire: the writer *releases* (publishes) its writes, the reader *acquires* them.
+Where it breaks: on a CPU release/acquire only order accesses and the hardware does the rest, while on a GPU the barrier
+may really cause the flush and the invalidate, so a missing one is not a theoretical problem. And the cache picture is
+only a model: the spec defines availability and visibility, and a driver is free to implement them however its
+hardware needs.
+
+## Stage masks: which work waits for which
+
+A barrier's execution dependency is chosen with two masks of pipeline stages:
+
+- `srcStageMask`: the stages of **earlier** commands that must complete. The spec adds the logically *earlier* stages
+  automatically: naming `COLOR_ATTACHMENT_OUTPUT` also covers vertex and fragment shading of those commands;
+- `dstStageMask`: the stages of **later** commands that must wait. The logically *later* stages are added
+  automatically: naming `FRAGMENT_SHADER` also holds back color output.
+
+Everything outside the two masks keeps running. That is the whole point of being precise: a barrier with
+`ALL_COMMANDS` on both sides is always correct, and it also drains the whole pipeline at that point.
+
+"Earlier" means earlier **in submission order on the same queue**, not "in this command buffer". The spec: the first
+scope of `vkCmdPipelineBarrier2` is "applied to operations that occurred earlier in submission order". A barrier at the
+start of frame N's command buffer therefore reaches back into frame N-1's command buffer, submitted before it. Step 12
+depends on exactly that.
+
+## Access masks: which memory
+
+The memory half is chosen with two masks of access types:
+
+- `srcAccessMask`: the **writes** of the first scope that are made available (`COLOR_ATTACHMENT_WRITE`,
+  `TRANSFER_WRITE`...);
+- `dstAccessMask`: the accesses of the second scope that the available writes are made visible to (`TRANSFER_READ`,
+  `SHADER_SAMPLED_READ`, also writes such as `COLOR_ATTACHMENT_WRITE`).
+
+Two details. Unlike the stage masks, access masks do not grow by logical order: "only the stages the application
+specifies are considered part of each access scope". And every access must belong to a stage in its mask: a barrier
+with `srcAccessMask = COLOR_ATTACHMENT_WRITE` must name `COLOR_ATTACHMENT_OUTPUT` (or an all-stages flag) in
+`srcStageMask` (`VUID-VkImageMemoryBarrier2-srcAccessMask-03911`), and `TRANSFER_WRITE` needs a transfer stage such as
+`BLIT` (`VUID-VkImageMemoryBarrier2-srcAccessMask-03915`).
+
+For a WAR conflict the source access is simply `NONE`: there are no writes to publish, only a read to wait for.
+
+## Layouts and their transitions
+
+An [image layout](term:image-layout) is the arrangement of an image's memory for one kind of use. Step 12 uses five:
+
+- `UNDEFINED`: "the contents do not matter"; as the old layout it lets the GPU throw them away;
+- `COLOR_ATTACHMENT_OPTIMAL`: rendered into;
+- `TRANSFER_SRC_OPTIMAL` and `TRANSFER_DST_OPTIMAL`: the source and the destination of a copy or blit;
+- `PRESENT_SRC_KHR`: handed to the presentation engine.
+
+A [layout transition](term:layout-transition) is part of an image barrier: `oldLayout → newLayout`. The old layout
+must be `UNDEFINED` or the layout the image really has (`VUID-VkImageMemoryBarrier2-oldLayout-01197`). And the
+transition is not a label change, it is work on the image's memory. The spec places it precisely: it "happens-after
+the availability operations in the memory dependency, and happens-before the visibility operations", and it "may
+perform read and write accesses on all memory bound to the image subresource range".
+
+So a layout transition is a **write**, sitting in the middle of the barrier. That one sentence explains most barrier
+rules for images: earlier writes must be made available before it (or the transition may shuffle stale data), and an
+earlier *read* must have finished before it (a WAR conflict, solved by the source stage alone).
+
+## The barrier itself (synchronization2)
+
+`vkCmdPipelineBarrier2` takes a `VkDependencyInfo` with three lists: global memory barriers, buffer memory barriers
+(a range of a buffer), and image memory barriers (a subresource range of an image, plus the two layouts and the queue
+family ownership fields we leave at `QUEUE_FAMILY_IGNORED`). In synchronization2 (core since Vulkan 1.3) every barrier
+in those lists carries its own four masks; the Vulkan 1.0 `vkCmdPipelineBarrier` had one pair of stage masks for the
+whole call. Several independent barriers in one call let the driver merge their waits and cache operations, which
+separate calls may not.
+
+## Step 12: render, blit, present
+
+Step 12 renders the triangle into a 400x300 **offscreen** image and then **blits** it (a copy that may scale) onto the
+800x600 swapchain image. Two images, three kinds of work, four hand-overs.
+
+### 1. The offscreen image
+
+<Step file="12_timeline" region="offscreen-image" />
+
+Our first image that does not come from a swapchain. Its usage says what it will be: `COLOR_ATTACHMENT` (rendered
+into) and `TRANSFER_SRC` (blitted from); its format must support rendering and blitting on optimal tiling. Unlike a
+swapchain image it has no memory of its own, so the program allocates video memory and binds it; memory types are
+module 8 material, here it is just "the first `DEVICE_LOCAL` type the image accepts" (memory
+type 1 on the course GPU). The swapchain images, in turn, need `TRANSFER_DST` to be a blit destination; that and a
+surprising second usage flag are shown in [swapchain recreation](lesson:swapchain-recreation#who-else-uses-the-swapchain-images).
+
+There is **one** offscreen image for all frames in flight. That is deliberate: it makes the barriers at the edge
+between two frames necessary, and it is what real renderers do with big intermediate images they do not want to
+duplicate.
+
+### 2. The four barriers
+
+<Step file="12_timeline" region="barriers" />
+
+Each barrier is "after *this* (stage + access), before *that* (stage + access)", recorded where an image changes hands:
+
+| # | Image | Layout | After (src stage / access) | Before (dst stage / access) | Why |
+|---|---|---|---|---|---|
+| 1 | offscreen | `UNDEFINED → COLOR_ATTACHMENT_OPTIMAL` | `BLIT` / `NONE` | `COLOR_ATTACHMENT_OUTPUT` / `COLOR_ATTACHMENT_WRITE` | WAR: the previous frame's blit still reads this image |
+| 2 | swapchain | `UNDEFINED → TRANSFER_DST_OPTIMAL` | `BLIT` / `NONE` | `BLIT` / `TRANSFER_WRITE` | waits for the acquire: the submit waits on `image_available` at `BLIT` |
+| 3 | offscreen | `COLOR_ATTACHMENT_OPTIMAL → TRANSFER_SRC_OPTIMAL` | `COLOR_ATTACHMENT_OUTPUT` / `COLOR_ATTACHMENT_WRITE` | `BLIT` / `TRANSFER_READ` | RAW: render → copy |
+| 4 | swapchain | `TRANSFER_DST_OPTIMAL → PRESENT_SRC_KHR` | `BLIT` / `TRANSFER_WRITE` | `BLIT` / `NONE` | before `render_finished` is signaled at `BLIT` |
+
+Barrier by barrier:
+
+1. **Before rendering into the offscreen image.** The old contents do not matter (we clear), so the old layout is
+   `UNDEFINED`. But the image is not idle: the *previous* frame's blit reads it, and that blit may still be running
+   (frames in flight!). This frame's transition and clear are writes; the earlier blit is a read. WAR: an execution
+   dependency is enough, so the source is the stage `BLIT` with access `NONE`. The previous frame's blit is in another
+   command buffer and another submission; the barrier's first scope reaches it anyway, because it is earlier in
+   submission order on the same queue.
+2. **Before the blit writes the swapchain image.** The image has just been acquired; its old contents do not matter.
+   The source stage `BLIT` is the stage at which the submit waits on `image_available`, so the transition is chained
+   behind the semaphore wait and cannot start before the presentation engine has released the image.
+3. **The render → copy hand-over.** A RAW conflict: the color writes must be finished *and* made available
+   (`COLOR_ATTACHMENT_WRITE`), and made visible to the blit's reads (`TRANSFER_READ`). The layout changes to what a copy
+   source wants.
+4. **Before presenting.** The blit's writes are made available; the destination is `BLIT` with no access, the stage at
+   which `render_finished` is signaled, so the transition is ordered before the signal. The present needs no access
+   mask: the presentation engine makes the writes visible to itself.
+
+### 3. Render into the offscreen image
+
+<Step file="12_timeline" region="render" />
+
+Barrier 1, then the dynamic rendering of the [first triangle](lesson:first-triangle#two-layout-transitions), only
+smaller: render area, viewport and scissor are 400x300.
+
+### 4. Blit to the swapchain image
+
+<Step file="12_timeline" region="blit" />
+
+Barriers 2 and 3 go into **one** `vkCmdPipelineBarrier2` call: they concern different images and do not depend on each
+other. Then the blit: the whole 400x300 source onto the whole swapchain image, scaled by 2 with `NEAREST` filtering, so
+each rendered pixel becomes a 2x2 block on screen. `vkCmdBlitImage2` names the layouts the images are in at that moment,
+and they must be the real ones (`VUID-VkBlitImageInfo2-srcImageLayout-00221`, `VUID-VkBlitImageInfo2-dstImageLayout-00226`):
+that is what barriers 2 and 3 arranged. Barrier 4 closes the command buffer.
+
+## Proof: take one stage away
+
+A barrier that is too weak usually *works* on your machine: the timing happens to be right. The Khronos validation
+layer has a mode that tracks every access and every barrier and reports hazards: **synchronization validation**,
+switched on here with the environment variable `VK_KHRONOS_VALIDATION_VALIDATE_SYNC=true`. With it, steps 10-12 run
+without a single message (apart from the bandicam layer's warning).
+
+Then we removed the source stage `BLIT` from barrier 1, the WAR barrier. The layer reported (handles differ from run to
+run):
+
+```text
+[ERROR][VALIDATION] vkQueueSubmit2(): WRITE_AFTER_READ hazard detected. vkCmdPipelineBarrier2 (from VkCommandBuffer 0x257007310d0 submitted on the current VkQueue 0x257003c14d0) writes to VkImage 0x1b000000001b, which was previously read by vkCmdBlitImage2 (from VkCommandBuffer 0x2570072d8d0 submitted on VkQueue 0x257003c14d0). 
+The current synchronization defines the destination stage mask as VK_PIPELINE_STAGE_2_BLIT_BIT, but layout transition does not synchronize with these stages.
+Vulkan insight: If the layout transition is done via an image barrier, consider including VK_PIPELINE_STAGE_2_BLIT_BIT in srcStageMask. If the transition occurs as part of the render pass begin operation, consider specifying an external subpass dependency (VK_SUBPASS_EXTERNAL) with srcStageMask that includes VK_PIPELINE_STAGE_2_BLIT_BIT, or perform the transition in a separate image barrier before the render pass begins.
+Vulkan insight: an execution dependency is sufficient to prevent this hazard.
+```
+
+Everything this lesson said is in that message:
+
+- the hazard is **write-after-read**, and the "write" is `vkCmdPipelineBarrier2` itself: the layout transition is a
+  write to the image;
+- the read is `vkCmdBlitImage2` from **another command buffer**, the previous frame's: the conflict crosses command
+  buffers and submissions on one queue;
+- the fix is a source stage: "consider including `VK_PIPELINE_STAGE_2_BLIT_BIT` in srcStageMask";
+- and the last line is the WAR rule: "an execution dependency is sufficient to prevent this hazard". No access mask is
+  needed.
+
+Core validation alone does not report this: every call is valid on its own, and only synchronization validation
+tracks which access happened before which.
+
+## What the program prints
+
+The part of step 12's output that belongs to this lesson:
+
+```text
+Swapchain: 3 images of 800x600, usage TRANSFER_DST (blit target) + COLOR_ATTACHMENT (overlay layers)
+Offscreen image: 400x300 B8G8R8A8_SRGB, usage COLOR_ATTACHMENT + TRANSFER_SRC, memory type 1 (DEVICE_LOCAL)
+Graphics pipeline created (triangle.spv, dynamic rendering)
+```
+
+(Shortened; the full output, with the frame trace, is in the [timeline semaphores lesson](lesson:timeline-semaphores#what-the-program-prints).)
+
+## The map of this lesson
+
+<MindMap />
+
+## Underneath
+
+- A barrier is translated by the driver into whatever the hardware needs: waiting until the named source stages of
+  earlier work have drained (only those, if the hardware can tell them apart), writing back the caches that hold the
+  source writes, invalidating the caches the destination accesses will read through. A precise barrier lets the rest
+  of the GPU keep running; `ALL_COMMANDS` stops everything.
+- Layout transitions are where image compression lives. Many GPUs keep render targets in a compressed form that only
+  the render-output units understand; before a copy engine, a texture unit or the display reads the image, the
+  transition may have to decompress it in place. `UNDEFINED` as the old layout lets the driver skip that work, because
+  the old contents are declared garbage.
+- Synchronization validation does on the CPU what the spec does on paper: it keeps, for every image region, the last
+  write and the reads since, and checks each new access against the barriers in between. That is why it is slow (the
+  frame rate of step 10 dropped from 389 to 336 fps with it) and why it is worth running regularly.
+
+<Quiz
+	questions={[
+		{
+			q: 'Barrier 1 waits for the previous frame\'s blit, which only READ the offscreen image. Why is the source access mask NONE?',
+			options: [
+				{
+					text: 'A write-after-read conflict needs only an execution dependency',
+					why: 'Right: there are no writes to make available; the later write only has to wait until the read is done, which the source stage BLIT guarantees.',
+				},
+				{
+					text: 'Access masks are ignored when the old layout is UNDEFINED',
+					why: 'UNDEFINED only allows the old contents to be discarded; the access masks keep their meaning.',
+				},
+				{
+					text: 'The blit belongs to another command buffer, out of the barrier\'s reach',
+					why: 'The barrier\'s first scope is everything earlier in submission order on the queue, including the previous frame\'s command buffer.',
+				},
+				{
+					text: 'TRANSFER_READ cannot be combined with the BLIT stage',
+					why: 'It can (dstAccessMask of barrier 3 does exactly that); a read simply has nothing to make available.',
+				},
+			],
+			answer: 0,
+			ref: '#2-the-four-barriers',
+		},
+		{
+			q: 'Which pair of operations makes the rendering\'s color writes readable by the blit in barrier 3?',
+			options: [
+				{
+					text: 'Two layout transitions, one per image',
+					why: 'Barrier 3 has one transition, of the offscreen image; the transition is not what publishes the writes.',
+				},
+				{
+					text: 'An availability and a visibility operation',
+					why: 'Right: COLOR_ATTACHMENT_WRITE in the source access makes the writes available, TRANSFER_READ in the destination makes them visible to the blit.',
+				},
+				{
+					text: 'A semaphore signal and a semaphore wait',
+					why: 'Both commands are in one command buffer on one queue; semaphores order queue operations, barriers order commands.',
+				},
+				{
+					text: 'A fence signal and vkWaitForFences on the host',
+					why: 'A fence orders GPU work before host code; the blit runs on the GPU right after the rendering.',
+				},
+			],
+			answer: 1,
+			ref: '#why-order-alone-is-not-enough',
+		},
+		{
+			q: 'Why does a layout transition need the earlier writes to the image made available first?',
+			options: [
+				{
+					text: 'Because the transition happens on the host',
+					why: 'The transition is executed by the device, inside the barrier, between its availability and visibility operations.',
+				},
+				{
+					text: 'Because the transition may read and write all of the image\'s memory',
+					why: 'Right: the spec says a transition may perform read and write accesses on the whole subresource range, so it must see every earlier write.',
+				},
+				{
+					text: 'Because PRESENT_SRC_KHR requires it',
+					why: 'The rule is about every transition of every image, not about one layout.',
+				},
+				{
+					text: 'It does not: layouts are only labels for the validation layer',
+					why: 'A layout describes how the memory is arranged; changing it may really rearrange or decompress the data.',
+				},
+			],
+			answer: 1,
+			ref: '#layouts-and-their-transitions',
+		},
+		{
+			q: 'A barrier has srcStageMask = COLOR_ATTACHMENT_OUTPUT. Must the vertex shading of the earlier draws also have finished?',
+			options: [
+				{
+					text: 'No, only the named stage COLOR_ATTACHMENT_OUTPUT itself is waited for',
+					why: 'The execution scope grows by logical order: logically earlier stages are included in the source scope.',
+				},
+				{
+					text: 'Only if VERTEX_SHADER is in the access mask',
+					why: 'Access masks list kinds of memory access, not stages; and they do not change the execution scope.',
+				},
+				{
+					text: 'Yes: logically earlier stages are included automatically',
+					why: 'Right: naming a stage in srcStageMask implies every logically earlier stage, so vertex and fragment shading of those draws are covered.',
+				},
+				{
+					text: 'Only for draws in the same command buffer',
+					why: 'The source scope is everything earlier in submission order on the queue, across command buffers.',
+				},
+			],
+			answer: 2,
+			ref: '#stage-masks-which-work-waits-for-which',
+		},
+	]}
+/>

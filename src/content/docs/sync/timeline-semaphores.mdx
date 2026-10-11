@@ -1,0 +1,307 @@
+---
+title: Timeline semaphores
+description: 'One 64-bit counter that only grows replaces a fence per frame; why acquire and present still need binary semaphores.'
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import MindMap from 'course-kit/components/MindMap.astro';
+import Quiz from 'course-kit/components/Quiz.astro';
+import Step from '../../../components/Step.astro';
+
+Step 10 keeps one fence per frame in flight, and each one is waited on, reset and handed to a submission again, a
+little bookkeeping ritual per slot. A binary semaphore is not better: one signal, one wait, and the host cannot touch
+it. Could one object simply say *how far the GPU has got*? That is a **timeline semaphore**, and this lesson replaces
+step 10's fences with one.
+
+## Where this fits
+
+The fourth lesson of the synchronization module, on the API layer. It merges the two tools of
+[fences and semaphores](lesson:fences-and-semaphores) into one, applied to the slots of
+[frames in flight](lesson:frames-in-flight), in the render-then-blit frame of the
+[barriers lesson](lesson:barriers-and-layouts). The chain:
+
+`binary semaphore (one signal, one wait) → timeline semaphore (a counter: signal n, wait for ≥ n) → host wait (vkWaitSemaphores) instead of a fence per slot; binary semaphores stay for acquire and present`
+
+A [timeline semaphore](term:timeline-semaphore) is a [VkSemaphore](term:vk-semaphore) built on a 64-bit counter; it
+does the job of the per-slot [fences](term:vk-fence), while the [binary semaphores](term:binary-semaphore) keep their
+place at the swapchain.
+
+## From flags to a counter
+
+A render farm does not hang a "done" flag on every job and reset it for the next one. It has a counter: "frames done:
+41". Whoever needs frame 39 checks that the counter is at least 39; whoever needs frame 45 waits until it gets there.
+Nothing is reset, nothing is consumed, and many people can look at the same counter.
+
+A timeline semaphore is that counter:
+
+- it starts at an **initial value** given at creation, and only ever grows;
+- a **signal** sets it to a value, which must be greater than the current one
+  (`VUID-VkSubmitInfo2-semaphore-03882`); a queue submission signals it when the work in its first scope completes, and
+  the **host** can signal it too, with `vkSignalSemaphore` (`VUID-VkSemaphoreSignalInfo-value-03258`);
+- a **wait** for value *v* lasts until the counter is **≥ v**. It consumes nothing: any number of waits, on queues or on
+  the host (`vkWaitSemaphores`), may wait for the same or different values;
+- the host can read the counter at any time with `vkGetSemaphoreCounterValue`.
+
+Compared with the binary semaphore of the first lesson, three restrictions are gone. Waits and signals no longer pair
+1:1. A wait may be **submitted before** the signal it waits for: the spec only says the wait "will not complete until at
+least one semaphore signal operation" meets its criteria. And the host can take part on both sides. Compared with a
+fence, there is nothing to reset, and one object covers every frame.
+
+The CPU analogy is an atomic 64-bit counter paired with a condition variable, "sleep until the counter is at least
+*n*". D3D12 programmers know it as `ID3D12Fence`, and the two are close enough that the spec recommends importing a D3D12
+fence handle into a timeline semaphore. Where the analogy breaks: the counter must never be set backwards or to the same
+value, values far apart may exceed the device limit `maxTimelineSemaphoreValueDifference`
+(`VUID-VkSubmitInfo2-semaphore-03883`), and GPU-side waits happen inside the queue, not on any thread.
+
+## Why acquire and present stay binary
+
+The swapchain functions predate timeline semaphores and accept only binary ones: the semaphore of
+`vkAcquireNextImageKHR` must be binary (`VUID-vkAcquireNextImageKHR-semaphore-03265`), and so must every wait semaphore
+of `vkQueuePresentKHR` (`VUID-vkQueuePresentKHR-pWaitSemaphores-03267`). So step 12 has both kinds: binary semaphores
+at the two ends of the frame where the presentation engine is involved, one timeline semaphore for everything the CPU
+needs to know about the GPU's progress.
+
+## 1. Enable the feature
+
+<Step file="12_timeline" region="pick-device" />
+
+Timeline semaphores are core since Vulkan 1.2, and every Vulkan 1.2+ device must support the `timelineSemaphore`
+feature. Supported is not enabled: like every feature, it has to be switched on in `VkPhysicalDeviceVulkan12Features`
+when the device is created. The picking loop checks it anyway, the same way it checks dynamic rendering and
+synchronization2.
+
+## 2. Create the counter
+
+<Step file="12_timeline" region="timeline-semaphore" />
+
+A semaphore is binary unless its create info carries a `VkSemaphoreTypeCreateInfo` with `TIMELINE`. The initial value 0
+means "no frame has completed yet"; frames are therefore numbered from 1.
+
+## 3. The binary semaphores that remain
+
+<Step file="12_timeline" region="binary-semaphores" />
+
+Exactly the binary semaphores of step 10: `image_available` per frame in flight, `render_finished` per swapchain image.
+What is gone is the fence, as the per-frame resources show:
+
+<Step file="12_timeline" region="frame-resources" />
+
+## 4. Wait for frame n - F
+
+<Step file="12_timeline" region="wait-timeline" />
+
+Frame *n* uses slot `(n - 1) % F`. The last frame that used that slot is *n - F*, and when the counter has reached
+*n - F*, that frame's command buffer and its `image_available` are free. So the CPU waits for "counter ≥ n - F" with
+`vkWaitSemaphores`; `VkSemaphoreWaitInfo` accepts only timeline semaphores (`VUID-VkSemaphoreWaitInfo-pSemaphores-03256`).
+The first *F* frames have nothing to wait for.
+
+Notice what is missing compared with step 10: no reset. The fence ritual of the first triangle, "reset only after a
+successful acquire, or the next wait hangs", has no counterpart, because a wait does not change the counter.
+
+## 5. Signal frame n
+
+<Step file="12_timeline" region="submit" />
+
+One batch, three semaphore operations:
+
+- **wait** on `image_available` (binary) at the stage `BLIT`. Rendering into the offscreen image does not need the
+  swapchain image, so it may run before the presentation engine has released it; only barrier 2 and the blit wait.
+  That is the stage-mask precision of the [first lesson](lesson:fences-and-semaphores#semaphores-one-queue-operation-tells-another),
+  now with a real benefit;
+- **signal** `render_finished` (binary) at `BLIT`, for the present;
+- **signal** the timeline with value *n* at `ALL_COMMANDS`: the counter becomes *n* once everything in the batch, and
+  everything submitted before it on the queue, has completed. The value of a binary semaphore operation is ignored.
+
+The fence argument of `vkQueueSubmit2` is now null. Since frame numbers grow by one per submission, every signal is
+greater than the last one: the rule "a timeline only grows" is kept by construction.
+
+## 6. The end
+
+<Step file="12_timeline" region="cleanup" />
+
+The timeline tells when *our* work is done: waiting for the last frame's number covers every submission. Destroying the
+swapchain, though, also requires the presents to be finished (`VUID-vkDestroySwapchainKHR-swapchain-01282`), and the
+counter knows nothing about the presentation engine. So `vkDeviceWaitIdle` stays. Present fences, the precise answer
+to "is the present done", are part of the [next lesson](lesson:swapchain-recreation).
+
+## What the program prints
+
+Two frames in flight (the default), Rust:
+
+```text
+Window: 800x600 pixels
+Found 1 GPU(s)
+GPU 0: NVIDIA GeForce RTX 3080 Ti
+
+Picked: NVIDIA GeForce RTX 3080 Ti
+Graphics + present family: 0
+VkDevice created with VK_KHR_swapchain and timelineSemaphore
+
+Surface format: B8G8R8A8_SRGB + SRGB_NONLINEAR
+Present mode: MAILBOX
+Swapchain: 3 images of 800x600, usage TRANSFER_DST (blit target) + COLOR_ATTACHMENT (overlay layers)
+Offscreen image: 400x300 B8G8R8A8_SRGB, usage COLOR_ATTACHMENT + TRANSFER_SRC, memory type 1 (DEVICE_LOCAL)
+Graphics pipeline created (triangle.spv, dynamic rendering)
+
+Sync objects: 1 timeline semaphore, 2 + 3 binary semaphores, no fences (2 frame(s) in flight)
+
+Rendering. Close the window to exit.
+Frame 1: slot 0, no earlier frame used this slot, the submit will signal 1
+Frame 2: slot 1, no earlier frame used this slot, the submit will signal 2
+Frame 3: slot 0, the CPU waits until the counter reaches 1, the submit will signal 3
+[timing] frame 3: the counter read after the wait: 2
+Frame 4: slot 1, the CPU waits until the counter reaches 2, the submit will signal 4
+[timing] frame 4: the counter read after the wait: 3
+Frame 5: slot 0, the CPU waits until the counter reaches 3, the submit will signal 5
+[timing] frame 5: the counter read after the wait: 4
+Window closed
+[timing] timeline counter at exit: 7853 (7853 frames submitted)
+```
+
+The first five frames print what they wait for and what they signal. The `[timing]` lines are the interesting ones:
+frame 3 waits for 1 but reads 2. "≥ 1" was satisfied, and by the time the CPU looked, the GPU had also finished frame
+2. A fence per slot could not have told us that; a counter tells everything at once. Those lines depend on the moment
+(a busier machine reads exactly the wait value), the rest is identical in C++. With synchronization validation on
+(`VK_KHRONOS_VALIDATION_VALIDATE_SYNC=true`), as in this run, the only message is the bandicam layer warning.
+
+With one frame in flight (`--frames 1`) every frame waits for the one just before it, which is step 09's rhythm:
+
+```text
+Frame 1: slot 0, no earlier frame used this slot, the submit will signal 1
+Frame 2: slot 0, the CPU waits until the counter reaches 1, the submit will signal 2
+[timing] frame 2: the counter read after the wait: 1
+Frame 3: slot 0, the CPU waits until the counter reaches 2, the submit will signal 3
+[timing] frame 3: the counter read after the wait: 2
+```
+
+With three (`--frames 3`) the CPU runs up to three frames ahead:
+
+```text
+Frame 1: slot 0, no earlier frame used this slot, the submit will signal 1
+Frame 2: slot 1, no earlier frame used this slot, the submit will signal 2
+Frame 3: slot 2, no earlier frame used this slot, the submit will signal 3
+Frame 4: slot 0, the CPU waits until the counter reaches 1, the submit will signal 4
+[timing] frame 4: the counter read after the wait: 3
+```
+
+At the exit the counter equals the number of submitted frames in every run: each frame added exactly one.
+
+## Beyond one queue
+
+The frame loop uses only a sliver of what a timeline can do. With several queues, one timeline per queue turns
+"wait for that upload" or "wait for that simulation step" into "wait for value *n*", and a wait may be submitted
+before the work that will signal it. The [queue-sync interactive](lab:queue-sync) has a scenario for exactly that,
+*Async compute + timeline*: remove the wait of the second simulation step and see it overwrite particles the draw is
+still reading.
+
+## The map of this lesson
+
+<MindMap />
+
+## Underneath
+
+- A timeline semaphore maps naturally onto how GPUs report progress: a 64-bit value in memory that the command
+  processor writes when work completes, and that a waiting queue or the host compares against. On Windows the driver
+  model has such progress counters of its own (the same idea as D3D12 fences), and Vulkan can import a D3D12 fence
+  handle into a timeline semaphore.
+- A binary semaphore has to be implemented with extra state (signaled or not, consumed by one wait); the swapchain's
+  acquire and present were built around that model, and that is why they still require it.
+- Waiting on the host with `vkWaitSemaphores` is the same kind of host wait as `vkWaitForFences`: the driver lets our
+  thread sleep or spin until the value is reached. The frame rate does not change by switching; the bookkeeping does.
+
+<Quiz
+	questions={[
+		{
+			q: 'With three frames in flight, frame 10 is about to reuse its slot. Which counter value does the CPU wait for?',
+			options: [
+				{
+					text: '9, the frame submitted just before',
+					why: 'That would serialize the frames like step 09; frame 9 uses a different slot.',
+				},
+				{
+					text: '10, the value this frame will signal',
+					why: 'Frame 10 has not been submitted yet; waiting for its own value would never return.',
+				},
+				{
+					text: '7, the last frame that used the same slot',
+					why: 'Right: n - F = 10 - 3 = 7; once the counter is at least 7, that frame\'s command buffer and acquire semaphore are free.',
+				},
+				{
+					text: '0, because timeline waits never block on the host',
+					why: 'A timeline wait blocks until the counter reaches the value; 0 would be satisfied immediately and protect nothing.',
+				},
+			],
+			answer: 2,
+			ref: '#4-wait-for-frame-n---f',
+		},
+		{
+			q: 'Why does step 12 still create binary semaphores?',
+			options: [
+				{
+					text: 'Timeline semaphores cannot be signaled by a queue submission, only by the host',
+					why: 'They can: the submit signals the timeline with value n at ALL_COMMANDS.',
+				},
+				{
+					text: 'vkAcquireNextImageKHR and vkQueuePresentKHR accept only binary ones',
+					why: 'Right: VUID-vkAcquireNextImageKHR-semaphore-03265 and VUID-vkQueuePresentKHR-pWaitSemaphores-03267 require VK_SEMAPHORE_TYPE_BINARY.',
+				},
+				{
+					text: 'A device may have only one timeline semaphore',
+					why: 'There is no such limit; a program may create as many timeline semaphores as it needs.',
+				},
+				{
+					text: 'Binary semaphores are faster to wait on',
+					why: 'Speed is not the reason; the swapchain functions simply do not accept timeline semaphores.',
+				},
+			],
+			answer: 1,
+			ref: '#why-acquire-and-present-stay-binary',
+		},
+		{
+			q: 'Frame 3 waited for the counter to reach 1 and then read 2. What does that mean?',
+			options: [
+				{
+					text: 'The GPU had already finished frame 2 as well by then',
+					why: 'Right: a wait is satisfied by "at least 1", and the counter had already moved on to 2.',
+				},
+				{
+					text: 'The wait returned too early, a synchronization bug',
+					why: 'A wait for v returns once the counter is ≥ v; 2 satisfies it as well as 1 does.',
+				},
+				{
+					text: 'Frame 2 signaled before frame 1, out of order',
+					why: 'Nothing was out of order: the counter never goes back, and a wait for 1 is satisfied by any value from 1 up.',
+				},
+				{
+					text: 'The wait consumed one step of the counter',
+					why: 'Timeline waits consume nothing; reading the counter never changes it.',
+				},
+			],
+			answer: 0,
+			ref: '#what-the-program-prints',
+		},
+		{
+			q: 'Why is there no "reset" step in step 12\'s frame, unlike step 10\'s fence?',
+			options: [
+				{
+					text: 'Because the driver resets the counter after each wait',
+					why: 'Nothing resets the counter; it only grows. That is exactly why no reset is needed.',
+				},
+				{
+					text: 'Because a wait does not change the counter, and every frame signals a larger value',
+					why: 'Right: the state a fence had to be reset from does not exist; frame n signals n, which is always greater than before.',
+				},
+				{
+					text: 'Because binary semaphores reset the timeline semaphore whenever a queue waits on them',
+					why: 'Binary and timeline semaphores are separate objects; waiting on one does nothing to the other.',
+				},
+				{
+					text: 'Because vkDeviceWaitIdle is called every frame',
+					why: 'Step 12 calls vkDeviceWaitIdle only at the end; the frame loop waits on the timeline.',
+				},
+			],
+			answer: 1,
+			ref: '#4-wait-for-frame-n---f',
+		},
+	]}
+/>

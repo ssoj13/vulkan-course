@@ -63,6 +63,18 @@
         { "slug": "command-buffers", "title": "Command pools and command buffers", "short": "Command buffers", "summary": "Where command buffers come from, what recording means, and how a submission reaches the queue." },
         { "slug": "first-triangle", "title": "The first triangle", "summary": "One frame end to end: wait, acquire, record, submit, present, with a fence, semaphores and two layout transitions." }
       ]
+    },
+    {
+      "slug": "sync",
+      "title": "Synchronization",
+      "summary": "Who waits for whom: fences, semaphores and barriers, several frames in flight, timeline semaphores, and rebuilding the swapchain when the window changes.",
+      "lessons": [
+        { "slug": "fences-and-semaphores", "title": "Fences and semaphores", "summary": "The three tools that order GPU work - fence, semaphore, barrier - what each one connects, and how they relate to CPU threads and locks." },
+        { "slug": "frames-in-flight", "title": "Frames in flight", "summary": "Let the CPU record the next frame while the GPU renders this one: per-frame resources, fence slots, and what it measurably buys." },
+        { "slug": "barriers-and-layouts", "title": "Pipeline barriers and image layouts", "short": "Barriers and layouts", "summary": "Execution and memory dependencies, stage and access masks, availability and visibility, and layout transitions, on a render-then-blit frame." },
+        { "slug": "timeline-semaphores", "title": "Timeline semaphores", "summary": "One 64-bit counter that only grows replaces a fence per frame; why acquire and present still need binary semaphores." },
+        { "slug": "swapchain-recreation", "title": "Swapchain recreation", "summary": "Resizing and minimizing the window: OUT_OF_DATE and SUBOPTIMAL, oldSwapchain, and knowing when the old swapchain is free - present fences or vkDeviceWaitIdle." }
+      ]
     }
   ],
   "labs": [
@@ -75,7 +87,7 @@
     { "slug": "device-picker", "lesson": "physical-devices", "title": "Pick a GPU", "summary": "The real properties, features and limits of the course GPU, and the picking rule of step 03 that you can change." },
     { "slug": "queue-planner", "lesson": "queue-families", "title": "Queue planner", "summary": "The real queue families of the course GPU: choose graphics, async compute and transfer queues and see what you get." },
     { "slug": "object-builder", "lesson": "logical-device", "title": "Build the object tree", "summary": "Create and destroy Vulkan objects in any order; the simulator answers with the real validation rules." },
-    { "slug": "queue-sync", "title": "Queues, semaphores and fences", "summary": "Submit batches to several queues with wait and signal semaphores and a fence: see what overlaps, what waits and where a race appears." },
+    { "slug": "queue-sync", "lesson": "fences-and-semaphores", "title": "Queues, semaphores and fences", "summary": "Submit batches to several queues with wait and signal semaphores and a fence: see what overlaps, what waits and where a race appears." },
     { "slug": "graphics-pipeline", "lesson": "graphics-pipeline", "title": "The graphics pipeline", "summary": "Walk the stages from vertex input to color output, and see which state is baked into a pipeline and which is dynamic in Vulkan 1.4." },
     { "slug": "buffer-memory", "title": "Buffers and memory", "summary": "From buffer usage to memory requirements to a memory type of the real course GPU, and a staging upload or a direct write through the BAR window." }
   ]

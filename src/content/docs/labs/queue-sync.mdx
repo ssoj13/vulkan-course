@@ -9,7 +9,8 @@ gives you three tools for saying it, one per kind of edge. A **fence** is GPU �
 (`vkWaitForFences`) to learn that a submission finished. A **semaphore** is GPU → GPU between submissions, usually
 across queues: one batch signals it, another waits on it. A *binary* semaphore is a one-shot token, one signal for one
 wait. A *timeline* semaphore is a counter that only goes up, and a wait asks for "value ≥ N". A **pipeline barrier**
-orders commands inside one queue. Barriers are not modeled here; they come in the synchronization module.
+orders commands inside one queue. Barriers are not modeled here; they have their own lesson,
+[pipeline barriers and image layouts](lesson:barriers-and-layouts).
 
 Submission order on one queue is the *logical* order that barriers and semaphores refer to
 ([how a program talks to the GPU](lesson:talking-to-gpu#command-buffers-and-queues)). By itself it does not make later
