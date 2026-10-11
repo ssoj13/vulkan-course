@@ -78,8 +78,10 @@ The `u64` (C++: `vk::DeviceAddress`) comes first, so it is 8-byte aligned withou
 <Step file="19_buffer_device_address" region="device-features" />
 
 `bufferDeviceAddress` is a Vulkan 1.2 feature. Every Vulkan 1.3 device must support it (the spec's list of features
-required for 1.3), but as with push descriptors the program must enable it. Without it, the usage flag, the allocation
-flag and `vkGetBufferDeviceAddress` are all invalid (`VUID-vkGetBufferDeviceAddress-bufferDeviceAddress-03324`).
+required for 1.3), but as with push descriptors the program must enable it. Without it, `vkGetBufferDeviceAddress`
+is invalid (`VUID-vkGetBufferDeviceAddress-bufferDeviceAddress-03324`) and so is the allocation flag below
+(`VUID-VkMemoryAllocateInfo-flags-03331`). The usage flag alone is not forbidden: no rule ties
+`SHADER_DEVICE_ADDRESS` usage to the feature, but without the feature there is no valid way to get the address.
 
 ### 2. The usage and the allocation flag
 
@@ -112,7 +114,8 @@ memory lives.
 
 `vkGetBufferDeviceAddress` returns "an address of the start of" the buffer, and "addresses in the range
 [bufferBaseAddress, bufferBaseAddress + VkBufferCreateInfo::size) can be used to access the memory bound to this
-buffer". Zero "is reserved as a null pointer and must not be returned", which is why the program treats 0 as an error.
+buffer". And: "A value of zero is reserved as a "null" pointer and must not be returned as a valid buffer device
+address", which is why the program treats 0 as an error.
 
 ```text
 [addr] instance buffer device address: 0x6f94000
@@ -232,7 +235,7 @@ Window closed
 
 - **The GPU already uses virtual addresses.** Every buffer the driver hands to the GPU sits somewhere in the GPU's
   virtual address space, and descriptors typically contain such an address plus a size. Buffer device address exposes
-  the address part to the application; a shader load through it compiles to a plain global memory load.
+  the address part to the application; a shader load through it typically compiles to a plain global memory load.
 - **No range, no clamping.** A descriptor-based load can be bounds-checked by hardware or by the driver's robustness
   code; a physical pointer load cannot, because there is nothing to check against. That is the trade the extension
   makes explicitly, and why GPU-AV has to instrument the shader to find out.

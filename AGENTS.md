@@ -352,6 +352,56 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
   20 drawing one instance more than written (unwritten partially-bound element) -> VK_ERROR_DEVICE_LOST; GPU-AV
   printed nothing before the loss in that run (an observation on this machine, not something GPU-AV guarantees). Measured (release, sync validation on, 3 s, MAILBOX, not a benchmark): 2000-2900 fps for
   all four. Logs: scratchpad m9/ (session-local).
+- Module 9 review fixes (2026-10-11, EN lessons + 17-20 comments): UpdateAfterBind limits count descriptors of ALL
+  layouts ("with or without" UPDATE_AFTER_BIND_POOL), classic ones only layouts without it; step 20 labels now
+  "(only layouts without UPDATE_AFTER_BIND_POOL)" / "(all sets, incl. UPDATE_AFTER_BIND)" (Rust = C++, rerun). Facts
+  fixed in lessons: 03324 covers only vkGetBufferDeviceAddress (flag = VkMemoryAllocateInfo-flags-03331, no VUID ties
+  SHADER_DEVICE_ADDRESS usage to the feature); pipeline/set match = layout-07988 (stage) + 07990 (type); disturbing
+  rule = binding set N disturbs lower incompatible sets / all above N, binding a pipeline disturbs nothing; pool
+  overflow "may fail"; push descriptors update incrementally; descriptor_heap "was developed based on issues discovered
+  with VK_EXT_descriptor_buffer" (not "replaces"); descriptor sizes on the RTX 3080 Ti (descriptor_buffer props): UBO 8,
+  SSBO 16, sampled image 4 bytes. Terms: subgroup has no lockstep guarantee; push-constant 128 (1.0) / 256 (1.4).
+- examples 21-24 (module 10, 2026-10-11): all start from 17's frame loop (2 frames in flight, HOST_VISIBLE|COHERENT mesh,
+  per-slot persistently mapped UBO + descriptor set). New shaders `textured.slang` (Camera {float4x4 mvp} at set 0
+  binding 0, `Sampler2D albedo` = COMBINED_IMAGE_SAMPLER at binding 1; vertex pos3+uv2, stride 20; used by 21, 23) and
+  `cube.slang` (Scene {float4x4 mvp[2]}, std140 ArrayStride 64; SV_VulkanInstanceID picks the matrix, second cube gets
+  `.brg` colors; vertex pos3+color3, stride 24; used by 22, 24); both declare only `Shader` (pinned in
+  tests/shaders.test.ts). 21_texture: 256x256 RGBA8 generated with integer math (FNV-1a 0xb2e278e1 in both languages;
+  why: no decoder dependency, identical bytes), R8G8B8A8_SRGB (UNORM also printed), format check via
+  vkGetPhysicalDeviceFormatProperties2 (SAMPLED_IMAGE, FILTER_LINEAR, TRANSFER_DST), image memoryTypeBits 0b11 ->
+  type 1, size 262144 alignment 1024; upload = staging + barrier NONE/NONE -> COPY/TRANSFER_WRITE (UNDEFINED ->
+  TRANSFER_DST) + vkCmdCopyBufferToImage2 + COPY/TRANSFER_WRITE -> FRAGMENT_SHADER/SHADER_SAMPLED_READ (-> SHADER_READ_ONLY),
+  Rust UploadScratch guard / C++ IdleGuard declared after the RAII objects; sampler `--nearest` (anisotropy off then),
+  `--address repeat|mirror|clamp|border` (quad UVs 0..2), anisotropy min(16, maxSamplerAnisotropy = 16). samplerAnisotropy
+  (and sampleRateShading) are in the spec's "If Vulkan 1.4 is supported, the following features must be supported"
+  list (docs.vulkan.org features chapter, checked 2026-10-11) - still enabled explicitly via pEnabledFeatures.
+  22_depth: candidates D32_SFLOAT/D24_UNORM_S8_UINT/D16_UNORM all "yes" here, pick D32_SFLOAT (layout
+  DEPTH_ATTACHMENT_OPTIMAL; a stencil format would use DEPTH_STENCIL_ATTACHMENT_OPTIMAL + both aspects + pStencilAttachment,
+  path run once by forcing the candidate order, clean); spec guarantee quoted: D16_UNORM, one of X8_D24/D32_SFLOAT, one of D24S8/D32S8.
+  Depth image 800x600 = 2048000 bytes, type 1, SHARED by both frames in flight: per-frame barrier EARLY|LATE_FRAGMENT_TESTS/
+  DEPTH_STENCIL_ATTACHMENT_WRITE -> same stages/READ|WRITE, UNDEFINED -> attachment layout. Negative test (temporary edit,
+  reverted): src NONE/NONE gives "WRITE_AFTER_WRITE hazard detected. vkCmdPipelineBarrier2 ... writes to VkImage ...,
+  which was previously written by vkCmdEndRendering" (sync validation). Projection printed (fovy 60, aspect 1.3333334,
+  near 0.1, far 100; y_clip = -f*y, z 0..1); depth after divide 0.0000/0.9009/0.9724/1.0000 at 0.1/1/3.5/100;
+  reversed-Z only mentioned. Front face COUNTER_CLOCKWISE (CCW from outside, the y-flipping projection keeps it CCW on
+  screen). 23_mipmaps: 512x512 checker (16-texel cells, FNV-1a 0xef4a0dc5), features + BLIT_SRC/BLIT_DST, mipLevels =
+  32 - leading_zeros / std::bit_width = 10, image memory 1399808 bytes (level 0 = 1048576); one command buffer: all
+  levels UNDEFINED -> TRANSFER_DST (dst COPY or BLIT), copy level 0, per level: (i-1) TRANSFER_DST -> TRANSFER_SRC,
+  vkCmdBlitImage2 LINEAR, (i-1) -> SHADER_READ_ONLY (src BLIT/NONE: WAR), last level from BLIT/TRANSFER_WRITE. Spec quote
+  used in comments: blits convert sRGB to linear before filtering ("Image Copies With Scaling"). Floor 40 x 205 units, UVs
+  /2 (REPEAT), camera 1 up, pitch 0.2 rad, floor moves by time mod 2. `--no-mips` = maxLod 0, `--anisotropy`.
+  24_msaa: framebufferColor/DepthSampleCounts 1, 2, 4, 8 here; `--samples 1|2|4|8` (default 4; 1 = no MSAA, render to
+  the swapchain image); attachments TRANSIENT_ATTACHMENT, image-format sampleCounts checked with
+  vkGetPhysicalDeviceImageFormatProperties2; no LAZILY_ALLOCATED memory type on this GPU (count printed: 0) -> DEVICE_LOCAL
+  type 1 fallback; 4x color = 4x depth = 8192000 bytes. Resolve: color resolveMode AVERAGE, resolveImageView = swapchain
+  view, MSAA store DONT_CARE; depth not resolved. Spec (renderpass chapter): resolve runs in COLOR_ATTACHMENT_OUTPUT, reads
+  the MSAA image as COLOR_ATTACHMENT_READ, writes the single-sample one as COLOR_ATTACHMENT_WRITE. MSAA color image shared
+  by the frames in flight: barrier COLOR_ATTACHMENT_OUTPUT/WRITE -> COLOR_ATTACHMENT_OUTPUT/READ|WRITE; negative test (src
+  NONE) -> the same WRITE_AFTER_WRITE message. sampleRateShading mentioned in a comment only. All four: fmt + clippy -D
+  warnings, C++ /W4 clean, sync validation clean (only bandicam), stdout identical without `[timing]` for 21 (default,
+  --nearest --address clamp, mirror, border), 22 (default, --no-depth), 23 (default, --no-mips, --anisotropy), 24
+  (--samples 1/2/4/8). Release, validation + sync on, 3 s, MAILBOX: 1900-2850 fps (not a benchmark). Logs: scratchpad
+  m10/logs (session-local).
 - Module 8 review fixes, round 2 (2026-10-11, EN lessons only; RU memory pages are still placeholders):
   - gpu-allocator experiment (scratch cargo project, deleted after; logs check*.log in the session scratchpad gpualloc/):
     gpu-allocator =0.28.0 (features std+vulkan) + `[patch.crates-io] ash = { git = ash-rs/ash, rev = f4c2ca3 }`.
@@ -429,6 +479,32 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
   column-major matrix upload (17/18) is verified from the SPIR-V only, not visually.
 - [ ] Module 9: independent reviews of 17-20 (code vs spec), then the EN lessons descriptors/{uniform-buffers,
   descriptor-sets, push-constants, buffer-device-address, bindless}; `sync:vuids` for the VUIDs named in 17-20 comments.
+- [x] Module 9 EN lessons (2026-10-11): module `descriptors` ("Descriptors and shader data") in course.json/course.ru.json;
+  RU pages are placeholders. Regions shown once: 17 mesh/uniform-struct/transform/reflect/check-layout/frame-resources/
+  uniform-buffers/update-uniforms (uniform-buffers, + Snippet transform.slang), 17 set-layout/pipeline-layout/
+  descriptor-pool/allocate-sets/write-sets/bind-and-draw/cleanup (descriptor-sets, ObjectGraph build with pool/set),
+  18 cli/limits/push-constant-range/push-constants/frame-resources/device-features/push-descriptor-layout/
+  push-descriptor/compare (push-constants), 19 instance/push-data/device-features/create-buffer/instance-buffer/
+  get-address/push-and-draw (+ Snippet device_address.slang), 20 sizes/device-features/limits/set-layout/pool-and-set/
+  object-buffers/write-descriptors/initial-writes/stream-in/bind-and-draw (+ Snippet bindless.slang). Not shown: 18
+  cleanup, 19 pipeline-layout/cleanup, 20 cleanup. 27 terms added (scratchpad m9lesson/addterms9.py) + RU overlay;
+  vk-descriptor-set-layout now owned by descriptor-sets; objects.json descriptor-pool/descriptor-set got `term`.
+  Outputs quoted from Rust release runs 2026-10-11 (scratchpad m9lesson/, identical to C++ without [timing]/[addr]).
+  Measured for the lesson (slangc 2026.1, spirv-dis): one probe struct as std140 / std430 / -fvk-use-scalar-layout,
+  table in uniform-buffers (float3 after float3: 32/32/28; float[2] stride 16/4/4; float2x2 MatrixStride 16/8/8).
+  Spec facts (vkspec 1.4.365): maxPushConstantsSize min 128 core, **256 for Vulkan 1.4**; maxUniformBufferRange 16384
+  core / 65536 1.4; maxBoundDescriptorSets 4 / 7 (1.4); 1.4 requires pushDescriptor + scalarBlockLayout support, 1.3
+  bufferDeviceAddress, 1.2 uniformBufferStandardLayout; descriptor indexing is NOT required by core 1.4 (Roadmap 2022 only).
+- [x] Module 10 examples 21-24 (2026-10-11): see State "examples 21-24"; CMake STEPS/WINDOW_STEPS and READMEs updated.
+- [ ] Screenshots of 21-24: NOT taken - the 21 window was white again in window and full-screen captures on 2026-10-11
+  (same as 10-20). Retake `examples/screenshots/{21_texture,22_depth,23_mipmaps,24_msaa}.png` (23: one with and one with
+  `--no-mips`; 24: `--samples 1` vs 4, zoomed edge). Nothing visual was verified: winding/culling, texture orientation,
+  mip quality and the resolve are checked only by validation and code review.
+- [ ] Module 10: independent reviews of 21-24 (code vs spec), then the EN lessons images/{textures-and-samplers, depth,
+  mipmaps, msaa}; `sync:vuids` for the VUIDs named in 21-24 comments (VkSamplerCreateInfo-anisotropyEnable-01071,
+  VkImageMemoryBarrier2-image-03320).
+- [x] 22/24 D24_UNORM_S8_UINT branch (DEPTH_STENCIL_ATTACHMENT_OPTIMAL, both aspects, pStencilAttachment): tested
+  2026-10-11 by temporarily putting it first in the candidate list (both languages, reverted): runs, sync validation clean.
 - [ ] Proposal: a step 16b using gpu-allocator through `[patch.crates-io]` once a gpu-allocator release (or its main)
   builds against ash master (`push_next` -> `push`); 0.28.0 does not. Needs a Cargo.toml change: coordinate with the
   owner of examples/rust/Cargo.toml. Also update the Cargo.toml comment (lines 18-21) to mention the [patch] result.

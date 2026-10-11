@@ -529,12 +529,14 @@ impl Vk {
         println!("Graphics + present family: {family}");
 
         // #region limits
-        // Two sets of limits apply to descriptor arrays. The classic ones
-        // (VkPhysicalDeviceLimits) count descriptors in sets WITHOUT
-        // UPDATE_AFTER_BIND; the Vulkan 1.2 properties carry separate, often
-        // larger limits for UPDATE_AFTER_BIND layouts (the spec lets the
-        // classic per-stage limit be as low as 4). The ...Native flag
-        // says whether non-uniform indexing costs nothing extra in hardware.
+        // Two families of limits apply to descriptor arrays. The classic ones
+        // (VkPhysicalDeviceLimits) count only descriptors in layouts created
+        // WITHOUT UPDATE_AFTER_BIND_POOL. The ...UpdateAfterBind... ones
+        // (Vulkan 1.2 properties) count descriptors of ALL layouts, with or
+        // without that flag, and are often larger (the spec lets the classic
+        // per-stage limit be as low as 4). A layout with the flag is checked
+        // against the second family only. The ...Native flag says whether
+        // non-uniform indexing costs nothing extra in hardware.
         let mut props12 = vk::PhysicalDeviceVulkan12Properties::default();
         let mut props2 = vk::PhysicalDeviceProperties2::default().push(&mut props12);
         // SAFETY: `physical_device` came from this instance; the chain outlives the call.
@@ -542,7 +544,7 @@ impl Vk {
         let limits = chosen.limits;
         println!("Descriptor limits for storage buffers:");
         println!(
-            "  maxPerStageDescriptorStorageBuffers                = {} (sets without UPDATE_AFTER_BIND)",
+            "  maxPerStageDescriptorStorageBuffers                = {} (only layouts without UPDATE_AFTER_BIND_POOL)",
             limits.max_per_stage_descriptor_storage_buffers
         );
         println!(
@@ -550,7 +552,7 @@ impl Vk {
             limits.max_descriptor_set_storage_buffers
         );
         println!(
-            "  maxPerStageDescriptorUpdateAfterBindStorageBuffers = {} (UPDATE_AFTER_BIND sets)",
+            "  maxPerStageDescriptorUpdateAfterBindStorageBuffers = {} (all sets, incl. UPDATE_AFTER_BIND)",
             props12.max_per_stage_descriptor_update_after_bind_storage_buffers
         );
         println!(

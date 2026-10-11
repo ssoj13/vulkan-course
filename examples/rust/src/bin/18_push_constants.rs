@@ -6,7 +6,7 @@
 //!   push constants (default): the 80 bytes go INTO the command buffer with
 //!     vkCmdPushConstants. No buffer, no descriptor; the pipeline layout only
 //!     declares a push constant range. Small: maxPushConstantsSize is at
-//!     least 128 bytes (256 on many desktop GPUs).
+//!     least 128 bytes in Vulkan 1.0 and at least 256 in Vulkan 1.4.
 //!   push descriptors (`--push-descriptor`, core in Vulkan 1.4, feature
 //!     pushDescriptor): the data stays in step 17's uniform buffers, but the
 //!     DESCRIPTOR is recorded into the command buffer with
@@ -484,9 +484,10 @@ impl Vk {
 
         // #region limits
         // How much each road can carry. maxPushConstantsSize is a core limit
-        // (the spec guarantees at least 128 bytes, so 128 is the portable
-        // budget); maxPushDescriptors (Vulkan 1.4 properties, at least 32) is
-        // how many descriptors one push-descriptor set layout may hold.
+        // (the spec guarantees at least 128 bytes in Vulkan 1.0 and at least
+        // 256 in Vulkan 1.4; 128 is the budget that fits every version);
+        // maxPushDescriptors (Vulkan 1.4 properties, at least 32) is how many
+        // descriptors one push-descriptor set layout may hold.
         let mut props14 = vk::PhysicalDeviceVulkan14Properties::default();
         let mut props2 = vk::PhysicalDeviceProperties2::default().push(&mut props14);
         // SAFETY: `physical_device` came from this instance; the chain outlives the call.

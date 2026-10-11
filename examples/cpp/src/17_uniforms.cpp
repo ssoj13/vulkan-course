@@ -1029,8 +1029,9 @@ try {
         // #region bind-and-draw
         // Bind this slot's set as set 0 of the graphics bind point, through the
         // pipeline layout it was made for (first set 0, no dynamic offsets). The
-        // binding stays until another set replaces it; draws recorded after it
-        // see the descriptors as they are at submit time.
+        // binding stays until another set replaces it. Without UPDATE_AFTER_BIND
+        // the descriptors may be read from this call until the draws complete,
+        // so the set must not change in that window.
         cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *pipelineLayout, 0, frame.descriptorSet, nullptr);
         cmd.bindVertexBuffers(0, *vertexBuffer.buffer, vk::DeviceSize{0});
         cmd.bindIndexBuffer(*indexBuffer.buffer, 0, vk::IndexType::eUint16);

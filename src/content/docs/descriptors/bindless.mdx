@@ -81,9 +81,9 @@ program that targets older or smaller devices checks these features before relyi
 
 ```text
 Descriptor limits for storage buffers:
-  maxPerStageDescriptorStorageBuffers                = 1048576 (sets without UPDATE_AFTER_BIND)
+  maxPerStageDescriptorStorageBuffers                = 1048576 (only layouts without UPDATE_AFTER_BIND_POOL)
   maxDescriptorSetStorageBuffers                     = 1048576
-  maxPerStageDescriptorUpdateAfterBindStorageBuffers = 1048576 (UPDATE_AFTER_BIND sets)
+  maxPerStageDescriptorUpdateAfterBindStorageBuffers = 1048576 (all sets, incl. UPDATE_AFTER_BIND)
   maxDescriptorSetUpdateAfterBindStorageBuffers      = 1048576
   maxPerStageUpdateAfterBindResources                = 4294967295 (all resource types)
   maxUpdateAfterBindDescriptorsInAllPools            = 4294967295
@@ -91,12 +91,15 @@ Descriptor limits for storage buffers:
 This program: layout capacity 4096, one set of 256, 64 buffers written
 ```
 
-The classic limits count descriptors in layouts **without** `UPDATE_AFTER_BIND_POOL`, and the spec's minimum for
-`maxPerStageDescriptorStorageBuffers` is only 4 (30 under Roadmap 2022). Layouts **with** that flag count against a
-separate family of `...UpdateAfterBind...` limits, whose required minimum is 500000 on devices that support the
-feature. On the NVIDIA GPU of the course both families are 1048576, but on other hardware the classic numbers are far
-smaller, which is one practical reason bindless layouts use update-after-bind even when they never update after
-binding. The program checks its 4096 against the smallest of the three limits that apply, and the pool's 256 against
+There are two families, and they count different things. The classic limits count **only** descriptors in layouts
+created **without** `UPDATE_AFTER_BIND_POOL`; the spec's minimum for `maxPerStageDescriptorStorageBuffers` is only 4 (30
+under Roadmap 2022, 200 under Roadmap 2026). The `...UpdateAfterBind...` family is "similar to" the classic one "but
+counts descriptors from descriptor sets created with or without" that flag: it limits **all** layouts of a pipeline
+layout together, and its required minimum is 500000 on devices that support update-after-bind. A layout with the flag
+is therefore checked against the second family only. On the NVIDIA GPU of the course both families are 1048576; the
+spec allows the classic numbers to be far smaller on other hardware, which is one practical reason bindless layouts use
+update-after-bind even when they never update after binding. The program checks its 4096 against the smallest of the
+three limits that apply, and the pool's 256 against
 `maxUpdateAfterBindDescriptorsInAllPools` (for that one the spec gives no valid-usage rule, only "pool creation may
 fail" beyond it, so the check is ours).
 
@@ -203,7 +206,11 @@ without the `VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT` or `VK_DESCRIPTOR_BIND
 bits set". Either flag satisfies the rule. When step 20 was tried with `UPDATE_AFTER_BIND` alone, the update at frame
 120 produced no validation message at all. Yet by the definitions above, only `UPDATE_UNUSED_WHILE_PENDING` covers an
 update while a command buffer is **pending**; `UPDATE_AFTER_BIND` speaks of the time between binding and submitting.
-Step 20 sets the flag because of the definitions, not because of a message. Silence from the validation layer is not
+The spec's section on binding sets says it outright: for `UPDATE_AFTER_BIND` bindings "the contents may be consumed when
+the command buffer is submitted to a queue, or during shader execution of the resulting draws and dispatches, or any
+time in between. Thus, the contents of a descriptor set binding must not be altered (overwritten by an update command,
+or freed) between the first point in time that it may be consumed, and when the command completes executing on the
+queue." Step 20 sets the flag because of the definitions, not because of a message. Silence from the validation layer is not
 proof of correctness.
 </Aside>
 
@@ -301,9 +308,9 @@ GPU 0: NVIDIA GeForce RTX 3080 Ti
 Picked: NVIDIA GeForce RTX 3080 Ti
 Graphics + present family: 0
 Descriptor limits for storage buffers:
-  maxPerStageDescriptorStorageBuffers                = 1048576 (sets without UPDATE_AFTER_BIND)
+  maxPerStageDescriptorStorageBuffers                = 1048576 (only layouts without UPDATE_AFTER_BIND_POOL)
   maxDescriptorSetStorageBuffers                     = 1048576
-  maxPerStageDescriptorUpdateAfterBindStorageBuffers = 1048576 (UPDATE_AFTER_BIND sets)
+  maxPerStageDescriptorUpdateAfterBindStorageBuffers = 1048576 (all sets, incl. UPDATE_AFTER_BIND)
   maxDescriptorSetUpdateAfterBindStorageBuffers      = 1048576
   maxPerStageUpdateAfterBindResources                = 4294967295 (all resource types)
   maxUpdateAfterBindDescriptorsInAllPools            = 4294967295
@@ -346,11 +353,13 @@ only its own setup warnings.
   descriptor memory, so `objects[i]` is "base of the set + i times the descriptor size": the shader loads a descriptor
   first, then loads through it. That is why a non-uniform index can cost extra on hardware that wants one descriptor per
   subgroup, and nothing on hardware that loads a descriptor per lane.
-- **Update after bind** means the driver may not copy descriptors into the command buffer at record time or snapshot
-  them at bind; it must read them from the set's memory late enough to see updates made before submission. The
-  separate, larger limits for such sets reflect that this memory works differently on some hardware.
-- **Beyond sets.** `VK_EXT_descriptor_buffer` and its successor `VK_EXT_descriptor_heap` (both listed by the course
-  GPU's driver) let the application place descriptors in buffers or heaps itself, the natural end point of bindless.
+- **Update after bind**, in our reading of the spec's definition, means the driver may not copy descriptors into the
+  command buffer at record time or snapshot them at bind; it must read them from the set's memory late enough to see
+  updates made before submission. That some hardware needs a different kind of descriptor memory for this would explain
+  the separate update-after-bind limits; the spec does not say why they exist.
+- **Beyond sets.** `VK_EXT_descriptor_buffer` and `VK_EXT_descriptor_heap` (both listed by the course GPU's driver) let
+  the application place descriptors in buffers or heaps itself, the natural end point of bindless. The heap extension
+  "was developed based on issues discovered with VK_EXT_descriptor_buffer" (spec).
   The concepts of this lesson (arrays, indices, uniformity, the lifetime of a descriptor while the GPU reads it) carry
   over unchanged.
 

@@ -1226,8 +1226,9 @@ impl Vk {
         // #region bind-and-draw
         // Bind this slot's set as set 0 of the graphics bind point, through
         // the pipeline layout it was made for (first set 0, no dynamic
-        // offsets). The binding stays until another set replaces it; draws
-        // recorded after it see the descriptors as they are at submit time.
+        // offsets). The binding stays until another set replaces it. Without
+        // UPDATE_AFTER_BIND the descriptors may be read from this call until
+        // the draws complete, so the set must not change in that window.
         let index_count = u32::try_from(INDICES.len())?;
         // SAFETY: `cmd` is recording inside a rendering compatible with the
         // pipeline; the set, its buffer and the mesh stay alive while pending.

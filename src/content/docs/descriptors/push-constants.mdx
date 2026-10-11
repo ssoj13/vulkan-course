@@ -144,7 +144,11 @@ and later bound to a command buffer."
 What is copied is the **descriptor**, not the data. The 80 bytes still live in the slot's uniform buffer, written
 through a persistent mapping after the fence wait, exactly as in step 17. So the push-descriptor path keeps the
 per-slot buffers and the fence discipline, and drops the pool, the sets and the update call. Like push constants, push
-descriptors are undefined at the start of recording, and a push replaces the previous one for the draws after it.
+descriptors are undefined at the start of recording. Updates are incremental: a push overwrites only the descriptors it
+writes, and the others keep their values for the draws after it, until the set is disturbed (the rules of the
+[descriptor sets lesson](lesson:descriptor-sets#2-the-pipeline-layout-lists-set-layouts-by-number)) or descriptors
+are pushed with a different set layout; then "all push descriptors are undefined". Step 18 has one binding and writes
+it every frame, so each push simply replaces it.
 
 The spec also notes that "Push descriptors do not use dynamic offsets. Instead, the corresponding non-dynamic descriptor
 types can be used and the offset member of `VkDescriptorBufferInfo` can be changed each time the descriptor is written":
@@ -179,7 +183,7 @@ texture for a post-process pass, a temporary buffer) into push descriptors; data
 long time, or large tables of resources, into sets ([bindless](lesson:bindless) takes that to its limit).
 
 <Aside type="note" title="What we did not measure">
-All three roads draw this hexagon at the same speed on the course machine (2400-2800 frames per second in these runs,
+All three roads draw this hexagon at the same speed on the course machine (2300-2800 frames per second in these runs,
 limited by everything else in the frame); one draw per frame cannot show the cost of descriptor handling. The
 "high speed path" of push constants is the spec's expectation, not a measurement of this course.
 </Aside>
@@ -208,7 +212,8 @@ Graphics pipeline created (vertexPush reads the push constants)
 Mesh: regular hexagon, 7 vertices, 18 indices (step 14's buffers, memory type 3)
 ```
 
-(shortened: then the comparison above and step 17's last lines; `[timing] 4826 frames in 2.0 s, 2406 fps`.)
+(shortened: then the comparison above, "2 frames in flight" and the animation and window lines of step 17;
+`[timing] 4826 frames in 2.0 s, 2406 fps`.)
 
 With `--push-descriptor`, the lines that differ:
 
@@ -231,10 +236,11 @@ warning).
 
 ## Underneath
 
-- **Push constants** are typically loaded into registers or a small on-chip constant area when the draw starts: the
-  driver copies the bytes out of the command buffer into the hardware's command stream. That is why they are fast and
-  why the space is small. A driver whose hardware has less room than the block may place part of it in memory behind
-  your back; the API hides the difference.
+- **Push constants**: the driver typically places the bytes in on-chip constant storage (registers or a small
+  constant area) at draw time, carried in the command stream it builds from the command buffer. That is the usual
+  explanation of why they are fast and why the space is small; the spec only says they are "a high speed path ... that
+  is expected to outperform memory-backed resource updates". Where the hardware has less room than the block, a driver may keep part of it in memory; the
+  API hides the difference.
 - **Push descriptors** become descriptor bytes written by the driver into memory it manages per command buffer (the
   "small bank" of the spec), and the binding points the shader at them, just like a set. The saving is on the
   application side: no pool to size, no set lifetime to track.

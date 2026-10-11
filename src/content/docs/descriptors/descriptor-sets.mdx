@@ -37,7 +37,9 @@ A material in a DCC does not contain its textures. It contains *references* to t
 filter. The renderer resolves those references when it shades. A descriptor is that reference for the GPU: for a
 uniform buffer it says "buffer X, starting at offset O, R bytes long"; for a texture it will say "this [image view](lesson:image-views), read
 with this sampler" (textures are module 10). Its bytes are in a format only the driver and the
-GPU know, a few dozen bytes per descriptor; the API never shows them.
+GPU know, and small: on the course GPU, `VK_EXT_descriptor_buffer` (which exposes the sizes) reports 8 bytes for a
+uniform buffer descriptor, 16 for a storage buffer and 4 for a sampled image (vulkaninfo, driver 616.64). Core
+descriptor sets never show these bytes.
 
 The four layers, outermost first, are the hierarchy of the pipeline layout lesson filled with content:
 
@@ -70,13 +72,22 @@ A set layout is a list of bindings. Each `VkDescriptorSetLayoutBinding` has:
 
 The position in `pSetLayouts` is the set number: index 0 is set 0. The pipeline is created with this layout, and the
 shader's declaration must be covered by it: a resource the shader uses at set 0, binding 0 must exist in the layout with
-a matching type (`VUID-VkGraphicsPipelineCreateInfo-layout-07988`).
+a binding visible to the shader's stage (`VUID-VkGraphicsPipelineCreateInfo-layout-07988`) and of a matching descriptor
+type (`VUID-VkGraphicsPipelineCreateInfo-layout-07990`).
 
 **Compatibility.** Two pipeline layouts are "compatible for set N" when they were "created with identically defined
 descriptor set layouts for sets zero through N" and "identical push constant ranges" (spec, "Pipeline Layout
-Compatibility"). When you bind a new pipeline, every set bound earlier with a layout compatible for that set number stays
-valid; binding a set N with a layout that is not compatible disturbs the sets above it. That rule is the reason for the
-section [grouping sets by how often they change](#grouping-sets-by-how-often-they-change) below.
+Compatibility"; a third condition concerns the `INDEPENDENT_SETS` flag of graphics pipeline libraries, unused here).
+Two events matter:
+
+- **Binding a set N** can disturb other sets. A set M below N, bound earlier, is disturbed if the two layouts are not
+  compatible for set M. If the set previously bound at N itself was bound with a layout not compatible for set N, all
+  sets above N are disturbed too. A disturbed set counts as holding undefined descriptors.
+- **Binding a pipeline** disturbs nothing, but the pipeline "can correctly access any previously bound descriptor set N
+  if it was bound with a compatible pipeline layout for set N, and it was not disturbed". A set bound with an
+  incompatible layout stays bound; this pipeline just cannot use it.
+
+That rule is the reason for the section [grouping sets by how often they change](#grouping-sets-by-how-often-they-change) below.
 
 ## 3. The pool: an arena for sets
 
@@ -88,8 +99,10 @@ a command pool. The pool is sized up front with two numbers:
 - `maxSets`: how many sets may be allocated from it in total (2);
 - `pPoolSizes`: how many descriptors of each type all those sets may hold together (2 uniform buffer descriptors).
 
-When a pool runs out, `vkAllocateDescriptorSets` fails, and if the reason is the pool, not device memory, the spec says
-"`VK_ERROR_OUT_OF_POOL_MEMORY` must be returned". A renderer then allocates a new pool; it is not a fatal error.
+Going beyond those numbers does not guarantee a failure: the spec says the allocation "may fail due to lack of space"
+(an implementation is free to succeed). If it does fail because of the pool, "and not because of system or device memory
+exhaustion, then `VK_ERROR_OUT_OF_POOL_MEMORY` must be returned". A renderer then allocates a new pool; it is not a
+fatal error.
 
 Without the `FREE_DESCRIPTOR_SET` flag, only allocation and `vkResetDescriptorPool` are allowed, not freeing single
 sets, which lets the driver manage the pool as a simple bump allocator. Resetting "recycles all of the resources from
@@ -231,7 +244,8 @@ vkUpdateDescriptorSets: slot 1's set, binding 0 -> uniform buffer 1 (offset 0, r
   driver compiles each shader to find set N's descriptors in a way that depends only on the set layouts 0..N (the spec
   says so in an implementor's note). The application never sees descriptor offsets; it only promises the shapes.
 - **Newer extensions expose that memory directly.** `VK_EXT_descriptor_buffer` let applications write descriptors into
-  buffers themselves, and `VK_EXT_descriptor_heap` (ratified, listed by the course GPU's driver 616.64) replaces it. This
+  buffers themselves, and `VK_EXT_descriptor_heap` (ratified, listed by the course GPU's driver 616.64) "was developed
+  based on issues discovered with VK_EXT_descriptor_buffer", with more portable guarantees (spec). This
   course stays with the core descriptor sets; the model of this lesson is what those extensions make explicit.
 
 <Quiz
@@ -286,8 +300,8 @@ vkUpdateDescriptorSets: slot 1's set, binding 0 -> uniform buffer 1 (offset 0, r
 			q: 'A renderer puts camera data in set 0 and material textures in set 1. When it switches to another material\'s pipeline, why can set 0 stay bound?',
 			options: [
 				{
-					text: 'Because binding a pipeline never affects bound descriptor sets',
-					why: 'It does, if the new layout is not compatible for those set numbers.',
+					text: 'Because any pipeline can read any bound set, whatever layout it was bound with',
+					why: 'A pipeline can only use set N if it was bound with a layout compatible for set N with the pipeline\'s own layout (and not disturbed since).',
 				},
 				{
 					text: 'Because set 0 is special and is never disturbed',

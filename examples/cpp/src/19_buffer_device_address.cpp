@@ -452,9 +452,11 @@ try {
 
     // #region device-features
     // Step 07's device plus bufferDeviceAddress from the Vulkan 1.2 feature
-    // struct. Without it, SHADER_DEVICE_ADDRESS usage, the DEVICE_ADDRESS
-    // allocation flag and vkGetBufferDeviceAddress are all invalid
-    // (VUID-vkGetBufferDeviceAddress-bufferDeviceAddress-03324).
+    // struct. Without it, vkGetBufferDeviceAddress is invalid
+    // (VUID-vkGetBufferDeviceAddress-bufferDeviceAddress-03324) and so is the
+    // DEVICE_ADDRESS allocation flag (VUID-VkMemoryAllocateInfo-flags-03331).
+    // SHADER_DEVICE_ADDRESS usage alone is not tied to the feature, but is
+    // useless without it.
     constexpr float queuePriority = 1.0f;
     const vk::DeviceQueueCreateInfo queueInfo{
         .queueFamilyIndex = family,

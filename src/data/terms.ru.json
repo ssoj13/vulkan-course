@@ -546,7 +546,7 @@
     "push-constant": {
       "label": "Push-константы",
       "aka": ["push constants", "vkCmdPushConstants", "VkPushConstantRange", "[[vk::push_constant]]", "maxPushConstantsSize"],
-      "def": "Небольшой блок байт, который vkCmdPushConstants записывает прямо в командный буфер; объявлен диапазоном в pipeline layout: 128 байт в Vulkan 1.0, не меньше 256 в Vulkan 1.4."
+      "def": "Небольшой блок байт, который vkCmdPushConstants записывает прямо в командный буфер; объявлен диапазоном в pipeline layout: не меньше 128 байт в Vulkan 1.0 и не меньше 256 в Vulkan 1.4."
     },
     "push-descriptor": {
       "label": "Push-дескрипторы",
@@ -611,7 +611,7 @@
     "subgroup": {
       "label": "Подгруппа",
       "aka": ["subgroup", "warp", "wave", "wavefront", "subgroupSize", "варп"],
-      "def": "Вызовы шейдера, которые GPU выполняет вместе, в ногу, на одном шейдерном ядре: 32 на GPU курса (warp у NVIDIA, wave у AMD); общие для всей подгруппы значения железо может держать в скалярных регистрах."
+      "def": "Группа вызовов шейдера, которую GPU планирует вместе на одном шейдерном ядре и которая умеет быстро обмениваться данными и синхронизироваться: 32 на GPU курса (warp у NVIDIA, wave у AMD). Lockstep Vulkan не обещает (начиная с Volta у NVIDIA потоки планируются независимо); общие для всей подгруппы значения железо может держать в скалярных регистрах."
     }
   },
   "edges": {
