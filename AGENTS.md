@@ -128,7 +128,7 @@ shader objects, mesh shaders, ray tracing, tile-based mobile GPUs. Capstone: min
 
 - [x] Stage 1: course-kit engine; [x] site on the kit; [x] examples 01-05 both languages; [x] lessons 1-10
 - [x] ObjectGraph map + build modes; [x] two reviewers, findings fixed; [x] CI (tests, clippy/fmt, Pages)
-- [ ] i18n: EN lessons upgraded ("Where this fits", teaching quizzes), RU authored (terms.ru.json, index, 10 lessons),
+- [x] i18n (2026-10-10, deployed): EN lessons upgraded ("Where this fits", teaching quizzes), RU authored (terms.ru.json, index, 10 lessons),
   reviewed by independent readers, built, screenshots in both languages, deployed
 - [ ] C++ examples in CI (needs Vulkan SDK headers 1.4.341 with vulkan_raii.hpp on the runner)
 - [ ] Decide with the user: term maps put foundations at the bottom, ObjectGraph puts the root on top
