@@ -112,16 +112,21 @@ jobs:
         working-directory: examples/cpp
         run: cmake --build --preset ${{ matrix.preset }}
 
+      # A cached SDK restores files, not the installer's registry entries, and the runner is
+      # elevated, so the loader ignores VK_LAYER_PATH / VK_ADD_LAYER_PATH: register the layer the
+      # way the SDK installer does (on Linux the action sets VK_LAYER_PATH).
+      - name: Register the validation layer (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $json = Join-Path $env:VULKAN_SDK 'Bin\VkLayer_khronos_validation.json'
+          if (-not (Test-Path $json)) { throw "missing $json" }
+          reg add 'HKLM\SOFTWARE\Khronos\Vulkan\ExplicitLayers' /v $json /t REG_DWORD /d 0 /f
+
       # The steps without a window, on lavapipe (Vulkan 1.4 on the CPU), validation layer on.
       - name: Smoke test on lavapipe (01, 03, 13, 16, 25)
         working-directory: examples/cpp/build/${{ matrix.preset }}
         run: |
-          if [ "$RUNNER_OS" = Windows ]; then
-            # The SDK's own loader and layers: a cached SDK restores files, not the installer's registry entries.
-            export PATH="$VULKAN_SDK/runtime/x64:$PATH" VK_ADD_LAYER_PATH="$VULKAN_SDK/Bin"
-            find "$VULKAN_SDK/runtime" -iname 'vulkan-1.dll'; ls "$VULKAN_SDK/Bin" | grep -i -E 'json|VkLayer' || true
-            export VK_LOADER_DEBUG=layer
-          fi
           vulkaninfo${{ runner.os == 'Windows' && 'SDK' || '' }} --summary
           for step in 01_instance 03_physical_devices 13_memory_types 16_allocator 25_compute; do
             echo "::group::$step"
