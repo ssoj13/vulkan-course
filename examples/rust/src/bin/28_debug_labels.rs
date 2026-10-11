@@ -160,8 +160,9 @@ impl Names<'_> {
         let info = vk::DebugUtilsObjectNameInfoEXT::default()
             .object_handle(handle)
             .object_name(&name);
-        // SAFETY: `handle` is a live object of this device or of its instance
-        // (VUID-vkSetDebugUtilsObjectNameEXT-pNameInfo-07872/07874), not null.
+        // SAFETY: `handle` is a live object of this device, of its physical
+        // device or of its instance (VUID-vkSetDebugUtilsObjectNameEXT-
+        // pNameInfo-07872/07873/07874), not null.
         unsafe { self.loader.set_debug_utils_object_name(&info)? };
         self.count += 1;
         Ok(())
@@ -686,11 +687,18 @@ impl Vk {
         // #region name-objects
         // Names can be given as soon as an object exists, from the device's
         // VK_EXT_debug_utils commands; instance-level objects (the instance,
-        // the physical device, the surface) too, as long as the device comes
-        // from the same instance (VUID-vkSetDebugUtilsObjectNameEXT-pNameInfo-
-        // 07872/07873). Only the layer and the tools keep the strings. The
-        // messenger stays unnamed: naming it is valid usage, but on the
-        // development machine (SDK 1.4.341 loader + validation layer, NVIDIA
+        // the surface) and the physical device too, as long as the device
+        // descends from the same instance and physical device
+        // (VUID-vkSetDebugUtilsObjectNameEXT-pNameInfo-07872/07873). Only the
+        // layer and the tools keep the strings. The messenger stays unnamed:
+        // naming it is valid usage, but the Vulkan-Loader cannot pass it on.
+        // The handle the application gets is the loader's own pointer
+        // (terminator_CreateDebugUtilsMessengerEXT in loader/debug_utils.c
+        // returns its pNextIndex allocation), and
+        // terminator_SetDebugUtilsObjectNameEXT (loader/generated/
+        // vk_loader_extensions.c) translates only PHYSICAL_DEVICE, SURFACE_KHR
+        // and INSTANCE handles, so the driver receives a handle it never
+        // created. On the development machine (SDK 1.4.341 loader, NVIDIA
         // 616.64) the call crashed with an access violation.
         let mut names = Names {
             loader: &debug_device,
@@ -1369,8 +1377,9 @@ impl Vk {
         // so a capture tool lists them under their own labels. A region may
         // even start in one command buffer and end in another: the rule is
         // that, along the series of submissions to one queue, begins and ends
-        // "must be matched and balanced" (VUID-vkCmdEndDebugUtilsLabelEXT-
-        // commandBuffer-01912). Only a SECONDARY command buffer must close
+        // "must be matched and balanced" (spec text); an End without an
+        // outstanding Begin is VUID-vkCmdEndDebugUtilsLabelEXT-commandBuffer-
+        // 01912. Only a SECONDARY command buffer must close
         // every region it opens (VUID-vkEndCommandBuffer-commandBuffer-01815).
         // This frame closes all of its own.
         // SAFETY: `cmd` is recording; all handles are alive and stay alive
@@ -1447,9 +1456,11 @@ impl Vk {
         // #region queue-labels
         // A queue label region brackets queue operations instead of commands:
         // here the frame's submit and its present, named with the frame
-        // number. Like command buffer labels, queue labels must be balanced
-        // per queue (VUID-vkQueueEndDebugUtilsLabelEXT-None-01911), so the
-        // region is closed on every path, also when submit or present fail.
+        // number. Like command buffer labels, queue label begins and ends
+        // "must be matched and balanced" (spec text); an End without an
+        // outstanding Begin is VUID-vkQueueEndDebugUtilsLabelEXT-None-01911.
+        // So the region is closed on every path, also when submit or present
+        // fail.
         let frame_name = CString::new(format!("frame {}", self.frame_index))?;
         // SAFETY: the queue belongs to this device and is used by this thread
         // only; the label outlives the call.

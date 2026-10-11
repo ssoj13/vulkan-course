@@ -6,7 +6,13 @@
 3. Negative demos stay "temporary edit, reverted" (course practice), no --bug flags.
 4. Capstone model: commit MetalRoughSpheresNoTextures.glb (291 KB, CC0 + LICENSE); `bun run fetch:models` downloads WaterBottle.glb (8.97 MB, CC0) with pinned sha256 into a gitignored dir; `--model` flag. NOT DamagedHelmet (CC-BY-NC part).
 5. pipeline_binary: full `--binary` path (Rust via raw fp()).
-6. Tools: use installed RenderDoc 1.39 (portable, C:\Programs\Ntutil\apps\prog\ide\renderdoc) and Nsight Systems 2026.1.3; Nsight Graphics not installed -> described only. No software downloads without the user.
+6. Tools (2026-10-11, user): RenderDoc updated to 1.46 portable in place of 1.39 (same path, the HKLM implicit-layer
+   registration still points to ...\ide\renderdoc\renderdoc.json; layer api_version 1.4.324; step 28 now runs under it).
+   The debugging lesson links the official downloads: RenderDoc https://renderdoc.org/ (builds:
+   https://renderdoc.org/builds), Nsight Systems https://developer.nvidia.com/nsight-systems, Nsight Graphics
+   https://developer.nvidia.com/nsight-graphics. Lessons state only the requirement and the reason: RenderDoc 1.46+,
+   because the course needs Vulkan 1.4 support in the capture layer. Never mention or compare older tool versions.
+   Tools: use installed RenderDoc (portable, C:\Programs\Ntutil\apps\prog\ide\renderdoc) and Nsight Systems 2026.1.3; Nsight Graphics not installed -> described only. No software downloads without the user.
 
 ## Verified facts (RTX 3080 Ti, driver 616.64, SDK 1.4.341.1; vulkaninfoSDK --text)
 - Extensions present: VK_EXT_mesh_shader, VK_KHR_acceleration_structure (rev 13), VK_KHR_ray_query, VK_KHR_ray_tracing_pipeline, ray_tracing_maintenance1, ray_tracing_position_fetch, deferred_host_operations, VK_KHR_pipeline_binary, calibrated_timestamps (KHR+EXT), pipeline_executable_properties, pipeline_creation_feedback/cache_control, graphics_pipeline_library, shader_object, device_fault, NV device_diagnostic_checkpoints, shader_non_semantic_info, maintenance1-11. Absent: VK_KHR_performance_query. Instance: VK_EXT_debug_utils.
@@ -21,6 +27,29 @@
 - Ext deps (vk.xml): acceleration_structure needs 1.2 + deferred_host_operations; ray_query / ray_tracing_pipeline need acceleration_structure; mesh_shader 1.2; pipeline_binary 1.4 (+maintenance5).
 - Slang 2026.1: atoms mesh/amplification/raytracing/rayquery/printf exist; NOT compile-tested yet (do it first, see below).
 - Rust: gltf 1.4.1 (2024-05-10; features utils; import pulls image), png 0.18.1, image 0.25.10, zune-jpeg 0.5.15. vcpkg: cgltf 1.15, fastgltf 0.9.0, tinygltf 3.0.0, stb 2024-07-29, glm 1.0.3, ktx 4.4.2.
+
+## Tools section (user request 2026-10-11): "how to use them" lessons
+A separate group of lessons (own module `tools` after advanced, or inside advanced — decide when writing), each
+built on real captures/measurements of course steps on the dev machine:
+- tools/renderdoc: capture (UI + renderdoccmd + in-app API), Event Browser with our debug labels (step 28), Pipeline
+  State, resource/texture viewer (depth, mips of 21-24), mesh viewer, shader debugging (step-through a pixel),
+  what it hides (extension whitelist).
+- tools/nsight-systems: CPU/GPU timeline of frames in flight (10, 27 async compute), vulkan-annotations, queue
+  overlap, present waits; reading the report.
+- tools/nsight-graphics: frame debugger + GPU Trace (unit throughput, SM occupancy, warp stalls) + Shader Profiler
+  (per-line hotspots). NOT installed yet: ask the user before downloading (may need an NVIDIA developer login).
+  Nsight Compute = CUDA only (NVIDIA forum: Vulkan/GL compute -> Nsight Graphics); the lesson says so.
+- tools/occupancy-and-registers: theory (warp scheduler, register file per SM, occupancy = resident warps / max;
+  limits from registers, shared memory, workgroup size; GA102 numbers from NVIDIA docs, sourced), register spilling
+  (local memory traffic). Measure: VK_KHR_pipeline_executable_properties (present on this GPU) with
+  CAPTURE_STATISTICS/INTERNAL_REPRESENTATIONS on course pipelines -> print what the NVIDIA driver actually reports
+  (statistic names unknown until probed); a kernel with rising register pressure (e.g. unrolled local arrays) to
+  show registers/occupancy/spills vs measured time; confirm in Nsight Graphics if installed. Trainer idea: pick
+  workgroup size / registers / shared memory -> computed occupancy (rules from vendor docs, labeled).
+- tools/validation-and-capture: vkconfig (layer settings instead of env vars), GPU-AV, printf, sync validation +
+  heuristic, GFXReconstruct capture/replay (in the SDK), crash diagnostics (VK_EXT_device_fault, NV checkpoints,
+  crash_diagnostic layer).
+- Mention, not teach: AMD RGP/RGA, Intel GPA, Tracy (CPU+GPU zones via timestamps).
 
 ## Examples 28-35
 - 28_debug_labels (window, scene of 22): object names on every object (+ a validation message quoting a name, temp edit); cmd/queue labels nested per pass; balanced labels (VUID-vkEndCommandBuffer-commandBuffer-01815, VUID-vkCmdEndDebugUtilsLabelEXT-commandBuffer-01912); `--printf`: Slang printf in fragment for one pixel with VK_KHRONOS_VALIDATION_PRINTF_ENABLE=true (quote real output); GPU-AV run; lesson: RenderDoc (ENABLE_VULKAN_RENDERDOC_CAPTURE=1, renderdoccmd capture, renderdoc_app.h), nsys profile --trace=vulkan; check what extensions RenderDoc 1.39 hides.

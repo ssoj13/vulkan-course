@@ -9,8 +9,10 @@
 //   PIPELINE STATISTICS   vkCmdBeginQuery/EndQuery: counters of what the
 //                         pipeline did (vertices, primitives, invocations).
 //   CALIBRATED TIMESTAMPS vkGetCalibratedTimestampsKHR: the device clock and a
-//                         host clock read "at the same time" -> how long a
-//                         submitted frame waits before the GPU starts it.
+//                         host clock read "at the same time". The device value
+//                         read right before the submit -> how long a submitted
+//                         frame waits before the GPU starts it; the host value
+//                         only measures the host clock's rate (the QPC line).
 //
 // Queries are reset on the HOST (vkResetQueryPool, core in Vulkan 1.2 behind the
 // hostQueryReset feature) right after their results are read, instead of with
@@ -1019,9 +1021,9 @@ try {
                              vertices.size() * uint64_t{instanceCount}, indexTotal);
                 std::println("  clipping invocations       {:>6} / {}: every triangle reaches clipping (culling comes later)", clipIn,
                              indexTotal / 3);
-                std::println("  clipping primitives        {:>6} / at least 1 per triangle that covers a sample, 0 or more otherwise",
+                std::println("  clipping primitives        {:>6} / at least 1 per triangle with a vertex inside the clip volume that covers a sample, 0 or more otherwise",
                              clipOut);
-                std::println("  fragment shader invocations{:>7} / no formula: covered pixels, minus what early depth tests reject", fs);
+                std::println("  fragment shader invocations{:>7} / no formula: covered pixels (helper invocations may count), minus what early tests reject", fs);
                 // #endregion
             }
         }

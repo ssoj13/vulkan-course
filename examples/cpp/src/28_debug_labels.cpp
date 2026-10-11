@@ -614,12 +614,18 @@ try {
     // #region name-objects
     // Names can be given as soon as an object exists, from the device's
     // VK_EXT_debug_utils commands; instance-level objects (the instance, the
-    // physical device, the surface) too, as long as the device comes from the
-    // same instance (VUID-vkSetDebugUtilsObjectNameEXT-pNameInfo-07872/07873).
-    // Only the layer and the tools keep the strings. The messenger stays
-    // unnamed: naming it is valid usage, but on the development machine (SDK
-    // 1.4.341 loader + validation layer, NVIDIA 616.64) the call crashed with an
-    // access violation.
+    // surface) and the physical device too, as long as the device descends from
+    // the same instance and physical device
+    // (VUID-vkSetDebugUtilsObjectNameEXT-pNameInfo-07872/07873). Only the layer
+    // and the tools keep the strings. The messenger stays unnamed: naming it is
+    // valid usage, but the Vulkan-Loader cannot pass it on. The handle the
+    // application gets is the loader's own pointer
+    // (terminator_CreateDebugUtilsMessengerEXT in loader/debug_utils.c returns
+    // its pNextIndex allocation), and terminator_SetDebugUtilsObjectNameEXT
+    // (loader/generated/vk_loader_extensions.c) translates only
+    // PHYSICAL_DEVICE, SURFACE_KHR and INSTANCE handles, so the driver receives
+    // a handle it never created. On the development machine (SDK 1.4.341
+    // loader, NVIDIA 616.64) the call crashed with an access violation.
     Names names{.device = device};
     names.set(*instance, "instance");
     names.set(*surface, "window surface");
@@ -1062,8 +1068,8 @@ try {
         // capture tool lists them under their own labels. A region may even start
         // in one command buffer and end in another: the rule is that, along the
         // series of submissions to one queue, begins and ends "must be matched
-        // and balanced" (VUID-vkCmdEndDebugUtilsLabelEXT-commandBuffer-01912).
-        // Only a SECONDARY command buffer must close every region it opens
+        // and balanced" (spec text); an End without an outstanding Begin is
+        // VUID-vkCmdEndDebugUtilsLabelEXT-commandBuffer-01912. Only a SECONDARY command buffer must close every region it opens
         // (VUID-vkEndCommandBuffer-commandBuffer-01815). This frame closes all of
         // its own.
         cmd.beginDebugUtilsLabelEXT(label("frame", grey));
@@ -1124,10 +1130,10 @@ try {
         // #region queue-labels
         // A queue label region brackets queue operations instead of commands: here
         // the frame's submit and its present, named with the frame number. Like
-        // command buffer labels, queue labels must be balanced per queue
-        // (VUID-vkQueueEndDebugUtilsLabelEXT-None-01911), so the region is closed
-        // on every path, also when submit or present throw (the guard's
-        // destructor).
+        // command buffer labels, queue label begins and ends "must be matched and
+        // balanced" (spec text); an End without an outstanding Begin is
+        // VUID-vkQueueEndDebugUtilsLabelEXT-None-01911. So the region is closed on
+        // every path, also when submit or present throw (the guard's destructor).
         const std::string frameName = std::format("frame {}", frameIndex);
         queue.beginDebugUtilsLabelEXT(label(frameName.c_str(), grey));
         struct QueueLabelEnd {
