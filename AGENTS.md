@@ -222,6 +222,22 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
 
 ## TODO
 
+- [ ] RESUME module 7 (paused 2026-10-11 by operator order; WIP commit 7b36597, not pushed):
+  - 10_frames_in_flight: written in both languages, Rust built+ran, C++ built (/W4) but never run. Flags --frames
+    1|2|3, --cpu-ms (2), --draws (5000), --seconds; timing lines start with `[timing]` (drop them to diff Rust/C++).
+    Measured (Rust): 1 frame 167 fps, fence wait 1.691 ms/frame (28%); 2 frames 281 fps, 0.089 ms; 3 frames 306 fps.
+    Next: fmt + clippy via buildlock, full run with VK_KHRONOS_VALIDATION_VALIDATE_SYNC=1, C++ run + diff, screenshot.
+  - 12_timeline (stub file only): one timeline semaphore (frame n signals n at ALL_COMMANDS, host vkWaitSemaphores
+    n - framesInFlight); acquire/present stay binary (VUID-vkAcquireNextImageKHR-semaphore-03265,
+    VUID-vkQueuePresentKHR-pWaitSemaphores-03267); offscreen 400x300 color image blitted to the swapchain (TRANSFER_DST
+    usage), region `barriers` with the exact sync2 transitions.
+  - 11_resize (stub file only): recreate on OUT_OF_DATE/SUBOPTIMAL/size change with oldSwapchain; present fences
+    (VK_KHR_swapchain_maintenance1 is supported on the dev GPU, plus surface_maintenance1 + get_surface_capabilities2;
+    ash pin has both) — wait on them with a timeout (spec is silent on fences when present returns OUT_OF_DATE);
+    fallback vkDeviceWaitIdle; minimized → wait for non-zero extent; --demo-resize + --seconds.
+  - Then: CMakeLists (add 11, 12), READMEs, AGENTS State note, reviews, lessons EN/RU for module 7.
+  - Step numbering: 10-12 are taken by module 7, so module 8+ examples shift (12_vertex_buffer → 13_...).
+
 - [x] Stage 1: course-kit engine; [x] site on the kit; [x] examples 01-05 both languages; [x] lessons 1-10
 - [x] ObjectGraph map + build modes; [x] two reviewers, findings fixed; [x] CI (tests, clippy/fmt, Pages)
 - [x] i18n (2026-10-10, deployed): EN lessons upgraded ("Where this fits", teaching quizzes), RU authored (terms.ru.json, index, 10 lessons),
