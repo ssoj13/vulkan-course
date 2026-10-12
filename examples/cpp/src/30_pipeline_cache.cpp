@@ -27,8 +27,9 @@
 // driver's own internal cache (VK_KHR_pipeline_binary), --binary captures and
 // reloads pipeline binaries, --verbose prints every pipeline, --no-validation
 // leaves the validation layer out (for timing: the layer adds its own work to
-// every create call). Lines that depend on timing start with [timing]. Steps
-// 01-05 are repeated, reduced to what this step needs.
+// every create call). Lines that depend on timing start with [timing], lines
+// with byte counts of driver-made data (they differ from run to run) with
+// [size]. Steps 01-05 are repeated, reduced to what this step needs.
 
 #include <vulkan/vk_enum_string_helper.h>
 #include <vulkan/vulkan_raii.hpp>
@@ -487,7 +488,7 @@ std::vector<uint8_t> loadCache(const std::filesystem::path& path, const vk::Phys
     if (!file && !file.eof()) {
         throw std::runtime_error(path.string() + ": cannot read the file");
     }
-    std::println("Loading {}: {} bytes", path.string(), data.size());
+    std::println("[size] Loading {}: {} bytes", path.string(), data.size());
     if (const auto why = checkHeader(data, props)) {
         std::println("  rejected: {}; starting with an empty cache", *why);
         return {};
@@ -512,7 +513,7 @@ void saveCache(const std::filesystem::path& path, std::span<const uint8_t> data)
         }
     }
     std::filesystem::rename(tmp, path);
-    std::println("Saved {} bytes to {}", data.size(), path.string());
+    std::println("[size] Saved {} bytes to {}", data.size(), path.string());
 }
 // #endregion
 
@@ -607,8 +608,8 @@ void binaries(const vk::raii::Device& device, const Shared& shared, const Args& 
         }
         const double extractMs = msSince(start);
         const bool same        = std::ranges::all_of(saved, [&](const auto& s) { return s.size() == saved.front().size(); });
-        std::println("  captured: {} binaries ({}), {} bytes of binary data", total,
-                     same ? std::format("{} per pipeline", saved.front().size()) : std::string{"a different number per pipeline"}, bytes);
+        std::println("  captured: {} binaries ({})", total,
+                     same ? std::format("{} per pipeline", saved.front().size()) : std::string{"a different number per pipeline"});
         std::println("[timing]   vkCreatePipelineBinariesKHR + vkGetPipelineBinaryDataKHR for all: {:.1f} ms", extractMs);
     } // the capture pipelines and binaries are destroyed here
     // #endregion
@@ -894,11 +895,29 @@ try {
         std::println();
         initial = loadCache(*args.load, props);
     }
-    const vk::raii::PipelineCache cache(device, vk::PipelineCacheCreateInfo{.initialDataSize = initial.size(), .pInitialData = initial.data()});
+    // A header that matches does not make the rest valid: data damaged after
+    // the header is not what vkGetPipelineCacheData wrote
+    // (VUID-VkPipelineCacheCreateInfo-initialDataSize-00769), and the driver
+    // may refuse it (measured on the RTX 3080 Ti: VK_ERROR_UNKNOWN for bytes
+    // damaged right after the header). A cache is only an optimization, so
+    // the program then starts empty instead of failing.
+    std::optional<vk::raii::PipelineCache> created;
+    try {
+        created.emplace(device, vk::PipelineCacheCreateInfo{.initialDataSize = initial.size(), .pInitialData = initial.data()});
+    } catch (const vk::SystemError& e) {
+        if (initial.empty()) {
+            throw;
+        }
+        std::println("  vkCreatePipelineCache refused the data: {}; starting with an empty cache",
+                     resultName(static_cast<vk::Result>(e.code().value())));
+        initial.clear();
+        created.emplace(device, vk::PipelineCacheCreateInfo{});
+    }
+    const vk::raii::PipelineCache& cache = *created;
     if (initial.empty()) {
         std::println("\nPhase 2: a new, empty VkPipelineCache");
     } else {
-        std::println("\nPhase 2: VkPipelineCache created from the file ({} bytes)", initial.size());
+        std::println("\nPhase 2: VkPipelineCache created from the file");
     }
     runPhase(device, shared, args.count, &cache, Mode::eNormal, args.verbose);
 
@@ -911,7 +930,7 @@ try {
     // with the 32-byte header. The raii wrapper runs the two-call idiom (size,
     // then data).
     const std::vector<uint8_t> data = cache.getData();
-    std::println("\nVkPipelineCache data: {} bytes", data.size());
+    std::println("\nVkPipelineCache data (vkGetPipelineCacheData):");
     if (const auto why = checkHeader(data, props)) {
         throw std::runtime_error("our own cache data: " + *why);
     }
