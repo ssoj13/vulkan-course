@@ -10,6 +10,7 @@ import Step from '../../../components/Step.astro';
 import Shots from '../../../components/Shots.astro';
 import shot12 from '../../../assets/12_timeline.png';
 import shot12zoom from '../../../assets/12_timeline_zoom.png';
+import Barriers from '../../../components/labs/Barriers.astro';
 
 Fences and semaphores order whole submissions. Inside one queue, between one command and the next, the tool is the
 **pipeline barrier**, and so far we have used two of them by recipe. This lesson takes the recipe apart: what exactly
@@ -320,6 +321,17 @@ said nothing. Host accesses (writes through a mapped pointer, reads after a fenc
 
 Wherever this course says a step is clean under synchronization validation, both variables were set: steps 09-24 were
 run that way in both languages on 2026-10-11, with no message apart from the bandicam layer's warning.
+
+## Write the barriers yourself
+
+The five barriers of step 12 are explained above; here you write eight more, in seven puzzles. Each puzzle is a short command stream
+based on a course step (an upload, a compute chain, a texture, step 22's depth buffer) with empty barriers where two
+commands touch the same memory. Open the barrier card, check stages and access types (each mask has its own "Set"),
+pick the layouts for an image, and submit. The simulator refuses an invalid struct with the VUID the validation layer quotes, reports a hazard
+that stays open (and which scope misses which access), and grades a correct barrier: ★ when nothing in it could go,
+otherwise it names the flags the hazard does not need. The [full page](lab:barriers) has things to try.
+
+<Barriers />
 
 ## Does the rendering really run before the acquire?
 

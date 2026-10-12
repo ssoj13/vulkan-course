@@ -1,0 +1,44 @@
+---
+title: Write the barriers
+description: Seven command streams from the course steps with eight empty barriers to write. Invalid structs are refused with the real VUID, open hazards are reported, correct barriers graded.
+---
+import Barriers from '../../../components/labs/Barriers.astro';
+
+A pipeline barrier says "after *this*, before *that*" in four masks and, for an image, two layouts. The rules behind
+each field are explained in [pipeline barriers and image layouts](lesson:barriers-and-layouts); here you write the
+barriers yourself: eight of them, in seven situations the course steps really meet.
+
+**The goal:** close the hazard of every puzzle, and then earn ★ everywhere: a barrier that waits for exactly what the
+hazard needs and no more.
+
+**How it works.** Each puzzle is a short command stream on one queue: the puzzle card, then its commands and barrier
+slots in submission order. Command cards say which stage and access type each command uses on the shared buffer or
+image (a render pass only through its load and store operations: that is all outside work ever meets). A barrier card
+opens the editor: check the flags of each of the four masks and press its "Set" button (nothing checked = `NONE`),
+pick the two layouts for an image, then "Record and submit". The button under the map switches the editors from each
+puzzle's selection of flags to all of them.
+
+What the submit can answer:
+
+- a **valid-usage error**, quoted with its VUID as the validation layer reports it: an access type without a stage that
+  performs it, an old layout that is neither `UNDEFINED` nor the current one, a layout the image has no usage for, a
+  later command that finds the image in another layout than the one it names. Nothing is submitted;
+- an open **hazard** (`READ_AFTER_WRITE`, `WRITE_AFTER_READ`, `WRITE_AFTER_WRITE`, the names synchronization validation
+  uses), with the access and the scope that misses it. The submit is valid, so it goes through and the puzzle stays
+  open. Where a run of the course step with the same mistake produced a message, the layer's own text follows;
+- **closed**, and either tight (★) or with the flags the hazard does not need: `ALL_COMMANDS`, `MEMORY_WRITE`, a stage
+  that drags in more than it must. Those barriers are correct; they only make the GPU wait or flush more.
+
+<Barriers />
+
+Things to try:
+
+- in puzzle 2, give the barrier an access type on either side: what does the grade say, and why does a
+  write-after-read never need one?
+- in puzzle 6, leave the first barrier's `dstAccessMask` at `NONE`: nothing was written before the copy, so why is
+  there a hazard?
+- in puzzle 5, make the old layout `UNDEFINED` instead of `COLOR_ATTACHMENT_OPTIMAL`: valid, so what is wrong?
+- submit `TOP_OF_PIPE` as `srcStageMask` for a write, then as `dstStageMask` for a read;
+- **the challenge:** puzzle 7 with the masks step 22 uses (`EARLY_FRAGMENT_TESTS | LATE_FRAGMENT_TESTS` on both sides,
+  `DEPTH_STENCIL_ATTACHMENT_READ | WRITE` as destination). It is correct; which three flags does the grade call
+  unnecessary, and which sentences of the spec about load and store operations make them so?

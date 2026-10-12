@@ -1,0 +1,68 @@
+---
+/**
+ * Barriers trainer: <Barriers />. Renders the BarriersView island in the page's language with the rules version (a hash
+ * of the model and the scenario: a change makes stored runs start fresh; texts do not count). Checks at build time that
+ * the text tables agree and that every puzzle, command and barrier has its texts. Without JavaScript the reader gets
+ * the puzzles as text.
+ */
+import BarriersView from './BarriersView.tsx';
+import { courseIn, langOf } from 'course-kit/lib/course.ts';
+import { textErrors } from '../../lib/text';
+import { ruleVersion } from '../../lib/object-trainer';
+import { textKey, textOf } from '../../lib/barrier-trainer';
+import { PUZZLES, cmdsOf, slotsOf } from '../../lib/barriers';
+import { TEXT } from './barriers.text';
+// Raw sources of the rules (build time only): their hash is the version stored runs are tagged with.
+import modelCode from '../../lib/barriers.ts?raw';
+import trainerCode from '../../lib/barrier-trainer.ts?raw';
+
+const errs = textErrors(TEXT, 'barriers');
+if (errs.length) throw new Error(`barriers texts are invalid:\n  - ${errs.join('\n  - ')}`);
+
+const { lang } = courseIn(langOf(Astro.url.pathname));
+const t = textOf(lang);
+// Every text the view builds from ids (throws for a missing one).
+for (const p of PUZZLES) {
+	for (const k of [`p_${p.id}`, `k_${p.id}`, `q_${p.id}`, ...cmdsOf(p).map((c) => `c_${p.id}_${c.id}`), ...Array.from({ length: slotsOf(p) }, (_, k) => `b_${p.id}_${k}`)]) textKey(t, k);
+}
+const version = ruleVersion([modelCode, trainerCode]);
+---
+
+<figure class="vk-barriers-fig not-content">
+	<BarriersView client:only="react" lang={lang} version={version} />
+	{/* The model's simplifications travel with the widget: every page that embeds it states them. */}
+	<figcaption class="vk-barriers-caption">{t.simplified}</figcaption>
+	<details class="vk-barriers-text">
+		<summary>{t.asText}</summary>
+		<p>{t.fb_intro}</p>
+		<ol>
+			{
+				PUZZLES.map((p) => (
+					<li>
+						<strong>{textKey(t, `p_${p.id}`)}</strong> ({textKey(t, `k_${p.id}`)}): {textKey(t, `q_${p.id}`)}
+					</li>
+				))
+			}
+		</ol>
+	</details>
+</figure>
+
+<style>
+	.vk-barriers-fig {
+		margin: 1.5rem 0;
+		min-height: 10rem;
+	}
+	.vk-barriers-caption {
+		margin-top: 0.6rem;
+		font-size: var(--sl-text-sm);
+		color: var(--sl-color-gray-2);
+	}
+	.vk-barriers-text {
+		margin-top: 0.4rem;
+		font-size: var(--sl-text-sm);
+	}
+	.vk-barriers-text summary {
+		cursor: pointer;
+		color: var(--sl-color-gray-3);
+	}
+</style>

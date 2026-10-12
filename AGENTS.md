@@ -173,6 +173,48 @@ uses it too).
 - [x] Engine gap (course-kit): the console stayed at the top; fixed in course-kit v0.7.1 (follows the newest line,
   stays put while the reader scrolled up), `lines={8}` removed. Verified headless 2026-10-11.
 
+### Barriers trainer (2026-10-11)
+
+Seven puzzles (`PUZZLES` in `src/lib/barriers.ts`: upload RAW (step 15), particles WAR (26), copy WAW, compute RAW (26),
+render-then-sample RAW + layout, texture upload with 2 barriers (21), depth across frames (22)); each a command stream
+on one queue with barrier slots. Model `src/lib/barriers.ts` (rules + spec quotes in its header), scenario
+`src/lib/barrier-trainer.ts`, texts `src/components/labs/barriers.text.ts`, view `Barriers{.astro,View.tsx}`, tests
+`tests/labs/barriers.test.ts`, lab `labs/barriers` (EN+RU), embedded in sync/barriers-and-layouts (EN+RU, section
+"Write the barriers yourself" / «Напишите барьеры сами»). Version = `ruleVersion` of barriers.ts + barrier-trainer.ts.
+- Editor = barrier card: one verb per mask (`srcStage`, `srcAccess`, `dstStage`, `dstAccess`: flag options), `layout`
+  (choices), `submit` (also the puzzle card's primary verb). Engine has no multi-select / option groups, so one fieldset
+  per mask; "Set" stores the struct, the rules run only at the submit (editing a struct is not a Vulkan call). Global
+  action `all` switches the editors to every stage/access; flags set but not shown are kept.
+- Rules: execution scopes with logical order (graphics/compute lists; transfer stages unordered), TOP/BOTTOM per side,
+  access scopes only for EXPLICITLY named stages, WAR = execution only, RAW/WAW = memory dependency, a layout transition
+  = a write between the scopes, equal layouts ignored (sync2), UNDEFINED where contents are needed = valid but open
+  (`discard`). Render passes face outside work only through load/store ops (spec Note), so step 22's barrier
+  (EARLY|LATE, READ|WRITE) grades as correct but wider than needed: tight = src LATE / DS_WRITE -> dst EARLY / DS_WRITE.
+- VUIDs: access-mask ids are built from `SUPPORT` numbers and must be listed literally in `ACCESS_VUIDS` (vuid-refs.ts
+  finds ids by text); layout ids 01197/01198/01208/01211/01212/01213/04066; later-command layout 09600/00180/09588.
+- Grading (`extras`): drop each flag; split meta flags (ALL_COMMANDS, ALL_GRAPHICS, ALL_TRANSFER, VERTEX_INPUT,
+  MEMORY_*, SHADER_READ); try a stage with a strictly smaller execution scope (`narrow`); TOP in dst / BOTTOM in src
+  always reported. Tight (★) = none.
+- Hazard lines are the simulator's own wording with the syncval hazard id as `ref`; real layer texts only in
+  `Puzzle.evidence`, matched by (slot, hazard, before, after). Probe runs 2026-10-11 (copies of steps 21/22/26 built
+  OUTSIDE the repo under the lock, env PROBE faults, VALIDATE_SYNC + SHADER_ACCESSES_HEURISTIC; logs scratchpad
+  barriers/runs, session-local): 22 `min` (src LATE/DS_WRITE -> dst EARLY/DS_WRITE) CLEAN = the depth tight answer is
+  real; 22 src EARLY only or src access NONE -> WAW "vkCmdPipelineBarrier2 writes ... previously written by
+  vkCmdEndRendering ... prior write (DEPTH_STENCIL_ATTACHMENT_WRITE) at LATE_FRAGMENT_TESTS"; 22 dst access NONE ->
+  WAW "vkCmdBeginRendering clears pDepthAttachment ... written during an image layout transition"; 21 barrier 1
+  dstAccess NONE -> WAW copy after transition; 21 barrier 2 srcAccess NONE -> WAW transition after copy; 26 WAR barrier
+  removed -> WRITE_AFTER_READ ("an execution dependency is sufficient"); 26 compute->compute removed -> silent (as
+  compute/particles.mdx says); 26 compute->vertex removed -> READ_AFTER_WRITE (not a puzzle). `discard` is a `warn`.
+- Review fixes (2026-10-11, independent reviewer): MEMORY_* split only into the parts valid on the mask's stages (spec:
+  "all READ access flags that are valid where it is used"), greedy `drop` (one of two mutually covering flags),
+  narrowest `narrow` candidate, "Set" without a change keeps the verdict, depth texts quote the normative
+  "happens-after/-before any recorded command which accesses the sample" (the "only needs to synchronize" lines are Notes).
+- Finding (not changed, examples are another owner's): step 22's depth barrier and its comment use EARLY|LATE on both
+  sides and DS_READ|WRITE as destination; the probe proves LATE/DS_WRITE -> EARLY/DS_WRITE is enough (the trainer grades
+  step 22's barrier as correct but wider). No evidence (no real run) for puzzles upload, waw, sample.
+- [ ] Engine gap (course-kit): option groups or a multi-select option kind with a visible legend would let one verb
+  edit a whole side (stages + accesses) without four "Set" buttons.
+
 ## Labs (12, 2026-10-10)
 
 Interactive widgets with a full page each (`/labs/<slug>`, `/ru/labs/<slug>`; catalog and sidebar from the engine).
@@ -202,6 +244,7 @@ Files per lab `<slug>`: model `src/lib/labs/<slug>.ts` (pure, no DOM), view `src
 | graphics-pipeline | GraphicsPipeline | pipeline/graphics-pipeline (EN + RU) |
 | buffer-memory | BufferMemory | memory/memory-types (EN + RU) |
 | frame-assembly | FrameAssembly (engine Trainer; model `src/lib/frames.ts`, scenario `src/lib/frame-trainer.ts`) | sync/frames-in-flight (EN + RU) |
+| barriers | Barriers (engine Trainer; model `src/lib/barriers.ts`, scenario `src/lib/barrier-trainer.ts`) | sync/barriers-and-layouts (EN + RU) |
 
 Widget texts: fill placeholders ONLY with `tfmt(lang, text, vars)` from `src/lib/text.ts` (never the engine `fmt`).
 Counts use ICU-style plural placeholders `{n|# очередь|# очереди|# очередей}` (ru: one/few/many, en: one/other, `#` =
