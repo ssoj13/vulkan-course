@@ -446,7 +446,7 @@ fn median_ms(times: &[f64]) -> f64 {
     sorted.sort_by(f64::total_cmp);
     let mid = sorted.len() / 2;
     match (sorted.get(mid.wrapping_sub(1)), sorted.get(mid)) {
-        (Some(a), Some(b)) if sorted.len() % 2 == 0 => (a + b) / 2.0,
+        (Some(a), Some(b)) if sorted.len().is_multiple_of(2) => (a + b) / 2.0,
         (_, Some(m)) => *m,
         _ => 0.0,
     }
