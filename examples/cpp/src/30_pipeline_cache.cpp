@@ -530,9 +530,15 @@ vk::PipelineBinaryKeyKHR pipelineKey(const vk::raii::Device& device, const vk::G
     return device.getPipelineKeyKHR(wrapper);
 }
 
-// The bytes of a key that are valid (keySize of the 32).
-std::vector<uint8_t> keyBytes(const vk::PipelineBinaryKeyKHR& key) {
-    return {key.key.begin(), key.key.begin() + std::min<size_t>(key.keySize, key.key.size())};
+// A key as a comparable value: its keySize plus the 32 bytes with everything
+// past keySize zeroed. Fixed-size storage keeps every comparison bounded at
+// compile time (vectors of bytes made GCC 14 -O3 report an unbounded memcmp
+// in std::ranges::sort, -Wstringop-overread).
+using KeyValue = std::pair<uint32_t, std::array<uint8_t, VK_MAX_PIPELINE_BINARY_KEY_SIZE_KHR>>;
+KeyValue keyValue(const vk::PipelineBinaryKeyKHR& key) {
+    KeyValue v{std::min<uint32_t>(key.keySize, VK_MAX_PIPELINE_BINARY_KEY_SIZE_KHR), {}};
+    std::copy_n(key.key.begin(), v.first, v.second.begin());
+    return v;
 }
 // #endregion
 
@@ -557,14 +563,14 @@ void binaries(const vk::raii::Device& device, const Shared& shared, const Args& 
     // under which its binaries are stored.
     const vk::PipelineBinaryKeyKHR global = pipelineKey(device, nullptr);
     std::println("  global key: {} bytes (stored with the binaries; a different key on load = discard them)", global.keySize);
-    std::vector<std::vector<uint8_t>> keys;
+    std::vector<KeyValue> keys;
     for (uint32_t variant = 0; variant < count; ++variant) {
         const vk::PipelineBinaryKeyKHR key =
             withCreateInfo(shared, variant, Mode::eNormal, {}, [&](const vk::GraphicsPipelineCreateInfo& info) { return pipelineKey(device, &info); })
                 .first;
-        keys.push_back(keyBytes(key));
+        keys.push_back(keyValue(key));
     }
-    std::vector<std::vector<uint8_t>> distinct = keys;
+    std::vector<KeyValue> distinct = keys;
     std::ranges::sort(distinct);
     distinct.erase(std::ranges::unique(distinct).begin(), distinct.end());
     std::println("  pipeline keys: {} create infos -> {} distinct keys", count, distinct.size());
