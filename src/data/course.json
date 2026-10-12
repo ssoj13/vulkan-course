@@ -119,6 +119,14 @@
         { "slug": "particles", "title": "Particles", "summary": "A million particles in one buffer that a compute shader moves and the draw reads as points: the barriers within a frame and across frames in flight, and why one buffer is enough when the CPU never touches it." },
         { "slug": "async-compute", "title": "Async compute", "summary": "The simulation on a compute-only queue: ping-pong buffers, two timeline semaphores and the wait validation missed, CONCURRENT versus EXCLUSIVE, timestamps across queues, and why it gains nothing measurable on the course GPU." }
       ]
+    },
+    {
+      "slug": "advanced",
+      "title": "Advanced",
+      "summary": "Tools and techniques beyond the basic frame, starting with debugging and profiling from inside the program: what it can tell the validation layer and the tools, and what the GPU can measure about its own work.",
+      "lessons": [
+        { "slug": "debugging-and-profiling", "title": "Debugging and profiling", "summary": "Object names and labels the validation layer and the tools quote, printf from a shader, query pools with timestamps and pipeline statistics, calibrated timestamps that put GPU work on the CPU's clock, and where RenderDoc and Nsight take over." }
+      ]
     }
   ],
   "labs": [

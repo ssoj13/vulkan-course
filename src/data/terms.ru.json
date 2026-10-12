@@ -832,6 +832,51 @@
       "label": "Ping-pong-буферы",
       "aka": ["ping-pong", "double buffering", "двойная буферизация"],
       "def": "Две копии состояния по очереди: шаг n читает одну и пишет другую, так что тот, кто читает состояние n, никогда не делит буфер с тем, кто пишет состояние n+1. То же, что вход Prev_Frame у SOP Solver в Houdini."
+    },
+    "debug-object-name": {
+      "label": "Имя объекта (debug utils)",
+      "aka": ["object name", "vkSetDebugUtilsObjectNameEXT", "VkDebugUtilsObjectNameInfoEXT"],
+      "def": "Строка, привязанная к хэндлу Vulkan вызовом vkSetDebugUtilsObjectNameEXT (VK_EXT_debug_utils) вместе с его VkObjectType. Работа GPU от этого не меняется: имя цитирует слой валидации в своих сообщениях и показывают инструменты захвата."
+    },
+    "debug-label": {
+      "label": "Метка (debug label)",
+      "aka": ["debug label", "vkCmdBeginDebugUtilsLabelEXT", "vkQueueBeginDebugUtilsLabelEXT", "VkDebugUtilsLabelEXT"],
+      "def": "Именованная (и при желании цветная) область (Begin/End) или точка (Insert) в буфере команд или в очереди, из VK_EXT_debug_utils. Области вкладываются; начала и концы должны быть парными и сбалансированными в последовательности отправок в одну очередь. Инструменты рисуют их как главы кадра."
+    },
+    "debug-printf": {
+      "label": "printf в шейдере (DebugPrintf)",
+      "aka": ["printf", "DebugPrintf", "NonSemantic.DebugPrintf", "VK_KHRONOS_VALIDATION_PRINTF_ENABLE"],
+      "def": "printf в шейдере, скомпилированный в инструкцию NonSemantic.DebugPrintf, которую драйверы игнорируют. Если в слое валидации включена настройка printf, слой встраивает в шейдер свой код, собирает значения в собственный буфер и печатает их после завершения отправки (сообщениями уровня INFO или, с printf_to_stdout, прямо в stdout)."
+    },
+    "query-pool": {
+      "label": "Пул запросов (VkQueryPool)",
+      "aka": ["query pool", "запрос", "query", "vkGetQueryPoolResults", "vkResetQueryPool"],
+      "def": "Массив слотов-запросов одного типа: их заполняют команды, пока GPU их исполняет, а хост читает, когда эта работа завершена. Перед новой записью запрос нужно сбросить (сделать недоступным): командой vkCmdResetQueryPool или, с возможностью hostQueryReset, вызовом vkResetQueryPool на хосте."
+    },
+    "timestamp-query": {
+      "label": "Timestamp-запрос",
+      "aka": ["timestamp query", "timestamp", "vkCmdWriteTimestamp2", "timestampPeriod", "timestampValidBits"],
+      "def": "Запрос, в который записывается значение часов устройства, когда все предыдущие команды дошли до заданной стадии (или логически более поздней); timestampPeriod — наносекунд на тик, timestampValidBits — сколько бит значимы. Разность двух timestamps приближённо даёт время GPU на команды между ними."
+    },
+    "pipeline-statistics-query": {
+      "label": "Запрос статистики пайплайна",
+      "aka": ["pipeline statistics query", "VK_QUERY_TYPE_PIPELINE_STATISTICS", "pipelineStatisticsQuery"],
+      "def": "Запрос, который считает, что сделал пайплайн между vkCmdBeginQuery и vkCmdEndQuery: вершины и примитивы сборки, вызовы шейдеров каждой стадии, примитивы на входе и выходе отсечения. Нужна возможность pipelineStatisticsQuery; числа годятся для сравнения на одной реализации, разные архитектуры считают по-разному."
+    },
+    "calibrated-timestamps": {
+      "label": "Калиброванные timestamps",
+      "aka": ["calibrated timestamps", "VK_KHR_calibrated_timestamps", "vkGetCalibratedTimestampsKHR", "maxDeviation"],
+      "def": "VK_KHR_calibrated_timestamps: один вызов почти одновременно снимает показания нескольких часов (доменов времени) и возвращает maxDeviation — насколько далеко друг от друга могли оказаться замеры. Пара из домена DEVICE и часов хоста ставит timestamps GPU на шкалу времени CPU; часы расходятся, поэтому калибровку повторяют регулярно."
+    },
+    "time-domain": {
+      "label": "Домен времени",
+      "aka": ["time domain", "VkTimeDomainKHR", "VK_TIME_DOMAIN_DEVICE_KHR", "QUERY_PERFORMANCE_COUNTER"],
+      "def": "Одни часы со своими единицами: DEVICE (часы timestamp-запросов), QUERY_PERFORMANCE_COUNTER (QPC в Windows), CLOCK_MONOTONIC(_RAW) в Linux или стадия показа swapchain. Значения разных доменов сравнимы только через калибровку."
+    },
+    "frame-capture": {
+      "label": "Захват кадра",
+      "aka": ["frame capture", "RenderDoc", "Nsight Graphics", "слой захвата", ".rdc"],
+      "def": "Запись всех вызовов API одного кадра вместе с используемыми ресурсами, сделанная слоем захвата (RenderDoc, Nsight Graphics) и воспроизводимая потом для изучения: события, сгруппированные по меткам, объекты под их именами, состояние пайплайна, текстуры, буферы, отладка шейдеров."
     }
   },
   "edges": {
@@ -1038,6 +1083,25 @@
     "async-compute|uses|timeline-semaphore": "упорядочивается",
     "queue-concurrency|built-on|hw-engine": "зависит от",
     "sharing-mode|related|queue-family-ownership-transfer": "EXCLUSIVE требует",
-    "ping-pong-buffer|built-on|vk-buffer": "два"
+    "ping-pong-buffer|built-on|vk-buffer": "два",
+    "debug-object-name|built-on|handle": "привязано к",
+    "debug-object-name|built-on|extension": "VK_EXT_debug_utils",
+    "validation-layer|uses|debug-object-name": "цитирует",
+    "debug-label|built-on|extension": "VK_EXT_debug_utils",
+    "debug-label|uses|vk-command-buffer": "размечает области в",
+    "debug-label|uses|vk-queue": "размечает операции в",
+    "debug-printf|uses|shader": "встраивается в",
+    "debug-printf|uses|debug-messenger": "сообщает через",
+    "query-pool|built-on|vk-device": "создаётся из",
+    "timestamp-query|built-on|query-pool": "пишется в",
+    "timestamp-query|uses|stage-mask": "пишется после стадии",
+    "pipeline-statistics-query|built-on|query-pool": "пишется в",
+    "pipeline-statistics-query|uses|graphics-pipeline": "считает работу",
+    "calibrated-timestamps|built-on|extension": "VK_KHR_calibrated_timestamps",
+    "calibrated-timestamps|uses|time-domain": "снимает несколько",
+    "calibrated-timestamps|related|timestamp-query": "переносит на часы CPU",
+    "frame-capture|built-on|layer": "делается слоем захвата",
+    "frame-capture|uses|debug-label": "группирует события по",
+    "frame-capture|uses|debug-object-name": "показывает"
   }
 }

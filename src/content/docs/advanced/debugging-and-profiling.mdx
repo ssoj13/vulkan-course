@@ -1,0 +1,573 @@
+---
+title: Debugging and profiling
+description: 'How a program describes itself to the tools and measures itself from the inside: object names and command/queue labels from VK_EXT_debug_utils, validation messages that quote them, printf from a shader through the validation layer, GPU-assisted validation, query pools with timestamps and pipeline statistics, calibrated timestamps that put GPU ticks on the CPU timeline, and where RenderDoc and Nsight take over.'
+---
+
+import MindMap from 'course-kit/components/MindMap.astro';
+import Quiz from 'course-kit/components/Quiz.astro';
+import Snippet from '../../../components/Snippet.astro';
+import Step from '../../../components/Step.astro';
+import Shots from '../../../components/Shots.astro';
+import shot28 from '../../../assets/28_debug_labels.png';
+
+Since step 02 the validation layer has talked to us in hexadecimal: "VkImage 0x1e000000001e", "VkCommandBuffer
+0x2a5f...". The frame itself has been a black box: one submit goes in, a picture comes out. Three questions follow.
+How does a program tell the validation layer and the capture tools *what* its objects and commands are? How do we see
+a value inside a shader? And how does the GPU report how long its work took, how much work it did, and when it started
+relative to the CPU?
+
+## Where this fits
+
+The first lesson of the **advanced** module. It needs nothing new from the hardware, only two tools that every
+Vulkan program can carry: the instance extension `VK_EXT_debug_utils`, whose [messenger](term:debug-messenger) has
+printed our [validation layer](term:validation-layer) messages since [step 02](lesson:validation), and
+[query pools](term:query-pool), which [module 7](lesson:barriers-and-layouts#does-the-rendering-really-run-before-the-acquire)
+already used for timestamps. Two programs, both drawing step 22's two cubes: step 28 describes itself, step 29 measures
+itself. The chains:
+
+`VK_EXT_debug_utils → object names + command buffer / queue labels → the validation layer quotes them, capture tools show them`
+
+`VkQueryPool → timestamps + pipeline statistics, written by the GPU → read on the host → calibrated timestamps → GPU ticks on the CPU's clock`
+
+## Two kinds of help
+
+A Maya scene where every node is still called `pCube1`, `pCube2`, `polySurface37` works fine, until something goes
+wrong and the Outliner is the only map you have. A render farm log that says "task 4183 failed" is useless next to one
+that says "shot 042, layer beauty, frame 1017 failed". The program does not change when you name things; the people and
+tools reading about it do.
+
+The second kind of help is measurement. Houdini's Performance Monitor tells you which node cooked for how long, not
+from the outside with a stopwatch but from the inside, because the cook itself records the times. Vulkan has the same
+split:
+
+| | Debugging: describe and look | Profiling: measure |
+|---|---|---|
+| In the program | [object names](term:debug-object-name), [labels](term:debug-label) (step 28) | [timestamp queries](term:timestamp-query), [pipeline statistics](term:pipeline-statistics-query), [calibrated timestamps](term:calibrated-timestamps) (step 29) |
+| In the validation layer | its messages, [shader printf](term:debug-printf), [GPU-AV](term:gpu-av) | |
+| Outside the program | a [frame capture](term:frame-capture) (RenderDoc, Nsight Graphics) | a system trace (Nsight Systems) |
+
+Everything in the first column is information for whoever inspects the program. Nothing in it changes a pixel: the
+picture of step 28 is step 22's.
+
+<Shots
+	shots={[
+		{
+			src: shot28,
+			alt: 'Step 28: the two cubes of step 22, a cyan-blue one on the left and a pink-violet-green one on the right, on a dark background',
+			caption:
+				'Step 28, Rust, release, the 800 x 600 client area about 2.5 s after start: step 22\'s scene, nothing added. Names and labels live in the layer and in the tools, not in the image. Step 29 renders the same scene.',
+		},
+	]}
+/>
+
+## Object names
+
+### Naming a handle
+
+A [Vulkan handle](term:handle) is a number. `vkSetDebugUtilsObjectNameEXT` attaches a string to it, together with its
+`VkObjectType`. The course wraps the call once, so the type can never be wrong:
+
+<Step file="28_debug_labels" region="object-names" />
+
+The type comes from the handle's own type in the language (ash's `Handle::TYPE`, Vulkan-Hpp's `objectType`), which
+rules out the mistake of naming an image as if it were a buffer (`VUID-VkDebugUtilsObjectNameInfoEXT-objectType-02590`).
+The layer copies the string; the program may free it right after the call.
+
+The calls themselves are one line per object, right after it is created:
+
+<Step file="28_debug_labels" region="name-objects" />
+
+Names are not only for objects of the device. The instance, the surface and the physical device take names through the
+same device-level command, as long as the device descends from them: instance-level objects
+(`VUID-vkSetDebugUtilsObjectNameEXT-pNameInfo-07872`), physical-device-level ones (`-07873`) and device-level ones
+(`-07874`) each have their rule. Step 28 names 40 objects this way, from "instance" to "render finished 2", including
+the swapchain images, which the swapchain owns but which are `VkImage`s like any other.
+
+### The one object that stays unnamed
+
+The [debug messenger](term:debug-messenger) itself is not named, and the reason is a lesson about layers. Naming it
+is valid usage, but on the development machine the call crashed with an access violation. The cause is in the
+[loader](term:loader): the handle `vkCreateDebugUtilsMessengerEXT` returns is the loader's own allocation
+(`terminator_CreateDebugUtilsMessengerEXT` in `loader/debug_utils.c`), and the loader's terminator for
+`vkSetDebugUtilsObjectNameEXT` (in `loader/generated/vk_loader_extensions.c`) translates only physical-device,
+surface and instance handles into the driver's. So the driver receives a messenger handle it never created. The
+comment in both programs records this; the rest of the program is unaffected.
+
+### What the layer does with a name
+
+A message from the validation layer carries more than its text: `pObjects` lists the objects it is about, each with
+type, handle and our name, and `pCmdBufLabels` / `pQueueLabels` list the labels that were open when it was raised.
+Step 28's callback prints all of it:
+
+<Step file="28_debug_labels" region="debug-callback" />
+
+To see the difference, the course broke step 28 on purpose, the same way step 22 was broken: a temporary edit (reverted
+afterwards) set the source scope of the depth barrier to `NONE`/`NONE`, and synchronization validation reported
+(handles shortened to `0x...`, as recorded in the project notes):
+
+```text
+vkQueueSubmit2(): WRITE_AFTER_WRITE hazard detected. vkCmdPipelineBarrier2[frame::attachments] (from VkCommandBuffer 0x...[frame 1 command buffer] submitted on the current VkQueue 0x...[graphics + present queue]) writes to VkImage 0x1e000000001e[depth image], which was previously written by vkCmdEndRendering[frame::main pass] (from VkCommandBuffer 0x...[frame 0 command buffer] submitted on VkQueue 0x...[graphics + present queue]).
+```
+
+followed by the callback's own lines: object 0 the queue "graphics + present queue", object 1 the command buffer
+"frame 1 command buffer", queue labels "frame 1". Compare it with the anonymous version of the same message in the
+[depth](lesson:depth) lesson: the layer writes each name in `[brackets]` after the handle, and each command with the
+label path it was recorded under, `[frame::attachments]`. The message now says, in our words, that the barrier of
+frame 1 overwrites the depth image while the main pass of frame 0 may still be writing it.
+
+## Labels: chapters in the command stream
+
+Names describe objects; [labels](term:debug-label) describe stretches of work. A label is a string and an optional
+RGBA color that tools may use for drawing it:
+
+<Step file="28_debug_labels" region="labels" />
+
+### Command buffer labels
+
+`vkCmdBeginDebugUtilsLabelEXT` / `vkCmdEndDebugUtilsLabelEXT` open and close a region inside a command buffer, and
+regions nest like brackets; `vkCmdInsertDebugUtilsLabelEXT` marks a single point. Step 28 records one frame like a
+Houdini network with subnetworks: "frame" contains "attachments" and "main pass", and "main pass" contains one region
+per cube:
+
+<Step file="28_debug_labels" region="cmd-labels" />
+
+The two cubes are now two draws (`firstInstance` 0 and 1, one instance each) instead of step 22's one instanced draw,
+only so that a capture tool can list each under its own label. The rendering is the same: `cube.slang` picks the
+matrix by the instance index either way.
+
+The rule for balance is about queues, not command buffers. The spec says that, along the series of submissions to one
+queue, begins and ends "must be matched and balanced": a region may start in one command buffer and end in a later one.
+What is forbidden is an end without an open begin (`VUID-vkCmdEndDebugUtilsLabelEXT-commandBuffer-01912`). Only a
+*secondary* command buffer must close everything it opens (`VUID-vkEndCommandBuffer-commandBuffer-01815`). Step 28
+closes every region in the same command buffer anyway, which is the simplest way to stay balanced.
+
+### Queue labels
+
+Queue labels bracket queue operations instead of commands: here a frame's submit and its present, named with the frame
+number, with an inserted "present" point between them:
+
+<Step file="28_debug_labels" region="queue-labels" />
+
+The same balance rule holds per queue (`VUID-vkQueueEndDebugUtilsLabelEXT-None-01911`), which is why the region is
+closed on every path, also when the submit or the present fails. In the message above, "queue labels: frame 1" is this
+region: the hazard was found while frame 1 was being submitted.
+
+### What step 28 prints
+
+<Step file="28_debug_labels" region="cli" />
+
+```text
+Window: 800x600 pixels
+Found 1 GPU(s)
+Picked: NVIDIA GeForce RTX 3080 Ti
+Graphics + present family: 0
+Swapchain: 800x600 B8G8R8A8_SRGB, MAILBOX, 3 images
+Depth: D32_SFLOAT, one image for both frames in flight
+Named 40 objects with vkSetDebugUtilsObjectNameEXT
+Labels per frame: queue "frame N" around submit + present; command buffer "frame" > "attachments", "main pass" > "cube 0", "cube 1"; inserted "to present"
+Rendering. Close the window to exit.
+Window closed
+[timing] 6107 frames in 3.0 s, 2032 fps
+```
+
+Rust, release, `--seconds 3`, 2026-10-11; C++ printed the same lines apart from `[timing]`. On stderr there was one
+message, the bandicam layer's API-version warning from step 02, now with its object: `object 0: INSTANCE 0x... (no
+name)`. The instance has no name yet at that moment: the message comes from `vkCreateInstance`.
+
+## printf from a shader
+
+Names and labels describe the CPU side. Inside a shader there is no debugger attached by default, but there is printf.
+[Shader printf](term:debug-printf) is Slang's `printf`, compiled to an instruction of the `NonSemantic.DebugPrintf`
+set (`OpExtInst`, extension `SPV_KHR_non_semantic_info`). A driver ignores non-semantic instructions; the validation
+layer, when its DebugPrintf setting is on, rewrites the shader to write the arguments into a buffer and prints them
+after the submission completes. Step 28's `--printf` fragment shader prints for one pixel, the window center:
+
+<Snippet src="shaders/debug_printf.slang" />
+
+One pixel can print several lines, one per fragment shaded there. That is the reason to filter by pixel: without the
+`if`, 800 x 600 pixels would print tens of thousands of lines per frame. The SPIR-V needs only the `Shader`
+capability, and the `OpExtInst` survives `-O2` (checked with `spirv-dis` when module 12 was planned).
+
+The program builds a second pipeline that differs only in its fragment stage, and uses it for frame 0, whose scene is
+the scene at time 0 in every run:
+
+<Step file="28_debug_labels" region="printf-pipeline" />
+
+### Two switches, and why both
+
+The layer setting is `printf_enable`, off by default. With only `VK_KHRONOS_VALIDATION_PRINTF_ENABLE=true`, the run
+printed **nothing** from the shader. The layer said why, at instance creation:
+
+```text
+[WARNING][VALIDATION] vkCreateInstance(): DebugPrintf logs to the Information message severity, enabling Information level logging otherwise the message will not be seen.
+```
+
+printf output goes to the debug messenger as INFO, and the course's messenger listens to WARNING and ERROR only (step
+02 chose that: INFO means a hundred loader lines). The second setting, `VK_KHRONOS_VALIDATION_PRINTF_TO_STDOUT=true`,
+sends it straight to stdout instead, and the layer announces that too ("DebugPrintf will skip the debug callback in
+favor of a direct stdout write"). With both:
+
+```text
+pixel (400, 300): depth 0.967634, color (0.250000, 0.400000, 0.950000)
+pixel (400, 300): depth 0.966468, color (0.950000, 0.250000, 0.400000)
+```
+
+Two fragments at one pixel: cube 0's blue `+z` face, drawn first, then cube 1's face (the same face color through
+cube.slang's `.brg` swizzle), nearer by about 0.001 in depth, which wins the depth test. Rust and C++ printed the same
+two lines. In the log, with stdout redirected to a file, they came after "Window closed": the layer and the program
+write to stdout through different buffers, so the order of lines in a file is not the order of events.
+
+The same environment variables can be set in vkconfig instead ([step 02](lesson:validation#no-code-use-vkconfig)).
+Shaders without printf are unaffected by the setting, but the device is not: the layer enables features it needs for
+its instrumentation and says so at device creation:
+
+```text
+[WARNING][VALIDATION] vkCreateDevice(): Warning that validation is adjusting settings:
+	Forcing fragmentStoresAndAtomics to VK_TRUE
+	Forcing vertexPipelineStoresAndAtomics to VK_TRUE
+	Forcing shaderInt64 to VK_TRUE
+	Adding a VkPhysicalDeviceTimelineSemaphoreFeatures to pNext with timelineSemaphore set to VK_TRUE
+	...
+```
+
+(shortened: also the Vulkan memory model, buffer device address, scalar block layout, 8- and 16-bit storage). A
+program debugged with printf therefore runs on a device with more features than the one it ships on. The cost in
+frame rate was not measurable here: three alternating 3 s runs of each variant (plain, printf pipeline without the
+setting, setting without the printf pipeline, both) gave 1142 - 1948 fps in total, with every variant's range
+overlapping the others. This program is not GPU-bound; do not read that as "printf is free".
+
+### GPU-assisted validation
+
+printf answers "what is this value?". The other question about a running shader, "is this access legal?", belongs to
+[GPU-assisted validation](term:gpu-av), a mode of the same layer (`VK_KHRONOS_VALIDATION_GPUAV_ENABLE=true`) that
+instruments shaders to check their memory and descriptor accesses on the GPU. The course used it in
+[buffer device address](lesson:buffer-device-address#a-pointer-has-no-size), where it caught a read past the end of a
+buffer that only a pointer knew about. It costs much more than printf and adjusts device features the same way.
+
+## Queries: the GPU measures itself
+
+The CPU cannot time GPU work with its own clock: `vkQueueSubmit2` returns long before the work starts, and the fence
+signals some time after it ends. The GPU has to write the numbers itself, into a [query pool](term:query-pool): an
+array of slots of one query type that commands fill while the GPU executes them, and that the host reads back once
+that work is complete. Step 29 uses two types.
+
+<Step file="29_gpu_queries" region="cli" />
+
+<Step file="29_gpu_queries" region="queries" />
+
+Four [timestamps](term:timestamp-query) per frame enclose three stretches: the barriers that prepare the attachments,
+the main pass, and the barrier to `PRESENT_SRC_KHR`. One [pipeline statistics query](term:pipeline-statistics-query)
+per frame counts what the pipeline did during the rendering, six counters in one result.
+
+### What the device must offer
+
+<Step file="29_gpu_queries" region="pick-device" />
+
+Timestamps need a queue family with `timestampValidBits > 0` (on the course GPU: 64 bits on family 0); writing one
+from a family without them is `VUID-vkCmdWriteTimestamp2-timestampValidBits-03863`. Pipeline statistics are an optional
+Vulkan 1.0 feature, `pipelineStatisticsQuery` (`VUID-VkQueryPoolCreateInfo-queryType-00791` without it), and resetting
+queries from the host needs `hostQueryReset` (Vulkan 1.2, `VUID-vkResetQueryPool-None-02665`). Both are enabled:
+
+<Step file="29_gpu_queries" region="device" />
+
+### The pools, reset on the host
+
+<Step file="29_gpu_queries" region="query-pools" />
+
+A pool holds one query type, so there are two pools. Every query has to be *unavailable* (reset) before a command
+writes it (`VUID-vkCmdWriteTimestamp2-None-03864`, `VUID-vkCmdBeginQuery-None-00807`). Step 12 reset its timestamps
+with `vkCmdResetQueryPool` at the start of each command buffer; step 29 resets them on the host with `vkResetQueryPool`
+right after reading them, so the command buffer contains only the measurements.
+
+### Writing the timestamps
+
+<Step file="29_gpu_queries" region="record" />
+
+A timestamp is not written "now" but when everything before it has reached the given stage. `ALL_COMMANDS` therefore
+marks the end of all preceding work, `TOP_OF_PIPE` the start; and since an implementation "may write the timestamp at
+any stage that is logically later than stage", an interval between two timestamps approximates the work between them,
+never shorter than its start would allow. The [compute pipelines](lesson:compute-pipelines) and
+[async compute](lesson:async-compute#timestamps-from-two-queues) lessons made the same caveat; the values are ticks of
+`timestampPeriod` nanoseconds (1 ns on the course GPU), and only the low `timestampValidBits` count, which is why
+`ticks_between` in the `queries` region subtracts modulo 2^bits.
+
+### Reading the results
+
+<Step file="29_gpu_queries" region="read-results" />
+
+The program reads a slot's queries only after waiting for that slot's fence, so `WAIT` returns at once. The function
+holds two parts the next sections explain: the submit-to-start latency and the frame-0 statistics.
+
+## Pipeline statistics: counting instead of timing
+
+A timestamp says how long; a statistics query says how much. Step 29 asks for six counters and, for frame 0, prints
+them next to what can be predicted from the scene: 24 vertices and 36 indices per cube, two cubes. Frame 0 always shows
+the scene at time 0, so its counts are the same in every run, and they were the same in both languages:
+
+```text
+Pipeline statistics of frame 0 (scene at time 0), measured / predicted:
+  input assembly vertices        72 / 72 = 36 indices x 2 instances
+  input assembly primitives      24 / 24 = triangles of the index list
+  vertex shader invocations      48 / 48..72: reuse of repeated indices is implementation-dependent
+  clipping invocations           24 / 24: every triangle reaches clipping (culling comes later)
+  clipping primitives            24 / at least 1 per triangle with a vertex inside the clip volume that covers a sample, 0 or more otherwise
+  fragment shader invocations  60794 / no formula: covered pixels (helper invocations may count), minus what early tests reject
+```
+
+What the spec guarantees for each, and what it leaves to the implementation:
+
+| Counter | Frame 0 | The spec says | So |
+|---|---|---|---|
+| input assembly vertices | 72 | "the number of vertices processed by the input assembly stage" | exact: 36 indices x 2 instances |
+| input assembly primitives | 24 | "the number of primitives processed by the input assembly stage" | exact: 12 triangles x 2 |
+| vertex shader invocations | 48 | incremented "each time a vertex shader is invoked"; the implementation "may reuse the results of vertex shading if it can statically determine that the vertex shader invocations will produce identical results" | anywhere from 48 (each of the 24 distinct vertices once per instance) to 72; NVIDIA reused every repeated index |
+| clipping invocations | 24 | incremented "each time a primitive reaches the primitive clipping stage" | all 24 triangles, back faces included: culling happens in rasterization, after clipping |
+| clipping primitives | 24 | for a primitive with at least one vertex inside the clip volume that is not rasterized or covers a sample: "incremented by one or more"; "Otherwise, the counter is incremented by zero or more" | at least 1 per qualifying triangle; the driver counted one per triangle, which the conditions allow |
+| fragment shader invocations | 60794 | incremented "each time the fragment shader is invoked" | no formula: it depends on coverage, on what the early depth test rejects before shading, and on how the implementation counts helper invocations |
+
+The spec also says what all of these are for: "These values are intended to measure relative statistics on one
+implementation. Various device architectures will count these values differently." A tile-based mobile GPU may count
+some of them more than once (the spec's own example). So the counters answer "did my change halve the vertex shader
+invocations on this GPU?", not "how many does Vulkan do?". The fragment count of later frames, printed per second as
+"FS invocations", moved between 61000 and 64000 as the cubes rotated.
+
+## Calibrated timestamps: GPU ticks on the CPU timeline
+
+Device timestamps measure GPU intervals well, but they are on the GPU's clock. To ask "how long after `vkQueueSubmit2`
+did the GPU start this frame?", the two clocks have to be related. That is
+[calibrated timestamps](term:calibrated-timestamps) (`VK_KHR_calibrated_timestamps`): one call samples several clocks,
+each a [time domain](term:time-domain), as close to simultaneously as the implementation can.
+
+<Step file="29_gpu_queries" region="calibration" />
+
+### Which clocks
+
+<Step file="29_gpu_queries" region="time-domains" />
+
+On the course machine:
+
+```text
+Calibrateable time domains: DEVICE, QUERY_PERFORMANCE_COUNTER, PRESENT_STAGE_LOCAL_EXT
+Calibration pairs DEVICE with QUERY_PERFORMANCE_COUNTER
+```
+
+`VK_TIME_DOMAIN_DEVICE_KHR` values "are comparable with device timestamp values captured using vkCmdWriteTimestamp or
+vkCmdWriteTimestamp2" (spec): the clock of the queries above. `QUERY_PERFORMANCE_COUNTER` is Windows'
+`QueryPerformanceCounter`, the clock a CPU profiler on Windows typically uses. `PRESENT_STAGE_LOCAL_EXT` belongs to one
+swapchain and present stage and is comparable only with itself; it is not used here. Every domain passed to the call
+must be one of the reported ones (`VUID-vkGetCalibratedTimestampsKHR-timeDomain-09246`).
+
+### Sampling both clocks at the submit
+
+<Step file="29_gpu_queries" region="calibrate" />
+
+The call returns the two values and `maxDeviation`, "the strictly positive maximum deviation, in nanoseconds, of the
+calibrated timestamp values": how far apart in real time the two samples may have been taken. On this machine it was
+2.0 - 2.5 us per call. The spec leaves it to the application to decide whether that is good enough, and to call again
+for a smaller one if not.
+
+The device value is taken right before `vkQueueSubmit2`, and the frame's first timestamp is written by the GPU when it
+begins the command buffer. Both are device ticks, so their difference is the time between the submit call and the GPU
+starting the work: the `latency` line of `read-results` above, `us(c.device, t0)`. It includes the CPU's own cost of the submit call, the driver's work to hand the batch to the GPU and any queue
+backlog; it excludes the wait for the swapchain image, because the image's semaphore is waited at
+`COLOR_ATTACHMENT_OUTPUT` and the first timestamp is at `TOP_OF_PIPE`.
+
+### What step 29 prints
+
+```text
+Window: 800x600 pixels
+Picked: NVIDIA GeForce RTX 3080 Ti, graphics + present family 0
+Timestamps: timestampPeriod 1 ns per tick, 64 valid bits on family 0
+Calibrateable time domains: DEVICE, QUERY_PERFORMANCE_COUNTER, PRESENT_STAGE_LOCAL_EXT
+Calibration pairs DEVICE with QUERY_PERFORMANCE_COUNTER
+Swapchain: 800x600 B8G8R8A8_SRGB, MAILBOX, 3 images; 2 frame(s) in flight
+Query pools: 8 timestamps (4 per frame slot), 2 pipeline statistics queries (6 counters); reset on the host
+Rendering. Close the window to exit.
+Pipeline statistics of frame 0 (scene at time 0), measured / predicted:
+  ...
+[timing] 1s: 1815 frames, GPU us per frame: attachments 0.0, main pass 7.2, to present 0.0, whole 7.2; submit -> GPU start 65.5 us (min 49.5, max 439.0), maxDeviation 2.0 us; FS invocations 62353
+[timing] 2s: 1710 frames, GPU us per frame: attachments 0.0, main pass 7.3, to present 0.0, whole 7.4; submit -> GPU start 67.4 us (min 49.3, max 284.9), maxDeviation 2.0 us; FS invocations 63911
+[timing] 3s: 1937 frames, GPU us per frame: attachments 0.0, main pass 8.5, to present 0.0, whole 8.5; submit -> GPU start 65.9 us (min 49.7, max 1009.5), maxDeviation 2.1 us; FS invocations 62089
+Window closed
+[timing] 7297 frames in 4.0 s, 1822 fps
+[timing] whole run: 7297 frames, GPU us per frame: attachments 0.0, main pass 10.5, to present 0.0, whole 10.5; submit -> GPU start 70.3 us (min 49.3, max 2023.7), maxDeviation 2.2 us; FS invocations 61721
+[timing] QUERY_PERFORMANCE_COUNTER: 9999690 ticks per second of device time (over 4.00 s)
+```
+
+(Rust, release, `--seconds 4`; the statistics block is shown above. C++ printed the same lines apart from `[timing]`.)
+
+The measurements of 2026-10-11, release builds of both languages, validation on and synchronization validation off,
+three alternating 4 s runs per language, default settings (2 frames in flight, MAILBOX). The machine is shared with
+other work, so take the spread as part of the result:
+
+| Whole run | Range over 6 runs |
+|---|---|
+| GPU time of the main pass | 10.5 - 13.4 us per frame |
+| attachments / to present | 0.0 us in every run (printed with one decimal: under 0.05 us) |
+| submit -> GPU start, average | 70.3 - 77.5 us |
+| submit -> GPU start, minimum / maximum | 46.1 - 50.1 us / 1.4 - 2.4 ms |
+| maxDeviation, average | 2.2 - 2.5 us |
+| QPC ticks per second of device time | 9999690 - 9999720 |
+| frames per second | 1457 - 2070 |
+
+The GPU works about 11 us per frame and the frame takes about 500 us: this program is bound by the CPU and the
+presentation, not the GPU. The submitted work typically waits 50 - 80 us before the GPU starts it, even with the GPU
+idle most of the time, and now and then two milliseconds. That is the price of one trip through the driver and the
+operating system's GPU scheduler, and one reason engines submit a few large batches rather than many small ones.
+
+### Two clocks drift apart
+
+<Step file="29_gpu_queries" region="host-clock" />
+
+`QueryPerformanceCounter` runs at 10 MHz on this machine (`QueryPerformanceFrequency` = 10000000), so one second of
+device time should be 10,000,000 QPC ticks. The program counted 9,999,690 - 9,999,720 between its first and last
+calibration: the two clocks disagree by about 30 parts per million. Neither is "the right one": they are two crystals.
+Thirty ppm is 30 us per second, 1.8 ms per minute, enough to put a GPU event next to the wrong CPU event in a long
+trace. Hence the spec's advice that extrapolating calibrated values "over a sufficiently long period of time may no
+longer be accurate enough ... so applications are expected to re-calibrate the timestamps on a regular basis". Step 29
+calibrates at every submit, which is more than needed; once every frame or every second is what tools do.
+
+## Where to look next: the tools
+
+Everything above is what a program can do for itself. The tools read the same information from outside, and the course
+will have dedicated lessons on them; here is where to start.
+
+- **[RenderDoc](https://renderdoc.org/)**: a [frame capture](term:frame-capture) tool. It records every API call of one
+  frame with the resources it uses and replays it: event list, pipeline state, textures, buffers, meshes, shader
+  debugging. It requires **RenderDoc 1.46 or newer**, because the course needs Vulkan 1.4 support in its capture layer.
+  The course captured step 28 with it on 2026-10-11 (portable RenderDoc 1.46):
+  `renderdoccmd capture -w -c <folder>\cap28 28_debug_labels.exe --seconds 12` starts the program with the capture
+  layer, and F12 in the program's window captured frame 885 into a 176,844-byte `.rdc` file. The device still reported
+  Vulkan 1.4 under the layer. Converted to XML (`renderdoccmd convert -c xml`), the capture contains all eight labels
+  of that frame ("frame", "attachments", "main pass", "cube 0", "cube 1", "to present", the queue label "frame 885"
+  and the inserted "present") and 28 of the 40 object names, from "instance" and "device" to "cube pipeline" and the
+  frame-1 objects. Missing were names of objects the captured frame did not use, such as frame slot 0's buffers and
+  semaphores (RenderDoc keeps only the resources a frame uses unless its "include all live resources" option is set,
+  which was not tried).
+- **[Nsight Systems](https://developer.nvidia.com/nsight-systems)**: a system-wide timeline of CPU threads, API calls
+  and GPU work. Labels show up with `nsys profile --trace=vulkan,vulkan-annotations ...`: run on step 28 for 2 s, the
+  report's GPU marker summary listed the command buffer labels ("main pass", "cube 0", ...) with their GPU durations,
+  and its CPU marker summary the command buffer ranges and one range per "frame N" queue label; with
+  `--trace=vulkan` alone, `nsys stats` said the report "does not contain Vulkan Debug Extension (Vulkan Debug Util)
+  data".
+- **[Nsight Graphics](https://developer.nvidia.com/nsight-graphics)**: NVIDIA's frame debugger and GPU profiler (GPU
+  Trace, shader profiler). Not installed on the course machine yet, so nothing here is measured with it.
+
+## The map of this lesson
+
+<MindMap />
+
+## Underneath
+
+- **Names and labels live in the layers.** `VK_EXT_debug_utils` is an instance extension: the loader and every layer
+  between the application and the driver see the calls. The validation layer keeps a table of names to quote; a capture
+  layer records them into the capture; the driver may use them for its own tools or ignore them. This is also why the
+  messenger cannot be named: its handle exists only in the loader.
+- **printf and GPU-AV rewrite your shader.** The layer patches the SPIR-V before the driver compiles it, adding code
+  that writes into a buffer of its own, and reads that buffer after the submission completes; the features it forces
+  at device creation are what that added code needs. What runs on the GPU is not exactly what you wrote: for most bugs
+  that does not matter, for timing it does.
+- **Where timestamps come from.** Typically the GPU's command processor writes a counter value into the query's
+  memory once the preceding work has passed the requested stage; `timestampPeriod` converts the ticks to nanoseconds.
+  All timestamps of a device are in the DEVICE time domain, so values from different queues compare directly (the
+  async compute lesson relied on that).
+- **Statistics are counters in the hardware.** Typically the fixed-function units and shader schedulers count as they
+  work, and a query takes the difference between Begin and End. That is why the counts cost little and why their exact
+  meaning (vertex reuse, helper invocations, tile replays) belongs to the architecture, as the spec says.
+
+<Quiz
+	questions={[
+		{
+			q: 'Step 28 names its objects. What changes in the rendered picture?',
+			options: [
+				{
+					text: 'Nothing: names and labels are information for the validation layer and the tools',
+					why: 'Right: the program renders step 22\'s scene unchanged; the layer quotes the names in messages and a capture stores them.',
+				},
+				{
+					text: 'The driver receives the names and can compile and schedule named objects better than anonymous ones',
+					why: 'No such effect is promised anywhere; names are strings for whoever inspects the program.',
+				},
+				{
+					text: 'Labels add rendering work at every region boundary, so each labeled frame reaches the screen later',
+					why: 'Labels are markers in the command stream for tools; the program renders and presents step 22\'s frames.',
+				},
+				{
+					text: 'Named objects are registered system-wide, so other processes can look them up by their names',
+					why: 'Names stay in the layers of this process (and in a capture file if you make one).',
+				},
+			],
+			answer: 0,
+			ref: '#two-kinds-of-help',
+		},
+		{
+			q: 'With only VK_KHRONOS_VALIDATION_PRINTF_ENABLE=true, step 28 --printf printed nothing from the shader. Why?',
+			options: [
+				{
+					text: 'Slang removes printf calls when it optimizes a shader, so the SPIR-V had no DebugPrintf instruction left',
+					why: 'The OpExtInst DebugPrintf survives even -O2; the shader was fine.',
+				},
+				{
+					text: 'printf output arrives at INFO severity, which the course messenger does not listen to',
+					why: 'Right: the layer warned about it; PRINTF_TO_STDOUT=true bypasses the messenger and writes to stdout.',
+				},
+				{
+					text: 'The pixel (400, 300) is not covered by any cube at time 0, so the condition in the shader is never true',
+					why: 'It is covered twice: with both settings the same run printed two lines for that pixel.',
+				},
+				{
+					text: 'The NVIDIA driver skips NonSemantic instructions',
+					why: 'Drivers ignore them by design; the validation layer replaces the instruction with its own buffer writes.',
+				},
+			],
+			answer: 1,
+			ref: '#two-switches-and-why-both',
+		},
+		{
+			q: 'Frame 0 had 48 vertex shader invocations for 72 input-assembly vertices. What does that tell you?',
+			options: [
+				{
+					text: 'The driver dropped 24 vertices, which is a bug',
+					why: 'No vertex is lost: the spec lets an implementation reuse vertex shading for repeated indices.',
+				},
+				{
+					text: 'Back-face culling removed a third of the vertices before the vertex shader ever ran on them',
+					why: 'Culling happens after the vertex shader; clipping invocations show all 24 triangles reached clipping.',
+				},
+				{
+					text: 'Repeated indices were shaded once per instance; another GPU may count anything from 48 to 72',
+					why: 'Right: reuse is implementation-dependent, and the spec says the counters measure relative statistics on one implementation.',
+				},
+				{
+					text: 'The second instance was not shaded at all: its 24 vertices reused the results of the first instance',
+					why: 'Reuse needs identical results, and the two instances use different matrices: 48 = 24 distinct vertices x 2 instances.',
+				},
+			],
+			answer: 2,
+			ref: '#pipeline-statistics-counting-instead-of-timing',
+		},
+		{
+			q: 'Why does step 29 need calibrated timestamps to report "submit -> GPU start"?',
+			options: [
+				{
+					text: 'Timestamp queries cannot be read back without the extension',
+					why: 'They can: timestamp queries are core, and step 12 read them without any extension.',
+				},
+				{
+					text: 'Timestamps are only valid on 64-bit queue families',
+					why: 'Any family with timestampValidBits > 0 has them; the program handles fewer bits with modular subtraction.',
+				},
+				{
+					text: 'The CPU cannot call vkQueueSubmit2 while a timestamp is being written',
+					why: 'Submitting and the GPU writing timestamps are independent; nothing blocks the submit.',
+				},
+				{
+					text: 'The submit happens on the CPU, the timestamps on the GPU clock: one call must sample that clock at the submit',
+					why: 'Right: the DEVICE value sampled before the submit is comparable with the frame\'s first timestamp.',
+				},
+			],
+			answer: 3,
+			ref: '#sampling-both-clocks-at-the-submit',
+		},
+	]}
+/>

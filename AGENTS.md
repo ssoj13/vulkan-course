@@ -184,10 +184,11 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
 | `src/data/validation-log.json` | step 02's messages at every severity: totals, leak/dab experiments, exact sample | `bun run sync:validation-log` (tools/vk-probe) |
 | `src/data/dynamic-states.json` | core VkDynamicState values with their version, from vk.xml | `bun run sync:dynamic-states` |
 | `src/data/vuids.json` | registry texts of every `VUID-...` id mentioned anywhere in src/ (scripts/vuid-refs.ts finds them) | `bun run sync:vuids` |
+| `src/data/pipeline-stats.json` | VK_KHR_pipeline_executable_properties of saxpy/reduce/particles/cube + register-pressure series, with timings | `bun run sync:pipeline-stats` (compiles tools/vk-probe/shaders/pressure.slang, runs vk-probe) |
 
 - VUIDs: write the id in a model, data file or lesson, run `bun run sync:vuids`; never paste a VUID text.
   `tests/vuids.test.ts` fails for an id without its synced text.
-- `tools/vk-probe` (cargo, ash at the examples' pin): binaries `buffer-requirements` and `validation-log`, see its
+- `tools/vk-probe` (cargo, ash at the examples' pin): binaries `buffer-requirements`, `validation-log` and `pipeline-stats`, see its
   README. Its output is machine-specific by design; handle values in messages change every run (the lesson quotes
   its own run). Every capture's `date` is the UTC calendar date (vk-probe and scripts/sync-gpu.ts alike; the
   current gpu.json predates the rule and carries the local date of its run). CI lints it (clippy/fmt) next to examples/rust; running needs a GPU.
@@ -679,6 +680,21 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
   the first and last calibration: 9999702-9999706 ticks per device second (QPC is 10 MHz: the device clock runs ~30 ppm
   fast against QPC). FS invocations average 61000-64000 per frame. Screenshots
   examples/screenshots/{28_debug_labels,29_gpu_queries}.png (Rust release, PrintWindow client area, ~2.5 s in).
+- pipeline-stats probe (2026-10-11, for tools/occupancy-and-registers): `tools/vk-probe` binary `pipeline-stats`,
+  shader `tools/vk-probe/shaders/pressure.slang` (+ committed .spv, embedded with include_bytes!; entry points p8..p256 =
+  N floats in a fully unrolled local array, 8 rounds; d64 = 64 floats indexed at run time = local memory control),
+  `scripts/sync-pipeline-stats.ts` (slangc flags read from shaders/spv/manifest.json), IR dumps -> tools/vk-probe/out/
+  (gitignored). NVIDIA 616.64 facts: every executable is named "CS"/"VS"/"FS" (descriptions "Compute Shader" etc.),
+  subgroupSize 32; statistics, all UINT64: Register Count ("Number of temporary registers used by this shader stage"),
+  Binary Size, Stack Size, Local Memory Size ("Size in bytes required per-thread for local memory"), then per stage
+  Shared Memory Size (CS), Input Count/Output Count (VS), Input Count/Output Colors (FS). NO internal representations
+  (count 0 with CAPTURE_INTERNAL_REPRESENTATIONS). TRAP: Local Memory Size is 68719476736 (= 16 << 32) for every
+  shader and 68719476992 (= 16 << 32 | 256) for d64: only the LOW 32 bits are meaningful (d64: 256 B = 64 floats);
+  the lesson must say so, never quote the raw value as bytes. VS Output Count 0 for the cube looks wrong too.
+  Registers: saxpy/reduce/particles 16, cube VS 25 / FS 16, p8 19, p16 37, p32 70, p64 118, p128 230, p192 242,
+  p256 255 + Shared Memory Size 15360 (= 60 B/thread; the shader declares no groupshared: presumably spilled to shared
+  memory, an interpretation), d64 40 regs. Times (4 Mi invocations, median of 5, shared machine, run 2): p8 0.047,
+  p16 0.085, p32 0.167, p64 0.348, p128 0.847, p192 1.205, p256 1.866, d64 ~317 ms. Validation: bandicam warning only.
 ## TODO
 
 - [ ] Concept trees (engine v0.5.0): a reader check in a real browser (keyboard through all four views, window
@@ -696,9 +712,24 @@ Current plan (2026-10-11), in order:
    install (not downloaded without the user).
 
 - [x] Module 12 wave 1 (2026-10-11): Slang check (State "Module 12 shader check") + examples 28/29 (State "examples 28-29").
-- [ ] 28/29: independent code review (code vs spec), then the EN lesson debugging-and-profiling; RU after.
-- [ ] RenderDoc 1.39 cannot capture any 1.4 step (the layer reports apiVersion 1.3): decide with the user (a newer
-  RenderDoc, or a lesson-only 1.3 path); until then the lesson describes a capture without a real capture of 28.
+- [x] 28/29 code review (ba3a454). EN lesson advanced/debugging-and-profiling written 2026-10-11 (module `advanced`
+  "Advanced" / «Продвинутые темы» in course.json/course.ru.json, only this lesson listed; RU page = placeholder
+  «Русская версия урока готовится.»). Regions: all 8 of 28 and all 11 top-level of 29; 29 `latency` and `statistics`
+  are NESTED in `read-results` and shown through it (markers stripped by extractRegion). Snippet debug_printf.slang;
+  Shots 28 only (src/assets/28_debug_labels.png; 29 is the same scene, not embedded). 9 terms (debug-object-name,
+  debug-label, debug-printf, query-pool, timestamp-query, pipeline-statistics-query, calibrated-timestamps,
+  time-domain, frame-capture) + RU overlay, 20 edges (scratchpad m12lesson/addterms12.py). Runs 2026-10-11 (scratchpad
+  m12lesson/, release, validation on, sync OFF): 28 default Rust 2032 / C++ 2155 fps, stdout identical w/o [timing];
+  28 --printf with PRINTF_ENABLE only: no shader output + "DebugPrintf logs to the Information message severity"
+  warning; with PRINTF_TO_STDOUT too: the two pixel lines (Rust = C++), landing after "Window closed" in a redirected
+  log; printf cost NOT measurable (3 alternating 3 s runs x 4 variants: 1142-1948 fps overall, overlapping). 29 x3
+  alternating per language, 4 s: main pass 10.5-13.4 us, submit -> GPU start avg 70.3-77.5 us (min 46-50, max
+  1.4-2.4 ms), maxDeviation 2.2-2.5 us, QPC 9999690-9999720 ticks per device second (~28-31 ppm; QPF = 10000000),
+  1457-2070 fps, stdout identical w/o [timing], frame-0 statistics as before. RenderDoc 1.46 capture of Rust 28
+  (`renderdoccmd capture -w -c <dir>\cap28 28_debug_labels.exe --seconds 12`, F12 sent to the window): frame 885,
+  176844 bytes, device apiVersion 1.4.351 under the layer; `renderdoccmd convert -c xml`: all 8 labels of the frame
+  and 28 of 40 names (frame-slot-1 objects, view 0, instance/device/queue...; not frame slot 0, views 1-2, surface,
+  command buffers). [ ] Independent review of the lesson; RU lesson.
 - [ ] Step 32 (mesh shaders): avoid user per-primitive outputs (Slang 2026.1 bugs, State "Module 12 shader check") or
   post-process the SPIR-V like decorateNonUniform; try a newer Slang before deciding.
 - [ ] 28 --printf: VK_EXT_layer_settings (printf_enable + printf_to_stdout set by the program) would remove the two env
