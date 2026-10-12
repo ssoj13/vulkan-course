@@ -463,7 +463,9 @@ std::optional<std::string> checkHeader(std::span<const uint8_t> data, const vk::
         return std::format("written for vendorID 0x{:04X} deviceID 0x{:04X}, this GPU is 0x{:04X} 0x{:04X}", h.vendorID, h.deviceID,
                            props.vendorID, props.deviceID);
     }
-    if (!std::ranges::equal(h.uuid, props.pipelineCacheUUID)) {
+    // Compare as two fixed-size std::arrays (ArrayWrapper1D derives from one): the size is a compile-time 16, whereas
+    // std::ranges::equal over the wrapper made GCC 14 -O3 derive an unbounded memcmp length (-Wstringop-overread).
+    if (h.uuid != static_cast<const std::array<uint8_t, VK_UUID_SIZE>&>(props.pipelineCacheUUID)) {
         return "pipelineCacheUUID differs (another driver build wrote it)";
     }
     return std::nullopt;
