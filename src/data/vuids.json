@@ -11,6 +11,7 @@
   "VUID-VkBlitImageInfo2-srcImageLayout-00221": "srcImageLayout must specify the layout of the image subresources of srcImage specified in pRegions at the time this command is executed on a VkDevice",
   "VUID-VkBufferCreateInfo-sharingMode-00914": "If sharingMode is VK_SHARING_MODE_CONCURRENT, queueFamilyIndexCount must be greater than 1",
   "VUID-VkBufferCreateInfo-sharingMode-01419": "If sharingMode is VK_SHARING_MODE_CONCURRENT, each element of pQueueFamilyIndices must be unique and must be less than pQueueFamilyPropertyCount returned by either vkGetPhysicalDeviceQueueFamilyProperties2 or vkGetPhysicalDeviceQueueFamilyProperties for the physicalDevice that was used to create device",
+  "VUID-VkCalibratedTimestampInfoKHR-timeDomain-02354": "timeDomain must be one of the VkTimeDomainKHR values returned by vkGetPhysicalDeviceCalibrateableTimeDomainsKHR",
   "VUID-VkClearDepthStencilValue-depth-00022": "Unless the VK_EXT_depth_range_unrestricted extension is enabled depth must be between 0.0 and 1.0, inclusive",
   "VUID-VkCommandBufferAllocateInfo-commandPool-parameter": "commandPool must be a valid VkCommandPool handle",
   "VUID-VkComputePipelineCreateInfo-stage-00701": "The stage member of stage must be VK_SHADER_STAGE_COMPUTE_BIT",

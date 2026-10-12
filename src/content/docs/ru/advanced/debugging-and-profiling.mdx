@@ -3,4 +3,613 @@ title: Отладка и профилирование
 description: 'Как программа описывает себя инструментам и измеряет себя изнутри: имена объектов и метки в буферах команд и очередях из VK_EXT_debug_utils, сообщения валидации, которые их цитируют, printf из шейдера через слой валидации, GPU-assisted validation, пулы запросов с timestamps и статистикой пайплайна, калиброванные timestamps, ставящие тики GPU на шкалу времени CPU, и где дальше помогают RenderDoc и Nsight.'
 ---
 
-Русская версия урока готовится.
+import MindMap from 'course-kit/components/MindMap.astro';
+import Quiz from 'course-kit/components/Quiz.astro';
+import Snippet from '../../../../components/Snippet.astro';
+import Step from '../../../../components/Step.astro';
+import Shots from '../../../../components/Shots.astro';
+import shot28 from '../../../../assets/28_debug_labels.png';
+
+С шага 02 слой валидации разговаривает с нами шестнадцатеричными числами: «VkImage 0x1e000000001e», «VkCommandBuffer
+0x2a5f...». Какой это image — глубины? swapchain? — приходится угадывать. А сам кадр до сих пор — чёрный ящик: внутрь
+уходит один submit, наружу выходит картинка. Отсюда три вопроса. Как программе объяснить слою валидации и инструментам
+захвата, *что* у неё за объекты и команды? Как увидеть значение внутри шейдера? И как узнать от самого GPU, сколько
+длилась его работа, сколько её было и когда она началась по часам CPU?
+
+## Место в курсе
+
+Первый урок модуля **«Продвинутые темы»**. Нового от железа он не требует — только два инструмента, которые может
+носить с собой любая программа на Vulkan. Первый — instance-расширение `VK_EXT_debug_utils`: его
+[messenger](term:debug-messenger) печатает сообщения [слоя валидации](term:validation-layer) ещё со
+[шага 02](lesson:validation). Второй — [пулы запросов](term:query-pool) (query pool), которыми
+[модуль 7](lesson:barriers-and-layouts#правда-ли-рендеринг-идёт-раньше-acquire) уже мерил timestamps. Обе программы
+урока рисуют два куба шага 22: шаг 28 себя *описывает*, шаг 29 себя *измеряет*. Цепочки:
+
+`VK_EXT_debug_utils → object names + command buffer / queue labels → the validation layer quotes them, capture tools show them`
+
+`VkQueryPool → timestamps + pipeline statistics, written by the GPU → read on the host → calibrated timestamps → GPU ticks on the CPU's clock`
+
+## Отладка и профилирование: две разные помощи
+
+Сцена Maya, где все узлы до сих пор зовутся `pCube1`, `pCube2`, `polySurface37`, прекрасно работает — пока что-нибудь
+не сломается и единственной картой не окажется Outliner. Лог фермы «task 4183 failed» бесполезен рядом с «shot 042,
+layer beauty, frame 1017 failed». Программа от имён не меняется; меняется жизнь тех людей и инструментов, которые её
+разбирают.
+
+Вторая помощь — измерение. Performance Monitor в Houdini говорит, какой узел сколько варился, и знает он это не по
+секундомеру снаружи, а изнутри: время записывает сам cook. В Vulkan то же деление:
+
+| | Отладка: описать и посмотреть | Профилирование: измерить |
+|---|---|---|
+| В программе | [имена объектов](term:debug-object-name), [метки](term:debug-label) (шаг 28) | [timestamp-запросы](term:timestamp-query), [статистика пайплайна](term:pipeline-statistics-query), [калиброванные timestamps](term:calibrated-timestamps) (шаг 29) |
+| В слое валидации | его сообщения, [printf из шейдера](term:debug-printf), [GPU-AV](term:gpu-av) | |
+| Снаружи программы | [захват кадра](term:frame-capture) (RenderDoc, Nsight Graphics) | системная трасса (Nsight Systems) |
+
+Всё в левой колонке — сведения для того, кто программу исследует. Ни одного пикселя оно не меняет: картинка шага 28 —
+это картинка шага 22.
+
+<Shots
+	shots={[
+		{
+			src: shot28,
+			alt: 'Шаг 28: два куба шага 22, слева голубовато-синий, справа розово-фиолетово-зелёный, на тёмном фоне',
+			caption:
+				'Шаг 28, Rust, release, клиентская область 800 × 600 примерно через 2,5 с после старта: сцена шага 22 без единого добавления. Имена и метки живут в слое и в инструментах, а не в изображении. Шаг 29 рисует ту же сцену.',
+		},
+	]}
+/>
+
+## Имена объектов
+
+### Как назвать handle
+
+[Handle](term:handle) в Vulkan — просто число. `vkSetDebugUtilsObjectNameEXT` прикрепляет к нему строку вместе с его
+`VkObjectType`. Курс оборачивает вызов один раз, чтобы тип нельзя было перепутать:
+
+<Step file="28_debug_labels" region="object-names" />
+
+Тип берётся из типа самого handle в языке (`Handle::TYPE` в ash, `objectType` в Vulkan-Hpp). Так исключена ошибка
+«назвал image так, будто это buffer» (`VUID-VkDebugUtilsObjectNameInfoEXT-objectType-02590`). Строку слой копирует,
+так что сразу после вызова программа может её освободить.
+
+Сами вызовы — по строчке на объект, сразу после его создания:
+
+<Step file="28_debug_labels" region="name-objects" />
+
+Имена бывают не только у объектов устройства. Instance, surface и физическое устройство называются той же командой
+уровня устройства — при условии, что устройство от них происходит. Для объектов уровня instance
+(`VUID-vkSetDebugUtilsObjectNameEXT-pNameInfo-07872`), уровня физического устройства (`-07873`) и уровня устройства
+(`-07874`) правила свои. Так шаг 28 называет 40 объектов, от «instance» до «render finished 2», включая изображения
+swapchain: ими владеет swapchain, но это такие же `VkImage`, как любые другие.
+
+### Единственный объект без имени
+
+Сам [debug messenger](term:debug-messenger) остаётся безымянным, и причина — хороший урок про слои. Называть его
+разрешено, но на машине разработки вызов падал с access violation. Виноват [loader](term:loader): handle, который
+возвращает `vkCreateDebugUtilsMessengerEXT`, — это собственная аллокация loader'а
+(`terminator_CreateDebugUtilsMessengerEXT` в `loader/debug_utils.c`), а терминатор loader'а для
+`vkSetDebugUtilsObjectNameEXT` (в `loader/generated/vk_loader_extensions.c`) переводит в handle драйвера только
+handle физических устройств, surface и instance. Драйвер получает messenger, которого никогда не создавал. В обеих
+программах это записано в комментарии; на остальную программу это не влияет.
+
+### Что слой делает с именем
+
+Сообщение слоя валидации — не только текст. В `pObjects` перечислены объекты, о которых оно, — каждый с типом,
+handle и нашим именем; в `pCmdBufLabels` / `pQueueLabels` — метки, открытые в момент сообщения. Callback шага 28
+печатает всё это:
+
+<Step file="28_debug_labels" region="debug-callback" />
+
+Чтобы увидеть разницу, курс сломал шаг 28 нарочно, так же как когда-то шаг 22: временная правка (потом отменённая)
+поставила в барьере глубины исходную область `NONE`/`NONE`, и синхронизационная валидация сообщила (handle сокращены
+до `0x...`, как записано в заметках проекта):
+
+```text
+vkQueueSubmit2(): WRITE_AFTER_WRITE hazard detected. vkCmdPipelineBarrier2[frame::attachments] (from VkCommandBuffer 0x...[frame 1 command buffer] submitted on the current VkQueue 0x...[graphics + present queue]) writes to VkImage 0x1e000000001e[depth image], which was previously written by vkCmdEndRendering[frame::main pass] (from VkCommandBuffer 0x...[frame 0 command buffer] submitted on VkQueue 0x...[graphics + present queue]).
+```
+
+А за ним — строки нашего callback'а: объект 0 — очередь «graphics + present queue», объект 1 — буфер команд «frame 1
+command buffer», метки очереди — «frame 1». Сравните с безымянной версией того же сообщения в уроке о
+[глубине](lesson:depth): слой пишет имя в `[скобках]` после каждого handle, а каждую команду — с путём меток, под
+которыми она записана, `[frame::attachments]`. Теперь сообщение говорит нашими словами: барьер кадра 1 перезаписывает
+изображение глубины, пока main pass кадра 0, возможно, ещё пишет в него.
+
+## Метки: главы в потоке команд
+
+Имена описывают объекты; [метки](term:debug-label) (debug labels) описывают отрезки работы. Метка — это строка и
+необязательный цвет RGBA, которым инструменты могут её рисовать:
+
+<Step file="28_debug_labels" region="labels" />
+
+### Метки буфера команд
+
+`vkCmdBeginDebugUtilsLabelEXT` / `vkCmdEndDebugUtilsLabelEXT` открывают и закрывают область внутри буфера команд, и
+области вкладываются друг в друга, как скобки; `vkCmdInsertDebugUtilsLabelEXT` ставит отметку в одной точке. Шаг 28
+записывает кадр, как сеть Houdini с подсетями: «frame» содержит «attachments» и «main pass», а «main pass» — по
+области на куб:
+
+<Step file="28_debug_labels" region="cmd-labels" />
+
+Два куба теперь рисуются двумя draw (`firstInstance` 0 и 1, по одному экземпляру) вместо одного instanced draw шага 22
+— только ради того, чтобы инструмент захвата показал каждый под своей меткой. Картинка та же: `cube.slang` и так
+выбирает матрицу по индексу экземпляра.
+
+Правило баланса касается очередей, а не буферов команд. По спецификации на последовательности submit'ов в одну
+очередь begin и end «must be matched and balanced»: область может начаться в одном буфере команд и закончиться в
+следующем. Запрещён end без открытого begin (`VUID-vkCmdEndDebugUtilsLabelEXT-commandBuffer-01912`). Закрывать всё,
+что открыл, обязан только *вторичный* буфер команд (`VUID-vkEndCommandBuffer-commandBuffer-01815`). Шаг 28 всё равно
+закрывает каждую область в том же буфере команд — так проще всего оставаться в балансе.
+
+### Метки очереди
+
+Метки очереди обрамляют не команды, а операции очереди: здесь — submit кадра и его present, с номером кадра в
+названии, и между ними вставленная точка «present»:
+
+<Step file="28_debug_labels" region="queue-labels" />
+
+То же правило баланса действует для каждой очереди (`VUID-vkQueueEndDebugUtilsLabelEXT-None-01911`), поэтому область
+закрывается на любом пути — и когда submit или present завершились ошибкой. «queue labels: frame 1» в сообщении выше —
+это она: конфликт найден во время submit'а кадра 1.
+
+### Что печатает шаг 28
+
+<Step file="28_debug_labels" region="cli" />
+
+```text
+Window: 800x600 pixels
+Found 1 GPU(s)
+Picked: NVIDIA GeForce RTX 3080 Ti
+Graphics + present family: 0
+Swapchain: 800x600 B8G8R8A8_SRGB, MAILBOX, 3 images
+Depth: D32_SFLOAT, one image for both frames in flight
+Named 40 objects with vkSetDebugUtilsObjectNameEXT
+Labels per frame: queue "frame N" around submit + present; command buffer "frame" > "attachments", "main pass" > "cube 0", "cube 1"; inserted "to present"
+Rendering. Close the window to exit.
+Window closed
+[timing] 6107 frames in 3.0 s, 2032 fps
+```
+
+Rust, release, `--seconds 3`, 2026-10-11; C++ напечатал те же строки, кроме `[timing]`. В stderr было одно сообщение —
+предупреждение слоя bandicam о версии API из шага 02, теперь с объектом: `object 0: INSTANCE 0x... (no name)`. Имени у
+instance в этот момент ещё нет: сообщение приходит из `vkCreateInstance`.
+
+## printf из шейдера
+
+Имена и метки описывают сторону CPU. К шейдеру отладчик по умолчанию не подключён — зато есть printf.
+[printf из шейдера](term:debug-printf) — это `printf` Slang, который компилируется в инструкцию набора
+`NonSemantic.DebugPrintf` (`OpExtInst`, расширение `SPV_KHR_non_semantic_info`). Драйвер non-semantic-инструкции
+пропускает; слой валидации с включённой настройкой DebugPrintf переписывает шейдер так, чтобы аргументы писались в его
+буфер, и печатает их, когда submit завершится. Фрагментный шейдер шага 28 с `--printf` печатает для одного пикселя —
+центра окна:
+
+<Snippet src="shaders/debug_printf.slang" />
+
+Один пиксель может напечатать несколько строк — по одной на каждый закрашенный там фрагмент. Поэтому и нужен фильтр по
+пикселю: без `if` печатал бы каждый вызов фрагментного шейдера, а их в этой сцене около 60 000 за кадр (шаг 29 их ниже
+посчитает). Буфер printf у слоя — `printf_buffer_size` байт на буфер команд, по умолчанию 1024: при «about 50 bytes» на
+сообщение, как пишет его манифест, это около 20 сообщений. SPIR-V нужна только возможность `Shader`, а `OpExtInst`
+переживает `-O2` (проверено `spirv-dis` при планировании модуля 12).
+
+Программа строит второй пайплайн, отличающийся только фрагментной стадией, и использует его для кадра 0 — в любом
+запуске это сцена в момент времени 0:
+
+<Step file="28_debug_labels" region="printf-pipeline" />
+
+### Два переключателя, и зачем оба
+
+Настройка слоя называется `printf_enable` и по умолчанию выключена. С одним только
+`VK_KHRONOS_VALIDATION_PRINTF_ENABLE=true` шейдер не напечатал **ничего**. Почему — слой сказал сам, при создании
+instance:
+
+```text
+[WARNING][VALIDATION] vkCreateInstance(): DebugPrintf logs to the Information message severity, enabling Information level logging otherwise the message will not be seen.
+```
+
+Вывод printf идёт в debug messenger с важностью INFO, а messenger курса слушает только WARNING и ERROR (так решил шаг
+02: INFO — это сотня строк loader'а). Вторая настройка, `VK_KHRONOS_VALIDATION_PRINTF_TO_STDOUT=true`, отправляет
+вывод прямо в stdout, о чём слой тоже объявляет («DebugPrintf will skip the debug callback in favor of a direct stdout
+write»). С обеими:
+
+```text
+pixel (400, 300): depth 0.967634, color (0.250000, 0.400000, 0.950000)
+pixel (400, 300): depth 0.966468, color (0.950000, 0.250000, 0.400000)
+```
+
+Два фрагмента в одном пикселе. Первым нарисована синяя грань `+z` куба 0, затем грань куба 1 (тот же цвет грани,
+переставленный swizzle `.brg` в cube.slang) — ближе примерно на 0,001 по глубине, она и выигрывает depth test. Rust и
+C++ напечатали одни и те же две строки. В логе, когда stdout перенаправлен в файл, они оказались после «Window closed»:
+слой и программа пишут в stdout через разные буферы, так что порядок строк в файле — не порядок событий.
+
+Те же переменные окружения можно задать в vkconfig ([шаг 02](lesson:validation#без-кода-vkconfig)). Там второй
+переключатель приходит сам: манифест слоя, из которого vkconfig берёт значения по умолчанию, объявляет
+`printf_to_stdout` равным `true` (`vkconfig settings -g bat` пишет `PRINTF_TO_STDOUT=true`, как только включён
+`printf_enable`). Запуск с переменными окружения выше показывает, что без vkconfig слой эту настройку не включает, пока
+её не зададут явно.
+
+Шейдеры без printf настройка не трогает, а вот устройство — трогает: слой включает возможности, нужные его
+инструментированию, и сообщает об этом при создании устройства:
+
+```text
+[WARNING][VALIDATION] vkCreateDevice(): Warning that validation is adjusting settings:
+	Forcing fragmentStoresAndAtomics to VK_TRUE
+	Forcing vertexPipelineStoresAndAtomics to VK_TRUE
+	Forcing shaderInt64 to VK_TRUE
+	Adding a VkPhysicalDeviceTimelineSemaphoreFeatures to pNext with timelineSemaphore set to VK_TRUE
+	...
+```
+
+(Сокращено: ещё модель памяти Vulkan, buffer device address, scalar block layout, 8- и 16-битное хранение.) Значит,
+программа, которую отлаживают через printf, работает на устройстве с бо́льшим набором возможностей, чем то, с которым
+она уйдёт к пользователю. Цену в частоте кадров здесь измерить не удалось: по три чередующихся запуска по 3 с на каждый
+вариант (без всего; printf-пайплайн без настройки; настройка без printf-пайплайна; оба) дали в сумме 1142–1948 fps, и
+диапазоны всех вариантов перекрываются. Эта программа не упирается в GPU — не читайте это как «printf бесплатен».
+
+### GPU-assisted validation
+
+printf отвечает на вопрос «какое тут значение?». Второй вопрос о работающем шейдере — «законен ли этот доступ?» — к
+[GPU-assisted validation](term:gpu-av), режиму того же слоя (`VK_KHRONOS_VALIDATION_GPUAV_ENABLE=true`), который
+инструментирует шейдеры, чтобы проверять их обращения к памяти и дескрипторам прямо на GPU. Курс уже пользовался им в
+уроке о [buffer device address](lesson:buffer-device-address#у-указателя-нет-размера): там он поймал чтение за концом
+буфера, о котором знал только указатель. Стоит он, как правило, дороже printf (здесь не измерялось), а возможности
+устройства подправляет так же.
+
+## Запросы: GPU измеряет себя сам
+
+Своими часами CPU работу GPU не измерит: `vkQueueSubmit2` возвращается задолго до начала работы, а fence
+сигналится через какое-то время после её конца. Числа должен записать сам GPU — в [пул запросов](term:query-pool)
+(query pool): массив слотов одного типа запроса, которые заполняют команды, пока GPU их исполняет, и которые хост
+читает, когда эта работа завершена. Шаг 29 использует два типа.
+
+<Step file="29_gpu_queries" region="cli" />
+
+<Step file="29_gpu_queries" region="queries" />
+
+Четыре [timestamp](term:timestamp-query) за кадр ограничивают три отрезка: барьеры, готовящие attachments, main pass и
+барьер в `PRESENT_SRC_KHR`. Один [запрос статистики пайплайна](term:pipeline-statistics-query) (pipeline statistics)
+за кадр считает, что пайплайн сделал за время рендеринга, — шесть счётчиков в одном результате.
+
+### Что должно уметь устройство
+
+<Step file="29_gpu_queries" region="pick-device" />
+
+Timestamps требуют семейства очередей с `timestampValidBits > 0` (на GPU курса — 64 бита у семейства 0); запись
+timestamp из семейства без них — это `VUID-vkCmdWriteTimestamp2-timestampValidBits-03863`. Статистика пайплайна —
+необязательная возможность Vulkan 1.0, `pipelineStatisticsQuery` (без неё —
+`VUID-VkQueryPoolCreateInfo-queryType-00791`). Сброс запросов с хоста требует `hostQueryReset`
+(`VUID-vkResetQueryPool-None-02665`), а это возможность Vulkan 1.2, которую обязано поддерживать любое устройство 1.2+:
+на устройстве 1.4 проверка в `pick-device` провалиться не может, важно лишь её включить. Включены обе:
+
+<Step file="29_gpu_queries" region="device" />
+
+### Пулы, сброс на хосте
+
+<Step file="29_gpu_queries" region="query-pools" />
+
+Пул хранит один тип запроса, поэтому пулов два. Прежде чем команда запишет запрос, он должен быть *недоступен*
+(сброшен): `VUID-vkCmdWriteTimestamp2-None-03864`, `VUID-vkCmdBeginQuery-None-00807`. Шаг 12 сбрасывал свои timestamps
+командой `vkCmdResetQueryPool` в начале каждого буфера команд; шаг 29 сбрасывает их на хосте через `vkResetQueryPool`
+сразу после чтения — и в буфере команд остаются только сами измерения.
+
+### Запись timestamps
+
+<Step file="29_gpu_queries" region="record" />
+
+Timestamp пишется не «сейчас», а тогда, когда всё, что было до него, дошло до указанной стадии. Поэтому
+`ALL_COMMANDS` отмечает конец всей предыдущей работы, а `TOP_OF_PIPE` — начало. И раз реализация «may write the
+timestamp at any stage that is logically later than stage», интервал между двумя timestamps приблизителен: любой из
+концов мог быть записан позже стадии, которую он называет, так что интервал может выйти и длиннее, и короче работы
+между ними. Ту же оговорку делали уроки о [compute-пайплайнах](lesson:compute-pipelines) и
+[async compute](lesson:async-compute#timestamps-из-двух-очередей). Значения — это тики по `timestampPeriod` наносекунд
+(на GPU курса — 1 нс), и значимы только младшие `timestampValidBits` бит; поэтому `ticks_between` в регионе `queries`
+вычитает по модулю 2^bits.
+
+### Чтение результатов
+
+<Step file="29_gpu_queries" region="read-results" />
+
+Программа читает запросы слота только после ожидания fence этого слота, так что `WAIT` возвращается сразу. В функции
+две части, о которых следующие разделы: задержка от submit до старта и статистика кадра 0.
+
+## Статистика пайплайна: считать, а не засекать
+
+Timestamp отвечает «как долго», запрос статистики — «сколько». Шаг 29 запрашивает шесть счётчиков и для кадра 0
+печатает их рядом с тем, что можно предсказать по сцене: 24 вершины и 36 индексов на куб, кубов два. Кадр 0 всегда
+показывает сцену в момент 0, поэтому его числа одинаковы в каждом запуске — и одинаковы в обоих языках:
+
+```text
+Pipeline statistics of frame 0 (scene at time 0), measured / predicted:
+  input assembly vertices        72 / 72 = 36 indices x 2 instances
+  input assembly primitives      24 / 24 = triangles of the index list
+  vertex shader invocations      48 / 48..72 if each index is shaded at most once; reuse is implementation-dependent
+  clipping invocations           24 / 24: every triangle reaches clipping (culling comes later)
+  clipping primitives            24 / at least 1 per triangle with a vertex inside the clip volume (culled or covering a sample)
+  fragment shader invocations  60794 / no formula: covered pixels (helper invocations may count), minus what early tests reject
+```
+
+Что спецификация гарантирует для каждого счётчика, а что оставляет реализации:
+
+| Счётчик | Кадр 0 | Спецификация | Значит |
+|---|---|---|---|
+| input assembly vertices | 72 | «the number of vertices processed by the input assembly stage» | точно: 36 индексов × 2 экземпляра |
+| input assembly primitives | 24 | «the number of primitives processed by the input assembly stage» | точно: 12 треугольников × 2 |
+| vertex shader invocations | 48 | увеличивается «each time a vertex shader is invoked»; реализация «may reuse the results of vertex shading if it can statically determine that the vertex shader invocations will produce identical results» | от 48 до 72, если каждый индекс шейдится не больше одного раза: 48 — это каждая из 24 различных вершин по разу на экземпляр; GPU, который повторно прогоняет геометрию, может насчитать больше. NVIDIA переиспользовал каждый повторный индекс |
+| clipping invocations | 24 | увеличивается «each time a primitive reaches the primitive clipping stage» | все 24 треугольника, задние грани тоже: culling происходит при растеризации, уже после clipping |
+| clipping primitives | 24 | для примитива, у которого хотя бы одна вершина внутри clip volume и который либо не растеризуется (в том числе отброшенная задняя грань), либо покрывает сэмпл: «incremented by one or more»; «Otherwise, the counter is incremented by zero or more» | не меньше 1 на такой треугольник — отброшен он culling'ом или закрасил пиксели; драйвер насчитал ровно по одному на треугольник, что условиям не противоречит |
+| fragment shader invocations | 60794 | увеличивается «each time the fragment shader is invoked» | формулы нет: зависит от покрытия, от того, что ранний depth test отбросит до шейдинга, и от того, как реализация считает helper invocations |
+
+Спецификация говорит и о том, зачем всё это: «These values are intended to measure relative statistics on one
+implementation. Various device architectures will count these values differently.» Тайловый мобильный GPU может
+посчитать что-то из этого не один раз (это собственный пример спецификации). Так что счётчики отвечают на вопрос
+«уменьшила ли моя правка вызовы вершинного шейдера вдвое на этом GPU?», а не «сколько их делает Vulkan?». Число
+фрагментов в следующих кадрах — его среднее печатается раз в секунду как «FS invocations» — гуляло примерно от 57 000
+до 64 000, пока кубы вращались, в запусках для таблицы ниже и дошло до 70 081 в одну из секунд более позднего запуска.
+
+## Калиброванные timestamps: тики GPU на шкале CPU
+
+Timestamps устройства хорошо меряют интервалы на GPU, но идут они по часам GPU. Чтобы спросить «через сколько после
+`vkQueueSubmit2` GPU начал этот кадр?», CPU нужно показание часов GPU в момент submit'а. Чтобы положить работу GPU на
+шкалу CPU-профайлера, нужно больше: связать двое часов между собой. И то и другое дают
+[калиброванные timestamps](term:calibrated-timestamps) (`VK_KHR_calibrated_timestamps`): один вызов снимает показания
+нескольких часов — каждые из них называются [временным доменом](term:time-domain) (time domain) — настолько
+одновременно, насколько реализация способна.
+
+<Step file="29_gpu_queries" region="calibration" />
+
+### Какие часы
+
+<Step file="29_gpu_queries" region="time-domains" />
+
+На машине курса:
+
+```text
+Calibrateable time domains: DEVICE, QUERY_PERFORMANCE_COUNTER, PRESENT_STAGE_LOCAL_EXT
+Calibration pairs DEVICE with QUERY_PERFORMANCE_COUNTER
+```
+
+Значения `VK_TIME_DOMAIN_DEVICE_KHR` «are comparable with device timestamp values captured using vkCmdWriteTimestamp
+or vkCmdWriteTimestamp2» (спецификация) — это часы запросов из предыдущих разделов. `QUERY_PERFORMANCE_COUNTER` — это
+`QueryPerformanceCounter` Windows, часы, которыми обычно пользуется CPU-профайлер на Windows.
+`PRESENT_STAGE_LOCAL_EXT` принадлежит одному swapchain и одной стадии present и сравним только сам с собой; здесь он не
+нужен. Каждый домен, переданный в вызов, должен быть из сообщённого списка
+(`VUID-VkCalibratedTimestampInfoKHR-timeDomain-02354`), и ни один домен не может встретиться в одном вызове дважды
+(`VUID-vkGetCalibratedTimestampsKHR-timeDomain-09246`).
+
+### Снимаем оба показания у submit'а
+
+<Step file="29_gpu_queries" region="calibrate" />
+
+Вызов возвращает два значения и `maxDeviation` — «the strictly positive maximum deviation, in nanoseconds, of the
+calibrated timestamp values»: насколько далеко друг от друга в реальном времени могли быть сняты два показания. На этой
+машине в среднем за секунду вызовов выходило 2,0–2,5 мкс, а в секунды, когда частота GPU падала, — до 2,7–3,2 мкс (о
+частоте ниже). Решать, достаточно ли этого, спецификация оставляет приложению: если нет — вызвать ещё раз в надежде на
+меньшее значение.
+
+Показание устройства снимается прямо перед `vkQueueSubmit2`, а первый timestamp кадра GPU пишет, когда начинает буфер
+команд. Оба — тики устройства, так что разность между ними — время от вызова submit до старта работы на GPU: строка
+`latency` в `read-results` выше, `us(c.device, t0)`. В неё входят стоимость самого вызова submit на CPU, работа
+драйвера по передаче пакета GPU и любая очередь, накопившаяся перед ним. Ожидание изображения swapchain входить не
+должно: семафор изображения ждут на `COLOR_ATTACHMENT_OUTPUT`, первый timestamp стоит на `TOP_OF_PIPE`, да и в режиме
+MAILBOX изображение обычно доступно сразу. Но, как сказано выше, реализация может записать этот timestamp на более
+поздней стадии, а эти запуски одно от другого не отличают. Так что читайте число как верхнюю оценку времени от submit до
+старта.
+
+### Что печатает шаг 29
+
+```text
+Window: 800x600 pixels
+Picked: NVIDIA GeForce RTX 3080 Ti, graphics + present family 0
+Timestamps: timestampPeriod 1 ns per tick, 64 valid bits on family 0
+Calibrateable time domains: DEVICE, QUERY_PERFORMANCE_COUNTER, PRESENT_STAGE_LOCAL_EXT
+Calibration pairs DEVICE with QUERY_PERFORMANCE_COUNTER
+Swapchain: 800x600 B8G8R8A8_SRGB, MAILBOX, 3 images; 2 frame(s) in flight
+Query pools: 8 timestamps (4 per frame slot), 2 pipeline statistics queries (6 counters); reset on the host
+Rendering. Close the window to exit.
+Pipeline statistics of frame 0 (scene at time 0), measured / predicted:
+  ...
+[timing] 1s: 1478 frames, GPU us per frame: attachments 0.0, main pass 8.0, to present 0.0, whole 8.0; submit -> GPU start 93.9 us (min 47.6, max 651.8), maxDeviation 2.2 us; FS invocations 62380
+[timing] 2s: 1357 frames, GPU us per frame: attachments 0.0, main pass 8.1, to present 0.0, whole 8.1; submit -> GPU start 108.0 us (min 46.5, max 644.3), maxDeviation 2.2 us; FS invocations 63983
+[timing] 3s: 1232 frames, GPU us per frame: attachments 0.0, main pass 11.0, to present 0.0, whole 11.0; submit -> GPU start 121.8 us (min 46.4, max 706.4), maxDeviation 2.2 us; FS invocations 61620
+[timing] 4s: 1303 frames, GPU us per frame: attachments 0.0, main pass 13.8, to present 0.0, whole 13.8; submit -> GPU start 141.5 us (min 51.2, max 1147.1), maxDeviation 2.3 us; FS invocations 57972
+[timing] 5s: 1408 frames, GPU us per frame: attachments 0.0, main pass 16.4, to present 0.0, whole 16.4; submit -> GPU start 223.1 us (min 50.6, max 3753.7), maxDeviation 2.7 us; FS invocations 57445
+[timing] 6s: 1231 frames, GPU us per frame: attachments 0.0, main pass 11.7, to present 0.0, whole 11.7; submit -> GPU start 294.7 us (min 46.7, max 3809.2), maxDeviation 2.4 us; FS invocations 70081
+Window closed
+[timing] 8011 frames in 6.0 s, 1333 fps
+[timing] whole run: 8011 frames, GPU us per frame: attachments 0.0, main pass 11.5, to present 0.0, whole 11.5; submit -> GPU start 161.9 us (min 46.4, max 3809.2), maxDeviation 2.3 us; FS invocations 62135
+[timing] QUERY_PERFORMANCE_COUNTER: 9999714 ticks per second of device time (over 5.99 s)
+```
+
+(Rust, release, `--seconds 6` — тот самый запуск, за которым следил `nvidia-smi`, см. ниже; блок статистики приведён
+выше. C++ напечатал те же строки, кроме `[timing]`.)
+
+Измерения 2026-10-11: release-сборки обоих языков, валидация включена, синхронизационная валидация выключена, по три
+чередующихся запуска по 4 с на язык, настройки по умолчанию (2 кадра в полёте, MAILBOX). Машина занята и другой
+работой, так что разброс — часть результата:
+
+| Весь запуск | Диапазон по 6 запускам |
+|---|---|
+| время main pass на GPU | 10,5–13,4 мкс на кадр (среднее по меняющейся частоте GPU, см. ниже) |
+| attachments / to present | 0.0 мкс в каждом запуске (печатается с одним знаком: меньше 0,05 мкс) |
+| submit → старт на GPU, среднее | 70,3–77,5 мкс |
+| submit → старт на GPU, минимум / максимум | 46,1–50,1 мкс / 1,4–2,4 мс |
+| maxDeviation, среднее | 2,2–2,5 мкс |
+| тиков QPC на секунду времени устройства | 9999690–9999720 |
+| кадров в секунду | 1457–2070 |
+
+Сколько длится main pass, зависит от частоты GPU, а частота не постоянна. Это показал 6-секундный запуск Rust-сборки,
+рядом с которым `nvidia-smi --query-gpu=clocks.gr,pstate --format=csv -lms 500` снимал показания: при старте программы
+GPU перешёл из простоя (P8, 210 МГц) в P2 на 1665 МГц, и посекундные строки показали main pass 8,0 и 8,1 мкс. Примерно
+через 3 с, видя, как мало работы, драйвер стал ступенями снижать частоту (P3 на 1035–840 МГц, потом P5 на 750–690 МГц),
+и main pass вырос до 11,0, 13,8 и 16,4 мкс; в последнюю секунду частота снова поднялась, и main pass показал 11,7 мкс.
+Средние за весь запуск в таблице смешивают эти состояния. Как ни считай, GPU работает примерно 8–16 мкс за кадр, а кадр длится 0,5–1 мс: эту программу ограничивают CPU и показ, а не GPU.
+
+Отправленная работа ждёт старта на GPU как минимум около 50 мкс, в запусках из таблицы — в среднем 70–80 мкс (и 162 мкс
+в том позднем 6-секундном запуске), хотя GPU почти всё время простаивает. Этот пол — цена одного прохода через драйвер
+и планировщик GPU операционной системы, и одна из причин, почему движки отправляют несколько больших пакетов, а не
+много мелких. Изредка кадр ждал две миллисекунды и больше; что вызывало эти выбросы, не измерялось.
+
+### Двое часов расходятся
+
+<Step file="29_gpu_queries" region="host-clock" />
+
+`QueryPerformanceCounter` на этой машине тикает с частотой 10 МГц (`QueryPerformanceFrequency` = 10000000), значит,
+одна секунда времени устройства должна равняться 10 000 000 тиков QPC. Между первой и последней калибровкой программа
+насчитала 9 999 690–9 999 720: часы расходятся примерно на 30 миллионных долей (ppm). Ни одни не «правильные» — это
+просто два разных кварца. Тридцать ppm — это 30 мкс в секунду и 1,8 мс в минуту: в длинной трассе достаточно, чтобы
+событие GPU оказалось рядом не с тем событием CPU. Отсюда совет спецификации: экстраполяция калиброванных значений «over
+a sufficiently long period of time may no longer be accurate enough ... so applications are expected to re-calibrate
+the timestamps on a regular basis». Шаг 29 калибрует при каждом submit'е, потому что его строке latency нужно
+показание часов устройства ровно в этот момент. Программе, которой надо лишь положить timestamps GPU на шкалу CPU,
+хватит калибровки пореже; как часто — следует из дрейфа и нужной точности (при 30 ppm калибровка раз в секунду держит
+ошибку экстраполяции около 30 мкс).
+
+## Куда смотреть дальше: инструменты
+
+Всё выше — то, что программа может сделать для себя сама. Инструменты читают те же сведения снаружи; им будут
+посвящены отдельные уроки, а здесь — с чего начать.
+
+- **[RenderDoc](https://renderdoc.org/)** — инструмент [захвата кадра](term:frame-capture). Он записывает все вызовы
+  API одного кадра вместе с ресурсами, которые они используют, и воспроизводит их: список событий, состояние пайплайна,
+  текстуры, буферы, меши, отладка шейдеров. Нужен **RenderDoc 1.46 или новее**: курсу требуется поддержка Vulkan 1.4 в
+  его слое захвата. Курс захватил им шаг 28 2026-10-11 (portable-сборка RenderDoc 1.46):
+  `renderdoccmd capture -w -c <folder>\cap28 28_debug_labels.exe --seconds 12` запускает программу со слоем захвата, а
+  F12 в окне программы записал кадр 885 в файл `.rdc` размером 176 844 байта. Под слоем устройство сообщало Vulkan 1.4
+  (apiVersion 1.4.351). После конвертации в XML
+  (`renderdoccmd convert -f cap28_frame885.rdc -o cap28.xml -c xml`) в захвате нашлись все восемь меток этого кадра
+  («frame», «attachments», «main pass», «cube 0», «cube 1», «to present», метка очереди «frame 885» и вставленная
+  «present») и 28 из 40 имён объектов — от «instance» и «device» до «cube pipeline» и uniform-буфера, набора
+  дескрипторов и семафоров слота кадра 1. Не хватает двенадцати: «window surface», «swapchain view 1», «swapchain view
+  2», «frame 0 scene uniforms», «frame 0 scene memory», «frame 0 descriptor set», «frame 0 command buffer», «frame 1
+  command buffer», «frame 0 image available», «frame 0 in flight», «render finished 1» и «render finished 2». Почему
+  именно этих, не исследовалось; простым «что кадр использовал» это не объяснить — кадр записывался в буфер команд,
+  чьего имени в захвате нет. Опция захвата RenderDoc «Ref All Resources» (`--opt-ref-all-resources` у
+  `renderdoccmd capture`) включает и ресурсы, на которые кадр не ссылается; её не пробовали.
+- **[Nsight Systems](https://developer.nvidia.com/nsight-systems)** — общесистемная временная шкала потоков CPU,
+  вызовов API и работы GPU. Метки видны с `nsys profile --trace=vulkan,vulkan-annotations ...`: на 2-секундном запуске
+  шага 28 сводка GPU-маркеров в отчёте перечислила метки буфера команд («main pass», «cube 0», ...) с их длительностью
+  на GPU, а сводка CPU-маркеров — области буфера команд и по области на каждую метку очереди «frame N». С одним
+  `--trace=vulkan` `nsys stats` сообщил, что отчёт «does not contain Vulkan Debug Extension (Vulkan Debug Util) data».
+- **[Nsight Graphics](https://developer.nvidia.com/nsight-graphics)** — отладчик кадров и GPU-профайлер NVIDIA (GPU
+  Trace, профайлер шейдеров). На машине курса пока не установлен, так что ничего здесь им не измерено.
+
+## Карта урока
+
+<MindMap />
+
+## Что под капотом
+
+- **Имена и метки живут в слоях.** `VK_EXT_debug_utils` — расширение instance: его вызовы видят loader и каждый слой
+  между приложением и драйвером. Слой валидации держит таблицу имён, чтобы их цитировать; слой захвата пишет их в
+  захват; драйвер может использовать их для своих инструментов или пропустить. Поэтому же нельзя назвать messenger: его
+  handle существует только в loader'е.
+- **printf и GPU-AV переписывают ваш шейдер.** Слой правит SPIR-V до того, как его скомпилирует драйвер: добавляет код,
+  пишущий в собственный буфер слоя, и читает этот буфер после завершения submit'а. Возможности, которые он
+  принудительно включает при создании устройства, нужны как раз этому добавленному коду. На GPU выполняется не совсем
+  то, что вы написали: для большинства ошибок это неважно, для замеров времени — важно.
+- **Откуда берутся timestamps.** Обычно command processor GPU записывает значение счётчика в память запроса, как только
+  предшествующая работа прошла запрошенную стадию; `timestampPeriod` переводит тики в наносекунды. Все timestamps
+  устройства — в домене DEVICE, поэтому значения из разных очередей сравнимы напрямую (на этом держался урок об async
+  compute). Timestamp отсчитывает реальное время, но сколько работы в это время помещается, зависит от частоты, на
+  которой работает GPU, а её драйвер меняет вслед за нагрузкой (performance states P2, P3 и P5, которые выше показал
+  `nvidia-smi`): лёгкая нагрузка через несколько секунд после старта может мериться вдвое дольше, как main pass шага 29.
+  Сравнивайте замеры только при известной, устоявшейся частоте или под нагрузкой, которая держит GPU на полной частоте.
+- **Статистика — это счётчики в железе.** Обычно блоки фиксированной функциональности и планировщики шейдеров считают
+  по ходу работы, а запрос берёт разность между Begin и End. Поэтому счёт почти ничего не стоит, и поэтому его точный
+  смысл (переиспользование вершин, helper invocations, повторные проходы тайлов) принадлежит архитектуре, как и говорит
+  спецификация.
+
+<Quiz
+	questions={[
+		{
+			q: 'Шаг 28 даёт имена своим объектам. Что меняется в нарисованной картинке?',
+			options: [
+				{
+					text: 'Ничего: имена и метки — сведения для слоя валидации и инструментов',
+					why: 'Верно: программа рисует сцену шага 22 без изменений; слой цитирует имена в сообщениях, а захват их сохраняет.',
+				},
+				{
+					text: 'Драйвер получает имена и лучше компилирует и планирует именованные объекты, чем безымянные',
+					why: 'Такого эффекта нигде не обещано: имена — это строки для того, кто исследует программу.',
+				},
+				{
+					text: 'Метки добавляют работу рендеринга на каждой границе области, поэтому каждый размеченный кадр попадает на экран позже',
+					why: 'Метки — отметки в потоке команд для инструментов; программа рисует и показывает те же кадры, что и шаг 22.',
+				},
+				{
+					text: 'Именованные объекты регистрируются во всей системе, и другие процессы могут найти их по имени',
+					why: 'Имена остаются в слоях этого процесса (и в файле захвата, если его сделать).',
+				},
+			],
+			answer: 0,
+			ref: '#отладка-и-профилирование-две-разные-помощи',
+		},
+		{
+			q: 'С одной только VK_KHRONOS_VALIDATION_PRINTF_ENABLE=true шаг 28 с --printf не напечатал из шейдера ничего. Почему?',
+			options: [
+				{
+					text: 'Slang выбрасывает вызовы printf при оптимизации шейдера, и в SPIR-V не осталось инструкции DebugPrintf',
+					why: 'OpExtInst DebugPrintf переживает даже -O2; с шейдером всё было в порядке.',
+				},
+				{
+					text: 'Вывод printf приходит с важностью INFO, а messenger курса её не слушает',
+					why: 'Верно: слой сам об этом предупредил; PRINTF_TO_STDOUT=true обходит messenger и пишет прямо в stdout.',
+				},
+				{
+					text: 'Пиксель (400, 300) в момент 0 не накрыт ни одним кубом, и условие в шейдере никогда не выполняется',
+					why: 'Он накрыт дважды: с обеими настройками тот же запуск напечатал для этого пикселя две строки.',
+				},
+				{
+					text: 'Драйвер NVIDIA пропускает non-semantic-инструкции',
+					why: 'Драйверы пропускают их по замыслу; слой валидации заменяет инструкцию собственными записями в свой буфер.',
+				},
+			],
+			answer: 1,
+			ref: '#два-переключателя-и-зачем-оба',
+		},
+		{
+			q: 'В кадре 0 было 48 вызовов вершинного шейдера на 72 вершины input assembly. О чём это говорит?',
+			options: [
+				{
+					text: 'Драйвер потерял 24 вершины, и это ошибка',
+					why: 'Ни одна вершина не потеряна: спецификация разрешает реализации переиспользовать результат шейдинга для повторных индексов.',
+				},
+				{
+					text: 'Back-face culling убрал треть вершин ещё до того, как на них запустился вершинный шейдер',
+					why: 'Culling идёт после вершинного шейдера; clipping invocations показывают, что до clipping дошли все 24 треугольника.',
+				},
+				{
+					text: 'Повторные индексы шейдились раз на экземпляр; другой GPU насчитает до 72 или больше',
+					why: 'Верно: переиспользование зависит от реализации. 48–72 — если каждый индекс шейдится не больше раза; GPU, повторно прогоняющий геометрию, может насчитать больше, а спецификация называет счётчики относительной статистикой одной реализации.',
+				},
+				{
+					text: 'Второй экземпляр не шейдился вовсе: его 24 вершины взяли результаты первого экземпляра',
+					why: 'Переиспользование требует одинаковых результатов, а у экземпляров разные матрицы: 48 = 24 различные вершины × 2 экземпляра.',
+				},
+			],
+			answer: 2,
+			ref: '#статистика-пайплайна-считать-а-не-засекать',
+		},
+		{
+			q: 'Зачем шагу 29 калиброванные timestamps, чтобы показать «submit -> GPU start»?',
+			options: [
+				{
+					text: 'Без этого расширения timestamp-запросы нельзя прочитать обратно',
+					why: 'Можно: timestamp-запросы есть в ядре, и шаг 12 читал их безо всяких расширений.',
+				},
+				{
+					text: 'Timestamps действительны только в семействах очередей с 64 битами',
+					why: 'Они есть в любом семействе с timestampValidBits > 0; меньшее число бит программа учитывает вычитанием по модулю.',
+				},
+				{
+					text: 'CPU не может вызвать vkQueueSubmit2, пока пишется timestamp',
+					why: 'Submit и запись timestamps на GPU независимы; submit ничто не блокирует.',
+				},
+				{
+					text: 'Submit происходит на CPU, а timestamps идут по часам GPU: один вызов должен снять показание этих часов у submit',
+					why: 'Верно: показание DEVICE, снятое перед submit, сравнимо с первым timestamp кадра.',
+				},
+			],
+			answer: 3,
+			ref: '#снимаем-оба-показания-у-submitа',
+		},
+	]}
+/>

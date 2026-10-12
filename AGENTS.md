@@ -701,8 +701,28 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
   3 s): GPU attachments 0.0 us, main pass 6.7-10 us, to present 0.0 us; submit -> first timestamp 95-160 us average
   (min ~50-70, max up to 4 ms), maxDeviation ~2.0 us, about the same for --frames 1/2/3 (GPU nearly idle); QPC rate from
   the first and last calibration: 9999702-9999706 ticks per device second (QPC is 10 MHz: the device clock runs ~30 ppm
-  fast against QPC). FS invocations average 61000-64000 per frame. Screenshots
+  fast against QPC). FS invocations average ~57000-64000 per frame (one second of a later run: 70081). Screenshots
   examples/screenshots/{28_debug_labels,29_gpu_queries}.png (Rust release, PrintWindow client area, ~2.5 s in).
+  Review fixes 2026-10-11: printed predictions now say "48..72 if each index is shaded at most once; reuse is
+  implementation-dependent" (48..72 is NOT a spec bound: replaying GPUs may count more) and clipping primitives "at
+  least 1 per triangle with a vertex inside the clip volume (culled or covering a sample)" (spec: "not rasterized" =
+  culled primitives count too); pick-device comment: hostQueryReset is required for every 1.2+ device (spec feature
+  requirements), so the check cannot fail on 1.4, only enabling matters. Rebuilt (fmt/clippy/MSVC clean), stdout
+  identical Rust vs C++ w/o [timing]. Calibration VUIDs: domain must be reported = VkCalibratedTimestampInfoKHR-
+  timeDomain-02354; vkGetCalibratedTimestampsKHR-timeDomain-09246 = each domain unique. GPU CLOCK STATES (nvidia-smi
+  --query-gpu=clocks.gr,pstate -lms 500 alongside a 6 s run, scratchpad m12fix/): idle P8 210 MHz -> P2 1665 MHz at
+  start (main pass 8.0/8.1 us) -> after ~3 s the driver drops to P3 1035-840, P5 750-690 MHz (main pass 11.0, 13.8,
+  16.4 us) -> back up at the end (11.7). Whole-run averages mix clock states; maxDeviation per second 2.2-2.7 us
+  (reviewer saw 3.2). Validation layer manifest: printf_to_stdout default TRUE (vkconfig applies it), printf_buffer_size
+  1024 B per command buffer ("about 50 bytes" per message); with env vars only, stdout redirection stays off.
+  TRAP: `vkconfig settings ...` (SDK Bin/vkconfig.exe CLI) WROTE %LOCALAPPDATA%/LunarG/vulkan/vk_loader_settings.json
+  (HKLM LoaderSettings points there): validation forced "on" for every app + Nsight Systems layers as implicit ->
+  every C++ Vulkan step crashed with 0xC0000005 (Rust survived). Deleted 2026-10-11 17:4x (copy in scratchpad
+  vkcfg/). Never run vkconfig CLI commands other than read-only help; check that file if Vulkan apps misbehave.
+  RenderDoc capture: the 12 names missing from cap28.xml are window surface, swapchain view 1/2, frame 0 scene
+  uniforms/memory/descriptor set, frame 0 + frame 1 command buffer, frame 0 image available/in flight, render
+  finished 1/2 (not "unused objects": frame 1's command buffer was used); "Ref All Resources" (--opt-ref-all-resources)
+  not tried.
 - pipeline-stats probe (2026-10-11, for tools/occupancy-and-registers): `tools/vk-probe` binary `pipeline-stats`,
   shader `tools/vk-probe/shaders/pressure.slang` (+ committed .spv, embedded with include_bytes!; entry points p8..p256 =
   N floats in a fully unrolled local array, 8 rounds; d64 = 64 floats indexed at run time = local memory control),
@@ -752,7 +772,9 @@ Current plan (2026-10-11), in order:
   (`renderdoccmd capture -w -c <dir>\cap28 28_debug_labels.exe --seconds 12`, F12 sent to the window): frame 885,
   176844 bytes, device apiVersion 1.4.351 under the layer; `renderdoccmd convert -c xml`: all 8 labels of the frame
   and 28 of 40 names (frame-slot-1 objects, view 0, instance/device/queue...; not frame slot 0, views 1-2, surface,
-  command buffers). [ ] Independent review of the lesson; RU lesson.
+  command buffers). [x] Independent review of the EN lesson, fixes applied 2026-10-11 (19 points; see State
+  "examples 28-29" review fixes). [x] RU lesson written 2026-10-11 (authored; same Steps/Shots/VUIDs/outputs/quiz facts;
+  anchors checked in dist). [ ] Independent review of the RU lesson.
 - [ ] Step 32 (mesh shaders): avoid user per-primitive outputs (Slang 2026.1 bugs, State "Module 12 shader check") or
   post-process the SPIR-V like decorateNonUniform; try a newer Slang before deciding.
 - [ ] 28 --printf: VK_EXT_layer_settings (printf_enable + printf_to_stdout set by the program) would remove the two env

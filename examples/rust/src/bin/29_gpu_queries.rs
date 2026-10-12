@@ -589,8 +589,10 @@ impl Vk {
         let devices = unsafe { instance.enumerate_physical_devices()? };
         // #region pick-device
         // Steps 03 + 06, plus what this step needs: the hostQueryReset feature
-        // (Vulkan 1.2) and pipelineStatisticsQuery (Vulkan 1.0, optional); a
-        // graphics family whose timestamps are valid (timestampValidBits > 0).
+        // (every Vulkan 1.2+ device supports it, so on 1.4 the check documents
+        // the requirement and only enabling it matters) and pipelineStatisticsQuery
+        // (Vulkan 1.0, optional); a graphics family whose timestamps are valid
+        // (timestampValidBits > 0).
         // VK_KHR_calibrated_timestamps is used when the device has it.
         let mut best: Option<(u32, vk::PhysicalDevice, u32)> = None;
         for &pd in &devices {
@@ -1261,7 +1263,7 @@ impl Vk {
                     indices / 3
                 );
                 println!(
-                    "  vertex shader invocations  {vs:>6} / {}..{indices}: reuse of repeated indices is implementation-dependent",
+                    "  vertex shader invocations  {vs:>6} / {}..{indices} if each index is shaded at most once; reuse is implementation-dependent",
                     VERTICES.len() as u64 * u64::from(INSTANCES)
                 );
                 println!(
@@ -1269,7 +1271,7 @@ impl Vk {
                     indices / 3
                 );
                 println!(
-                    "  clipping primitives        {clip_out:>6} / at least 1 per triangle with a vertex inside the clip volume that covers a sample, 0 or more otherwise"
+                    "  clipping primitives        {clip_out:>6} / at least 1 per triangle with a vertex inside the clip volume (culled or covering a sample)"
                 );
                 println!(
                     "  fragment shader invocations{fs:>7} / no formula: covered pixels (helper invocations may count), minus what early tests reject"

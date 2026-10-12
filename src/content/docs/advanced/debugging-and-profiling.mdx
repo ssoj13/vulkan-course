@@ -185,8 +185,10 @@ after the submission completes. Step 28's `--printf` fragment shader prints for 
 <Snippet src="shaders/debug_printf.slang" />
 
 One pixel can print several lines, one per fragment shaded there. That is the reason to filter by pixel: without the
-`if`, 800 x 600 pixels would print tens of thousands of lines per frame. The SPIR-V needs only the `Shader`
-capability, and the `OpExtInst` survives `-O2` (checked with `spirv-dis` when module 12 was planned).
+`if`, every fragment shader invocation would print, about 60,000 per frame in this scene (step 29 counts them below),
+while the layer's printf buffer holds `printf_buffer_size` bytes per command buffer, 1024 by default: about 20
+messages, at the "about 50 bytes" per message its manifest states. The SPIR-V needs only the `Shader` capability, and
+the `OpExtInst` survives `-O2` (checked with `spirv-dis` when module 12 was planned).
 
 The program builds a second pipeline that differs only in its fragment stage, and uses it for frame 0, whose scene is
 the scene at time 0 in every run:
@@ -218,6 +220,9 @@ two lines. In the log, with stdout redirected to a file, they came after "Window
 write to stdout through different buffers, so the order of lines in a file is not the order of events.
 
 The same environment variables can be set in vkconfig instead ([step 02](lesson:validation#no-code-use-vkconfig)).
+There the second switch comes along by itself: the layer's manifest, from which vkconfig takes its defaults, declares
+`printf_to_stdout` as `true` (`vkconfig settings -g bat` writes `PRINTF_TO_STDOUT=true` once `printf_enable` is on),
+while the environment-variable run above shows that without vkconfig the layer leaves it off until it is set.
 Shaders without printf are unaffected by the setting, but the device is not: the layer enables features it needs for
 its instrumentation and says so at device creation:
 
@@ -242,7 +247,8 @@ printf answers "what is this value?". The other question about a running shader,
 [GPU-assisted validation](term:gpu-av), a mode of the same layer (`VK_KHRONOS_VALIDATION_GPUAV_ENABLE=true`) that
 instruments shaders to check their memory and descriptor accesses on the GPU. The course used it in
 [buffer device address](lesson:buffer-device-address#a-pointer-has-no-size), where it caught a read past the end of a
-buffer that only a pointer knew about. It costs much more than printf and adjusts device features the same way.
+buffer that only a pointer knew about. It typically costs more than printf (not measured here) and adjusts device
+features the same way.
 
 ## Queries: the GPU measures itself
 
@@ -266,7 +272,9 @@ per frame counts what the pipeline did during the rendering, six counters in one
 Timestamps need a queue family with `timestampValidBits > 0` (on the course GPU: 64 bits on family 0); writing one
 from a family without them is `VUID-vkCmdWriteTimestamp2-timestampValidBits-03863`. Pipeline statistics are an optional
 Vulkan 1.0 feature, `pipelineStatisticsQuery` (`VUID-VkQueryPoolCreateInfo-queryType-00791` without it), and resetting
-queries from the host needs `hostQueryReset` (Vulkan 1.2, `VUID-vkResetQueryPool-None-02665`). Both are enabled:
+queries from the host needs `hostQueryReset` (`VUID-vkResetQueryPool-None-02665`). That one is a Vulkan 1.2 feature
+every 1.2+ device must support, so on a 1.4 device the check in `pick-device` cannot fail; what matters is enabling
+it. Both are enabled:
 
 <Step file="29_gpu_queries" region="device" />
 
@@ -285,8 +293,9 @@ right after reading them, so the command buffer contains only the measurements.
 
 A timestamp is not written "now" but when everything before it has reached the given stage. `ALL_COMMANDS` therefore
 marks the end of all preceding work, `TOP_OF_PIPE` the start; and since an implementation "may write the timestamp at
-any stage that is logically later than stage", an interval between two timestamps approximates the work between them,
-never shorter than its start would allow. The [compute pipelines](lesson:compute-pipelines) and
+any stage that is logically later than stage", an interval between two timestamps is approximate: either end may have
+been written later than the stage it names, so the interval can come out longer or shorter than the work between them.
+The [compute pipelines](lesson:compute-pipelines) and
 [async compute](lesson:async-compute#timestamps-from-two-queues) lessons made the same caveat; the values are ticks of
 `timestampPeriod` nanoseconds (1 ns on the course GPU), and only the low `timestampValidBits` count, which is why
 `ticks_between` in the `queries` region subtracts modulo 2^bits.
@@ -308,9 +317,9 @@ the scene at time 0, so its counts are the same in every run, and they were the 
 Pipeline statistics of frame 0 (scene at time 0), measured / predicted:
   input assembly vertices        72 / 72 = 36 indices x 2 instances
   input assembly primitives      24 / 24 = triangles of the index list
-  vertex shader invocations      48 / 48..72: reuse of repeated indices is implementation-dependent
+  vertex shader invocations      48 / 48..72 if each index is shaded at most once; reuse is implementation-dependent
   clipping invocations           24 / 24: every triangle reaches clipping (culling comes later)
-  clipping primitives            24 / at least 1 per triangle with a vertex inside the clip volume that covers a sample, 0 or more otherwise
+  clipping primitives            24 / at least 1 per triangle with a vertex inside the clip volume (culled or covering a sample)
   fragment shader invocations  60794 / no formula: covered pixels (helper invocations may count), minus what early tests reject
 ```
 
@@ -320,21 +329,23 @@ What the spec guarantees for each, and what it leaves to the implementation:
 |---|---|---|---|
 | input assembly vertices | 72 | "the number of vertices processed by the input assembly stage" | exact: 36 indices x 2 instances |
 | input assembly primitives | 24 | "the number of primitives processed by the input assembly stage" | exact: 12 triangles x 2 |
-| vertex shader invocations | 48 | incremented "each time a vertex shader is invoked"; the implementation "may reuse the results of vertex shading if it can statically determine that the vertex shader invocations will produce identical results" | anywhere from 48 (each of the 24 distinct vertices once per instance) to 72; NVIDIA reused every repeated index |
+| vertex shader invocations | 48 | incremented "each time a vertex shader is invoked"; the implementation "may reuse the results of vertex shading if it can statically determine that the vertex shader invocations will produce identical results" | 48 to 72 if each index is shaded at most once: 48 = each of the 24 distinct vertices once per instance; a GPU that replays geometry may count more. NVIDIA reused every repeated index |
 | clipping invocations | 24 | incremented "each time a primitive reaches the primitive clipping stage" | all 24 triangles, back faces included: culling happens in rasterization, after clipping |
-| clipping primitives | 24 | for a primitive with at least one vertex inside the clip volume that is not rasterized or covers a sample: "incremented by one or more"; "Otherwise, the counter is incremented by zero or more" | at least 1 per qualifying triangle; the driver counted one per triangle, which the conditions allow |
+| clipping primitives | 24 | for a primitive with at least one vertex inside the clip volume that is either not rasterized (culled back faces included) or covers a sample: "incremented by one or more"; "Otherwise, the counter is incremented by zero or more" | at least 1 per such triangle, whether it was culled or drew pixels; the driver counted one per triangle, which the conditions allow |
 | fragment shader invocations | 60794 | incremented "each time the fragment shader is invoked" | no formula: it depends on coverage, on what the early depth test rejects before shading, and on how the implementation counts helper invocations |
 
 The spec also says what all of these are for: "These values are intended to measure relative statistics on one
 implementation. Various device architectures will count these values differently." A tile-based mobile GPU may count
 some of them more than once (the spec's own example). So the counters answer "did my change halve the vertex shader
 invocations on this GPU?", not "how many does Vulkan do?". The fragment count of later frames, printed per second as
-"FS invocations", moved between 61000 and 64000 as the cubes rotated.
+"FS invocations", averaged between about 57,000 and 64,000 per second as the cubes rotated in the runs measured for the table below,
+and 70,081 in one second of a later run.
 
 ## Calibrated timestamps: GPU ticks on the CPU timeline
 
 Device timestamps measure GPU intervals well, but they are on the GPU's clock. To ask "how long after `vkQueueSubmit2`
-did the GPU start this frame?", the two clocks have to be related. That is
+did the GPU start this frame?", the CPU needs a reading of the GPU's clock at the moment of the submit. To put GPU work
+on the timeline of a CPU profiler, it needs more: the two clocks related to each other. Both come from
 [calibrated timestamps](term:calibrated-timestamps) (`VK_KHR_calibrated_timestamps`): one call samples several clocks,
 each a [time domain](term:time-domain), as close to simultaneously as the implementation can.
 
@@ -355,22 +366,28 @@ Calibration pairs DEVICE with QUERY_PERFORMANCE_COUNTER
 vkCmdWriteTimestamp2" (spec): the clock of the queries above. `QUERY_PERFORMANCE_COUNTER` is Windows'
 `QueryPerformanceCounter`, the clock a CPU profiler on Windows typically uses. `PRESENT_STAGE_LOCAL_EXT` belongs to one
 swapchain and present stage and is comparable only with itself; it is not used here. Every domain passed to the call
-must be one of the reported ones (`VUID-vkGetCalibratedTimestampsKHR-timeDomain-09246`).
+must be one of the reported ones (`VUID-VkCalibratedTimestampInfoKHR-timeDomain-02354`), and no domain may appear
+twice in one call (`VUID-vkGetCalibratedTimestampsKHR-timeDomain-09246`).
 
 ### Sampling both clocks at the submit
 
 <Step file="29_gpu_queries" region="calibrate" />
 
 The call returns the two values and `maxDeviation`, "the strictly positive maximum deviation, in nanoseconds, of the
-calibrated timestamp values": how far apart in real time the two samples may have been taken. On this machine it was
-2.0 - 2.5 us per call. The spec leaves it to the application to decide whether that is good enough, and to call again
+calibrated timestamp values": how far apart in real time the two samples may have been taken. On this machine it
+averaged 2.0 - 2.5 us over a second of calls, and up to 2.7 - 3.2 us in seconds when the GPU clocks had dropped (see
+below).
+The spec leaves it to the application to decide whether that is good enough, and to call again
 for a smaller one if not.
 
 The device value is taken right before `vkQueueSubmit2`, and the frame's first timestamp is written by the GPU when it
 begins the command buffer. Both are device ticks, so their difference is the time between the submit call and the GPU
-starting the work: the `latency` line of `read-results` above, `us(c.device, t0)`. It includes the CPU's own cost of the submit call, the driver's work to hand the batch to the GPU and any queue
-backlog; it excludes the wait for the swapchain image, because the image's semaphore is waited at
-`COLOR_ATTACHMENT_OUTPUT` and the first timestamp is at `TOP_OF_PIPE`.
+starting the work: the `latency` line of `read-results` above, `us(c.device, t0)`. It includes the CPU's own cost of
+the submit call, the driver's work to hand the batch to the GPU and any queue backlog. It should not include the wait
+for the swapchain image: the image's semaphore is waited at `COLOR_ATTACHMENT_OUTPUT`, the first timestamp is at
+`TOP_OF_PIPE`, and with MAILBOX an image is normally available at once anyway. But the implementation may write that
+timestamp at a later stage, as above, and these runs cannot tell the two apart; read the number as an upper bound on
+the submit-to-start time.
 
 ### What step 29 prints
 
@@ -385,16 +402,20 @@ Query pools: 8 timestamps (4 per frame slot), 2 pipeline statistics queries (6 c
 Rendering. Close the window to exit.
 Pipeline statistics of frame 0 (scene at time 0), measured / predicted:
   ...
-[timing] 1s: 1815 frames, GPU us per frame: attachments 0.0, main pass 7.2, to present 0.0, whole 7.2; submit -> GPU start 65.5 us (min 49.5, max 439.0), maxDeviation 2.0 us; FS invocations 62353
-[timing] 2s: 1710 frames, GPU us per frame: attachments 0.0, main pass 7.3, to present 0.0, whole 7.4; submit -> GPU start 67.4 us (min 49.3, max 284.9), maxDeviation 2.0 us; FS invocations 63911
-[timing] 3s: 1937 frames, GPU us per frame: attachments 0.0, main pass 8.5, to present 0.0, whole 8.5; submit -> GPU start 65.9 us (min 49.7, max 1009.5), maxDeviation 2.1 us; FS invocations 62089
+[timing] 1s: 1478 frames, GPU us per frame: attachments 0.0, main pass 8.0, to present 0.0, whole 8.0; submit -> GPU start 93.9 us (min 47.6, max 651.8), maxDeviation 2.2 us; FS invocations 62380
+[timing] 2s: 1357 frames, GPU us per frame: attachments 0.0, main pass 8.1, to present 0.0, whole 8.1; submit -> GPU start 108.0 us (min 46.5, max 644.3), maxDeviation 2.2 us; FS invocations 63983
+[timing] 3s: 1232 frames, GPU us per frame: attachments 0.0, main pass 11.0, to present 0.0, whole 11.0; submit -> GPU start 121.8 us (min 46.4, max 706.4), maxDeviation 2.2 us; FS invocations 61620
+[timing] 4s: 1303 frames, GPU us per frame: attachments 0.0, main pass 13.8, to present 0.0, whole 13.8; submit -> GPU start 141.5 us (min 51.2, max 1147.1), maxDeviation 2.3 us; FS invocations 57972
+[timing] 5s: 1408 frames, GPU us per frame: attachments 0.0, main pass 16.4, to present 0.0, whole 16.4; submit -> GPU start 223.1 us (min 50.6, max 3753.7), maxDeviation 2.7 us; FS invocations 57445
+[timing] 6s: 1231 frames, GPU us per frame: attachments 0.0, main pass 11.7, to present 0.0, whole 11.7; submit -> GPU start 294.7 us (min 46.7, max 3809.2), maxDeviation 2.4 us; FS invocations 70081
 Window closed
-[timing] 7297 frames in 4.0 s, 1822 fps
-[timing] whole run: 7297 frames, GPU us per frame: attachments 0.0, main pass 10.5, to present 0.0, whole 10.5; submit -> GPU start 70.3 us (min 49.3, max 2023.7), maxDeviation 2.2 us; FS invocations 61721
-[timing] QUERY_PERFORMANCE_COUNTER: 9999690 ticks per second of device time (over 4.00 s)
+[timing] 8011 frames in 6.0 s, 1333 fps
+[timing] whole run: 8011 frames, GPU us per frame: attachments 0.0, main pass 11.5, to present 0.0, whole 11.5; submit -> GPU start 161.9 us (min 46.4, max 3809.2), maxDeviation 2.3 us; FS invocations 62135
+[timing] QUERY_PERFORMANCE_COUNTER: 9999714 ticks per second of device time (over 5.99 s)
 ```
 
-(Rust, release, `--seconds 4`; the statistics block is shown above. C++ printed the same lines apart from `[timing]`.)
+(Rust, release, `--seconds 6`, the run sampled by `nvidia-smi` below; the statistics block is shown above. C++ printed
+the same lines apart from `[timing]`.)
 
 The measurements of 2026-10-11, release builds of both languages, validation on and synchronization validation off,
 three alternating 4 s runs per language, default settings (2 frames in flight, MAILBOX). The machine is shared with
@@ -402,7 +423,7 @@ other work, so take the spread as part of the result:
 
 | Whole run | Range over 6 runs |
 |---|---|
-| GPU time of the main pass | 10.5 - 13.4 us per frame |
+| GPU time of the main pass | 10.5 - 13.4 us per frame (an average over changing GPU clocks, see below) |
 | attachments / to present | 0.0 us in every run (printed with one decimal: under 0.05 us) |
 | submit -> GPU start, average | 70.3 - 77.5 us |
 | submit -> GPU start, minimum / maximum | 46.1 - 50.1 us / 1.4 - 2.4 ms |
@@ -410,10 +431,20 @@ other work, so take the spread as part of the result:
 | QPC ticks per second of device time | 9999690 - 9999720 |
 | frames per second | 1457 - 2070 |
 
-The GPU works about 11 us per frame and the frame takes about 500 us: this program is bound by the CPU and the
-presentation, not the GPU. The submitted work typically waits 50 - 80 us before the GPU starts it, even with the GPU
-idle most of the time, and now and then two milliseconds. That is the price of one trip through the driver and the
-operating system's GPU scheduler, and one reason engines submit a few large batches rather than many small ones.
+How long the main pass takes depends on the GPU's clock, and the clock is not fixed. A 6 s run of the Rust build with
+`nvidia-smi --query-gpu=clocks.gr,pstate --format=csv -lms 500` sampling alongside showed it: the GPU went from idle
+(P8, 210 MHz) to P2 at 1665 MHz when the program started, and the per-second lines read main pass 8.0 and 8.1 us.
+About 3 s later, with so little work to do, the driver lowered the clock step by step (P3 at 1035 - 840 MHz, then P5
+at 750 - 690 MHz), and the main pass rose to 11.0, 13.8 and 16.4 us; in the last second the clock went up again and
+the main pass read 11.7 us. The whole-run averages in the table mix these states. Either way the GPU works about
+8 - 16 us per frame, and a frame takes 0.5 - 1 ms: this program is bound by
+the CPU and the presentation, not the GPU.
+
+The submitted work waits at least about 50 us before the GPU starts it, 70 - 80 us on average in the runs of the
+table (162 us in that later 6 s run), even with the GPU idle most of the time; the floor is the price of one trip
+through the driver and the operating system's GPU scheduler, and one reason engines submit a few large batches rather
+than many small ones. Now and then a frame waited two milliseconds or more; what caused those outliers was not
+measured.
 
 ### Two clocks drift apart
 
@@ -425,7 +456,9 @@ calibration: the two clocks disagree by about 30 parts per million. Neither is "
 Thirty ppm is 30 us per second, 1.8 ms per minute, enough to put a GPU event next to the wrong CPU event in a long
 trace. Hence the spec's advice that extrapolating calibrated values "over a sufficiently long period of time may no
 longer be accurate enough ... so applications are expected to re-calibrate the timestamps on a regular basis". Step 29
-calibrates at every submit, which is more than needed; once every frame or every second is what tools do.
+calibrates at every submit because its latency line needs the device clock at that exact moment. A program that only
+maps GPU timestamps onto the CPU timeline can recalibrate less often; how often follows from the drift and the
+accuracy it needs (at 30 ppm, once a second keeps the extrapolation error around 30 us).
 
 ## Where to look next: the tools
 
@@ -437,13 +470,17 @@ will have dedicated lessons on them; here is where to start.
   debugging. It requires **RenderDoc 1.46 or newer**, because the course needs Vulkan 1.4 support in its capture layer.
   The course captured step 28 with it on 2026-10-11 (portable RenderDoc 1.46):
   `renderdoccmd capture -w -c <folder>\cap28 28_debug_labels.exe --seconds 12` starts the program with the capture
-  layer, and F12 in the program's window captured frame 885 into a 176,844-byte `.rdc` file. The device still reported
-  Vulkan 1.4 under the layer. Converted to XML (`renderdoccmd convert -c xml`), the capture contains all eight labels
-  of that frame ("frame", "attachments", "main pass", "cube 0", "cube 1", "to present", the queue label "frame 885"
-  and the inserted "present") and 28 of the 40 object names, from "instance" and "device" to "cube pipeline" and the
-  frame-1 objects. Missing were names of objects the captured frame did not use, such as frame slot 0's buffers and
-  semaphores (RenderDoc keeps only the resources a frame uses unless its "include all live resources" option is set,
-  which was not tried).
+  layer, and F12 in the program's window captured frame 885 into a 176,844-byte `.rdc` file. Under the layer the
+  device reported Vulkan 1.4 (apiVersion 1.4.351). Converted to XML
+  (`renderdoccmd convert -f cap28_frame885.rdc -o cap28.xml -c xml`), the capture contains all eight labels of that
+  frame ("frame", "attachments", "main pass", "cube 0", "cube 1", "to present", the queue label "frame 885" and the
+  inserted "present") and 28 of the 40 object names, from "instance" and "device" to "cube pipeline" and frame slot 1's
+  uniforms, set and semaphores. The 12 missing are "window surface", "swapchain view 1", "swapchain view 2", "frame 0
+  scene uniforms", "frame 0 scene memory", "frame 0 descriptor set", "frame 0 command buffer", "frame 1 command
+  buffer", "frame 0 image available", "frame 0 in flight", "render finished 1" and "render finished 2". Why exactly
+  these was not investigated; it is not simply "what the frame used", since the frame recorded into a command buffer
+  whose name is missing. RenderDoc's capture option "Ref All Resources" (`--opt-ref-all-resources` for
+  `renderdoccmd capture`) includes resources the frame does not reference; it was not tried.
 - **[Nsight Systems](https://developer.nvidia.com/nsight-systems)**: a system-wide timeline of CPU threads, API calls
   and GPU work. Labels show up with `nsys profile --trace=vulkan,vulkan-annotations ...`: run on step 28 for 2 s, the
   report's GPU marker summary listed the command buffer labels ("main pass", "cube 0", ...) with their GPU durations,
@@ -470,7 +507,10 @@ will have dedicated lessons on them; here is where to start.
 - **Where timestamps come from.** Typically the GPU's command processor writes a counter value into the query's
   memory once the preceding work has passed the requested stage; `timestampPeriod` converts the ticks to nanoseconds.
   All timestamps of a device are in the DEVICE time domain, so values from different queues compare directly (the
-  async compute lesson relied on that).
+  async compute lesson relied on that). A timestamp counts real time, but how much work fits into that time depends on
+  the clock the GPU runs at, and the driver changes it with the load (the performance states P2, P3 and P5 that `nvidia-smi` reported above): a light
+  workload can measure twice as long a few seconds after start, as step 29's main pass did. Compare timings only at a
+  known, steady clock state, or under a load that keeps the GPU at full clocks.
 - **Statistics are counters in the hardware.** Typically the fixed-function units and shader schedulers count as they
   work, and a query takes the difference between Begin and End. That is why the counts cost little and why their exact
   meaning (vertex reuse, helper invocations, tile replays) belongs to the architecture, as the spec says.
@@ -535,8 +575,8 @@ will have dedicated lessons on them; here is where to start.
 					why: 'Culling happens after the vertex shader; clipping invocations show all 24 triangles reached clipping.',
 				},
 				{
-					text: 'Repeated indices were shaded once per instance; another GPU may count anything from 48 to 72',
-					why: 'Right: reuse is implementation-dependent, and the spec says the counters measure relative statistics on one implementation.',
+					text: 'Repeated indices were shaded once per instance; another GPU may count up to 72, or more',
+					why: 'Right: reuse is implementation-dependent. 48 to 72 holds if each index is shaded at most once; a GPU that replays geometry may count more, and the spec says the counters measure relative statistics on one implementation.',
 				},
 				{
 					text: 'The second instance was not shaded at all: its 24 vertices reused the results of the first instance',

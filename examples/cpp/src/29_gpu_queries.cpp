@@ -548,8 +548,10 @@ try {
     const std::vector<vk::raii::PhysicalDevice> devices = instance.enumeratePhysicalDevices();
     // #region pick-device
     // Steps 03 + 06, plus what this step needs: the hostQueryReset feature
-    // (Vulkan 1.2) and pipelineStatisticsQuery (Vulkan 1.0, optional); a
-    // graphics family whose timestamps are valid (timestampValidBits > 0).
+    // (every Vulkan 1.2+ device supports it, so on 1.4 the check documents
+    // the requirement and only enabling it matters) and pipelineStatisticsQuery
+    // (Vulkan 1.0, optional); a graphics family whose timestamps are valid
+    // (timestampValidBits > 0).
     // VK_KHR_calibrated_timestamps is used when the device has it.
     const vk::raii::PhysicalDevice* best = nullptr;
     int bestScore                        = 0;
@@ -1017,11 +1019,11 @@ try {
                 std::println("  input assembly vertices    {:>6} / {} = 36 indices x {} instances", iaVertices, indexTotal,
                              instanceCount);
                 std::println("  input assembly primitives  {:>6} / {} = triangles of the index list", iaPrimitives, indexTotal / 3);
-                std::println("  vertex shader invocations  {:>6} / {}..{}: reuse of repeated indices is implementation-dependent", vs,
+                std::println("  vertex shader invocations  {:>6} / {}..{} if each index is shaded at most once; reuse is implementation-dependent", vs,
                              vertices.size() * uint64_t{instanceCount}, indexTotal);
                 std::println("  clipping invocations       {:>6} / {}: every triangle reaches clipping (culling comes later)", clipIn,
                              indexTotal / 3);
-                std::println("  clipping primitives        {:>6} / at least 1 per triangle with a vertex inside the clip volume that covers a sample, 0 or more otherwise",
+                std::println("  clipping primitives        {:>6} / at least 1 per triangle with a vertex inside the clip volume (culled or covering a sample)",
                              clipOut);
                 std::println("  fragment shader invocations{:>7} / no formula: covered pixels (helper invocations may count), minus what early tests reject", fs);
                 // #endregion
