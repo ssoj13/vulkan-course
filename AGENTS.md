@@ -136,6 +136,28 @@ never a new widget. The ObjectGraph build mode is the reference:
    `StaleAct` after a rule change; tests/object-trainer.test.ts style), then `bun run lint`, `bun run check`,
    `bun run build` and a browser pass (refusal shows the VUID, undo, reload restores the run).
 
+### Frame assembly trainer (2026-10-11)
+
+Step 10's frame loop (F=2 slots, 3 images, minImageCount 2, one queue) as a trainer: model `src/lib/frames.ts` (rules +
+sources in its header), scenario `src/lib/frame-trainer.ts`, texts `src/components/labs/frame-assembly.text.ts`, view
+`FrameAssembly{.astro,View.tsx}`, tests `tests/labs/frame-assembly.test.ts` (every rule accepted/refused, full run,
+random walks from prefixes of the correct run with `consistency`, stored runs/versions). Version = `ruleVersion` of
+frames.ts + frame-trainer.ts (texts excluded). Shared helper `vuReport(id, call)` in `src/lib/vuids.ts` (objects.ts
+uses it too).
+- Real validation evidence (2026-10-11, temporary probe bin = copy of step 10 with env-selected faults, built under
+  the lock, its source then moved out of examples/; logs scratchpad frame/probe*.log, session-local), with
+  VK_KHRONOS_VALIDATION_VALIDATE_SYNC=true: render_finished indexed by slot -> VUID-vkQueueSubmit2-semaphore-03868
+  "... may still be in use by VkSwapchainKHR ... Swapchain image 0 was presented but was not re-acquired ..."; wait
+  stage BOTTOM_OF_PIPE -> "WRITE_AFTER_READ hazard ... previously read by vkAcquireNextImageKHR" (NOT
+  WRITE_AFTER_PRESENT); TOP_OF_PIPE -> clean; present without wait semaphore -> "PRESENT_AFTER_WRITE hazard" and then
+  03868 "previously signaled ... and has not since been waited on"; no fence wait -> 01779, 01123, 00045, 00049,
+  03875, 01430. Not reproduced live (registry + spec only): 04894, 04895, 03873, 01286, 07783, 03268, 03874.
+- Model simplifications (stated on the lab page): batches complete in submission order; FIFO presentation engine
+  returning images in present order; no OUT_OF_DATE. A host wait (fence, acquire of a not-yet-shown image) runs GPU +
+  presentation engine until it returns; a wait that never could is refused as a labeled deadlock.
+- [ ] Engine gap (course-kit): the trainer console keeps its scroll at the top, so new lines go out of view once it
+  overflows (14rem); worked around with `lines={8}`. Proposal: scroll the log to the newest line on change.
+
 ## Labs (12, 2026-10-10)
 
 Interactive widgets with a full page each (`/labs/<slug>`, `/ru/labs/<slug>`; catalog and sidebar from the engine).
@@ -164,6 +186,7 @@ Files per lab `<slug>`: model `src/lib/labs/<slug>.ts` (pure, no DOM), view `src
 | queue-sync | QueueSync | sync/fences-and-semaphores (EN + RU) |
 | graphics-pipeline | GraphicsPipeline | pipeline/graphics-pipeline (EN + RU) |
 | buffer-memory | BufferMemory | memory/memory-types (EN + RU) |
+| frame-assembly | FrameAssembly (engine Trainer; model `src/lib/frames.ts`, scenario `src/lib/frame-trainer.ts`) | sync/frames-in-flight (EN + RU) |
 
 Widget texts: fill placeholders ONLY with `tfmt(lang, text, vars)` from `src/lib/text.ts` (never the engine `fmt`).
 Counts use ICU-style plural placeholders `{n|# очередь|# очереди|# очередей}` (ru: one/few/many, en: one/other, `#` =

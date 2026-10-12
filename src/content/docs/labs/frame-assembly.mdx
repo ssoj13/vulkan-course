@@ -1,0 +1,44 @@
+---
+title: Assemble the frame loop
+description: Two frames in flight, step by step. Wrong steps are refused with the real validation rule, or with a labeled deadlock or hazard.
+---
+import FrameAssembly from '../../../components/labs/FrameAssembly.astro';
+
+Step 10 of the course runs a frame loop with two frames in flight, and every line of it is there for a reason. Here
+you make the same calls yourself, one at a time, and find out which reason each one has. The rules behind them are
+explained in [frames in flight](lesson:frames-in-flight) and [fences and semaphores](lesson:fences-and-semaphores).
+
+**The goal:** present 4 frames, 2 from each frame slot, none of them broken by a hazard, with batches of both slots
+on the GPU at the same time at least once.
+
+**How it works.** The cards are the objects step 10 creates: per frame slot a fence, a command buffer and an
+`image_available` semaphore; per swapchain image a `render_finished` semaphore; the swapchain and the queue. Click a
+card for its calls (create, wait and reset a fence; record and submit a command buffer; present an image). The acquire,
+"GPU: execute the next batch" and "vblank" are under the map. The GPU and the presentation engine move only when you
+advance them, or while a host call blocks: `vkWaitForFences` on a pending fence runs them until the fence is signaled.
+
+Every refused call quotes the rule that refuses it:
+
+- a **valid-usage rule** is quoted with its VUID, as the validation layer reports it (7 of the 14 were also
+  reproduced with step 10 and the real layer on the course machine);
+- a **deadlock** (a wait nothing will ever end) is not a VUID: it is refused with an explanation instead of hanging
+  the page;
+- a **hazard** breaks no valid-usage rule, so the call is accepted, but synchronization validation reports it (the
+  text is from a real run of step 10 with that mistake) and the frame counts as broken.
+
+<FrameAssembly />
+
+**Simplifications**, so you know what is model and what is Vulkan: the queue completes batches in submission order
+(a real queue may overlap them); the presentation engine is FIFO and gives images back in the order they were
+presented (the spec leaves the order to the implementation, and step 10 runs MAILBOX on the course machine); no call
+returns `VK_ERROR_OUT_OF_DATE_KHR` ([swapchain recreation](lesson:swapchain-recreation) handles that). The frame
+loop itself, the objects and the rules are step 10's.
+
+Things to try:
+
+- create a fence without `VK_FENCE_CREATE_SIGNALED_BIT` and wait on it;
+- skip the fence wait in frame 3 and acquire with `image_available[0]`, or record `cmd[0]` again;
+- reset the fence before the acquire and wait on it a second time;
+- submit with the wait at `BOTTOM_OF_PIPE`, or present waiting on the wrong semaphore;
+- **the challenge:** use one `render_finished` per frame slot (`render_finished[0]` and `[1]` only), as many
+  tutorials once did. Which call is refused, in which frame, and why does acquiring the image again fix it?

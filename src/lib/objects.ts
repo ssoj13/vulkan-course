@@ -6,7 +6,7 @@
  */
 import objectsJson from '../data/objects.json';
 import objectsRu from '../data/objects.ru.json';
-import { hasVuid, vuid } from './vuids';
+import { hasVuid, vuReport } from './vuids';
 
 /** Curriculum stages in course order; the map colors objects by the stage that introduces them. */
 export const STAGES = ['instance', 'devices', 'presentation', 'pipeline', 'commands', 'sync', 'memory', 'descriptors', 'images'] as const;
@@ -173,7 +173,7 @@ function liveFor(state: SimState, parentId: string): string | undefined {
 
 /** Validation-layer style message quoting the spec's valid-usage text. */
 function vuError(id: string, call: string): LogLine {
-	return { kind: 'error', vuid: id, text: `Validation Error: [ ${id} ] ${call}(): The Vulkan spec states: ${vuid(id)}` };
+	return { kind: 'error', vuid: id, text: vuReport(id, call) };
 }
 
 /** Why `id` cannot be created now (missing parents / extension), or null when it can. */

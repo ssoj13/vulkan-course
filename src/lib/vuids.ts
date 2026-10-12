@@ -15,3 +15,8 @@ export function vuid(id: string): string {
 	if (!hasVuid(id)) throw new Error(`${id} missing from vuids.json (run bun scripts/sync-vuids.ts)`);
 	return TEXTS[id] as string;
 }
+
+/** A validation-layer style report quoting the registry text (the format the course's simulators print). */
+export function vuReport(id: string, call: string): string {
+	return `Validation Error: [ ${id} ] ${call}(): The Vulkan spec states: ${vuid(id)}`;
+}

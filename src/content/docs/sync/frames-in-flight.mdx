@@ -9,6 +9,7 @@ import Quiz from 'course-kit/components/Quiz.astro';
 import Step from '../../../components/Step.astro';
 import Shots from '../../../components/Shots.astro';
 import shot10 from '../../../assets/10_frames_in_flight.png';
+import FrameAssembly from '../../../components/labs/FrameAssembly.astro';
 
 In step 09 the CPU waits for the GPU at the start of every frame, so the two take turns: while one works, the other
 idles. How do we let them work at the same time, what has to be duplicated so they do not step on each other, and how
@@ -136,6 +137,16 @@ With several frames in flight, more than one submission may still be running whe
 submissions and the presents' queue operations (their semaphore waits). It does not wait for the presentation engine;
 present fences (`VK_KHR_swapchain_maintenance1`, in [swapchain recreation](lesson:swapchain-recreation)) exist to know
 when a present's resources can be released.
+
+## Assemble it yourself
+
+Those are the six calls of a frame and the reason for each. Now make them yourself, in any order you like: the
+simulator below holds step 10's objects and refuses a wrong call with the valid-usage rule it breaks, a wait that
+could never return as a deadlock, and a missing dependency as the hazard synchronization validation reports. The goal
+is four frames, two per slot, with both slots on the GPU at once. The [full page](lab:frame-assembly) adds what to try,
+including the classic shortcut of one `render_finished` per slot.
+
+<FrameAssembly />
 
 ## What the program prints
 
