@@ -7,8 +7,12 @@ copied by hand. Each binary runs real Vulkan calls on GPU 0 and writes one JSON 
 |---|---|---|---|
 | `buffer-requirements` | `src/data/buffer-requirements.json` | `bun run sync:buffers` | `vkGetBufferMemoryRequirements` for every non-empty combination of six usage flags at five sizes, plus the memory types' raw property flags |
 | `validation-log` | `src/data/validation-log.json` | `bun run sync:validation-log` | step 02's instance with a messenger for every severity, run plain, with the messenger leaked, and with `DEVICE_ADDRESS_BINDING_EXT`; per-type totals and a sample of exact messages |
+| `pipeline-stats` | `src/data/pipeline-stats.json` (+ text dumps in `out/`, gitignored) | `bun run sync:pipeline-stats` | VK_KHR_pipeline_executable_properties on the course's compute kernels (saxpy, reduce, particles), the cube graphics pipeline and the register-pressure series `shaders/pressure.slang` (p8 ... p256, also timed with GPU timestamps) |
 
-Requirements: a Vulkan 1.4 driver; `validation-log` also needs the Vulkan SDK (`VK_LAYER_KHRONOS_validation`).
+`shaders/pressure.slang` is compiled by `bun run sync:pipeline-stats` (same slangc flags as the course shaders, read
+from `shaders/spv/manifest.json`); `shaders/pressure.spv` is committed because the binary embeds it.
+
+Requirements: a Vulkan 1.4 driver; `validation-log` and `pipeline-stats` also need the Vulkan SDK (`VK_LAYER_KHRONOS_validation`).
 Building needs neither (ash loads the loader at runtime), so CI only lints this crate.
 
 Notes:

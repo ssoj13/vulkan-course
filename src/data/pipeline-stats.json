@@ -1,0 +1,836 @@
+{
+  "source": "Real capture on the course dev machine by tools/vk-probe (binary pipeline-stats, `bun run sync:pipeline-stats`; ash at the course pin): a Vulkan 1.4 device on GPU 0 with VK_KHR_pipeline_executable_properties (pipelineExecutableInfo) and the Khronos validation layer; every pipeline is created with VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR | VK_PIPELINE_CREATE_CAPTURE_INTERNAL_REPRESENTATIONS_BIT_KHR and read back with vkGetPipelineExecutablePropertiesKHR, vkGetPipelineExecutableStatisticsKHR and vkGetPipelineExecutableInternalRepresentationsKHR. Statistic names, descriptions and values are verbatim from the driver. `pressure`: GPU time (vkCmdWriteTimestamp2 at ALL_COMMANDS before and after) of one dispatch of `threads` invocations per kernel; runs alternate between kernels after one warm-up round; measured, not a benchmark.",
+  "device": "NVIDIA GeForce RTX 3080 Ti",
+  "driver": "NVIDIA 616.64",
+  "date": "2026-10-12",
+  "pipelines": [
+    {
+      "name": "saxpy",
+      "shader": "shaders/spv/saxpy.spv",
+      "entryPoints": [
+        "saxpy"
+      ],
+      "executables": [
+        {
+          "name": "CS",
+          "description": "Compute Shader",
+          "stages": "COMPUTE",
+          "subgroupSize": 32,
+          "statistics": [
+            {
+              "name": "Register Count",
+              "description": "Number of temporary registers used by this shader stage",
+              "format": "UINT64",
+              "value": 16
+            },
+            {
+              "name": "Binary Size",
+              "description": "Size in bytes of the executable for this stage",
+              "format": "UINT64",
+              "value": 384
+            },
+            {
+              "name": "Stack Size",
+              "description": "Size in bytes required for the shader stack",
+              "format": "UINT64",
+              "value": 0
+            },
+            {
+              "name": "Local Memory Size",
+              "description": "Size in bytes required per-thread for local memory",
+              "format": "UINT64",
+              "value": 68719476736
+            },
+            {
+              "name": "Shared Memory Size",
+              "description": "Size in bytes used for shared memory",
+              "format": "UINT64",
+              "value": 0
+            }
+          ],
+          "internalRepresentations": []
+        }
+      ]
+    },
+    {
+      "name": "reduce",
+      "shader": "shaders/spv/reduce.spv",
+      "entryPoints": [
+        "reduce"
+      ],
+      "executables": [
+        {
+          "name": "CS",
+          "description": "Compute Shader",
+          "stages": "COMPUTE",
+          "subgroupSize": 32,
+          "statistics": [
+            {
+              "name": "Register Count",
+              "description": "Number of temporary registers used by this shader stage",
+              "format": "UINT64",
+              "value": 16
+            },
+            {
+              "name": "Binary Size",
+              "description": "Size in bytes of the executable for this stage",
+              "format": "UINT64",
+              "value": 768
+            },
+            {
+              "name": "Stack Size",
+              "description": "Size in bytes required for the shader stack",
+              "format": "UINT64",
+              "value": 0
+            },
+            {
+              "name": "Local Memory Size",
+              "description": "Size in bytes required per-thread for local memory",
+              "format": "UINT64",
+              "value": 68719476736
+            },
+            {
+              "name": "Shared Memory Size",
+              "description": "Size in bytes used for shared memory",
+              "format": "UINT64",
+              "value": 1024
+            }
+          ],
+          "internalRepresentations": []
+        }
+      ]
+    },
+    {
+      "name": "particles init",
+      "shader": "shaders/spv/particles.spv",
+      "entryPoints": [
+        "init"
+      ],
+      "executables": [
+        {
+          "name": "CS",
+          "description": "Compute Shader",
+          "stages": "COMPUTE",
+          "subgroupSize": 32,
+          "statistics": [
+            {
+              "name": "Register Count",
+              "description": "Number of temporary registers used by this shader stage",
+              "format": "UINT64",
+              "value": 16
+            },
+            {
+              "name": "Binary Size",
+              "description": "Size in bytes of the executable for this stage",
+              "format": "UINT64",
+              "value": 896
+            },
+            {
+              "name": "Stack Size",
+              "description": "Size in bytes required for the shader stack",
+              "format": "UINT64",
+              "value": 0
+            },
+            {
+              "name": "Local Memory Size",
+              "description": "Size in bytes required per-thread for local memory",
+              "format": "UINT64",
+              "value": 68719476736
+            },
+            {
+              "name": "Shared Memory Size",
+              "description": "Size in bytes used for shared memory",
+              "format": "UINT64",
+              "value": 0
+            }
+          ],
+          "internalRepresentations": []
+        }
+      ]
+    },
+    {
+      "name": "particles simulate",
+      "shader": "shaders/spv/particles.spv",
+      "entryPoints": [
+        "simulate"
+      ],
+      "executables": [
+        {
+          "name": "CS",
+          "description": "Compute Shader",
+          "stages": "COMPUTE",
+          "subgroupSize": 32,
+          "statistics": [
+            {
+              "name": "Register Count",
+              "description": "Number of temporary registers used by this shader stage",
+              "format": "UINT64",
+              "value": 16
+            },
+            {
+              "name": "Binary Size",
+              "description": "Size in bytes of the executable for this stage",
+              "format": "UINT64",
+              "value": 1024
+            },
+            {
+              "name": "Stack Size",
+              "description": "Size in bytes required for the shader stack",
+              "format": "UINT64",
+              "value": 0
+            },
+            {
+              "name": "Local Memory Size",
+              "description": "Size in bytes required per-thread for local memory",
+              "format": "UINT64",
+              "value": 68719476736
+            },
+            {
+              "name": "Shared Memory Size",
+              "description": "Size in bytes used for shared memory",
+              "format": "UINT64",
+              "value": 0
+            }
+          ],
+          "internalRepresentations": []
+        }
+      ]
+    },
+    {
+      "name": "particles advance",
+      "shader": "shaders/spv/particles.spv",
+      "entryPoints": [
+        "advance"
+      ],
+      "executables": [
+        {
+          "name": "CS",
+          "description": "Compute Shader",
+          "stages": "COMPUTE",
+          "subgroupSize": 32,
+          "statistics": [
+            {
+              "name": "Register Count",
+              "description": "Number of temporary registers used by this shader stage",
+              "format": "UINT64",
+              "value": 16
+            },
+            {
+              "name": "Binary Size",
+              "description": "Size in bytes of the executable for this stage",
+              "format": "UINT64",
+              "value": 1024
+            },
+            {
+              "name": "Stack Size",
+              "description": "Size in bytes required for the shader stack",
+              "format": "UINT64",
+              "value": 0
+            },
+            {
+              "name": "Local Memory Size",
+              "description": "Size in bytes required per-thread for local memory",
+              "format": "UINT64",
+              "value": 68719476736
+            },
+            {
+              "name": "Shared Memory Size",
+              "description": "Size in bytes used for shared memory",
+              "format": "UINT64",
+              "value": 0
+            }
+          ],
+          "internalRepresentations": []
+        }
+      ]
+    },
+    {
+      "name": "cube",
+      "shader": "shaders/spv/cube.spv",
+      "entryPoints": [
+        "vertexMain",
+        "fragmentMain"
+      ],
+      "executables": [
+        {
+          "name": "VS",
+          "description": "Vertex Shader",
+          "stages": "VERTEX",
+          "subgroupSize": 32,
+          "statistics": [
+            {
+              "name": "Register Count",
+              "description": "Number of temporary registers used by this shader stage",
+              "format": "UINT64",
+              "value": 25
+            },
+            {
+              "name": "Binary Size",
+              "description": "Size in bytes of the executable for this stage",
+              "format": "UINT64",
+              "value": 1152
+            },
+            {
+              "name": "Stack Size",
+              "description": "Size in bytes required for the shader stack",
+              "format": "UINT64",
+              "value": 0
+            },
+            {
+              "name": "Local Memory Size",
+              "description": "Size in bytes required per-thread for local memory",
+              "format": "UINT64",
+              "value": 68719476736
+            },
+            {
+              "name": "Input Count",
+              "description": "Number of scalar inputs used by this shader stage",
+              "format": "UINT64",
+              "value": 7
+            },
+            {
+              "name": "Output Count",
+              "description": "Number of scalar outputs used by this shader stage",
+              "format": "UINT64",
+              "value": 0
+            }
+          ],
+          "internalRepresentations": []
+        },
+        {
+          "name": "FS",
+          "description": "Fragment Shader",
+          "stages": "FRAGMENT",
+          "subgroupSize": 32,
+          "statistics": [
+            {
+              "name": "Register Count",
+              "description": "Number of temporary registers used by this shader stage",
+              "format": "UINT64",
+              "value": 16
+            },
+            {
+              "name": "Binary Size",
+              "description": "Size in bytes of the executable for this stage",
+              "format": "UINT64",
+              "value": 512
+            },
+            {
+              "name": "Stack Size",
+              "description": "Size in bytes required for the shader stack",
+              "format": "UINT64",
+              "value": 0
+            },
+            {
+              "name": "Local Memory Size",
+              "description": "Size in bytes required per-thread for local memory",
+              "format": "UINT64",
+              "value": 68719476736
+            },
+            {
+              "name": "Input Count",
+              "description": "Number of scalar inputs used by this shader stage",
+              "format": "UINT64",
+              "value": 4
+            },
+            {
+              "name": "Output Colors",
+              "description": "Number of colors output by the fragment shader",
+              "format": "UINT64",
+              "value": 1
+            }
+          ],
+          "internalRepresentations": []
+        }
+      ]
+    },
+    {
+      "name": "pressure p8",
+      "shader": "tools/vk-probe/shaders/pressure.spv",
+      "entryPoints": [
+        "p8"
+      ],
+      "executables": [
+        {
+          "name": "CS",
+          "description": "Compute Shader",
+          "stages": "COMPUTE",
+          "subgroupSize": 32,
+          "statistics": [
+            {
+              "name": "Register Count",
+              "description": "Number of temporary registers used by this shader stage",
+              "format": "UINT64",
+              "value": 19
+            },
+            {
+              "name": "Binary Size",
+              "description": "Size in bytes of the executable for this stage",
+              "format": "UINT64",
+              "value": 2944
+            },
+            {
+              "name": "Stack Size",
+              "description": "Size in bytes required for the shader stack",
+              "format": "UINT64",
+              "value": 0
+            },
+            {
+              "name": "Local Memory Size",
+              "description": "Size in bytes required per-thread for local memory",
+              "format": "UINT64",
+              "value": 68719476736
+            },
+            {
+              "name": "Shared Memory Size",
+              "description": "Size in bytes used for shared memory",
+              "format": "UINT64",
+              "value": 0
+            }
+          ],
+          "internalRepresentations": []
+        }
+      ]
+    },
+    {
+      "name": "pressure p16",
+      "shader": "tools/vk-probe/shaders/pressure.spv",
+      "entryPoints": [
+        "p16"
+      ],
+      "executables": [
+        {
+          "name": "CS",
+          "description": "Compute Shader",
+          "stages": "COMPUTE",
+          "subgroupSize": 32,
+          "statistics": [
+            {
+              "name": "Register Count",
+              "description": "Number of temporary registers used by this shader stage",
+              "format": "UINT64",
+              "value": 37
+            },
+            {
+              "name": "Binary Size",
+              "description": "Size in bytes of the executable for this stage",
+              "format": "UINT64",
+              "value": 5504
+            },
+            {
+              "name": "Stack Size",
+              "description": "Size in bytes required for the shader stack",
+              "format": "UINT64",
+              "value": 0
+            },
+            {
+              "name": "Local Memory Size",
+              "description": "Size in bytes required per-thread for local memory",
+              "format": "UINT64",
+              "value": 68719476736
+            },
+            {
+              "name": "Shared Memory Size",
+              "description": "Size in bytes used for shared memory",
+              "format": "UINT64",
+              "value": 0
+            }
+          ],
+          "internalRepresentations": []
+        }
+      ]
+    },
+    {
+      "name": "pressure p32",
+      "shader": "tools/vk-probe/shaders/pressure.spv",
+      "entryPoints": [
+        "p32"
+      ],
+      "executables": [
+        {
+          "name": "CS",
+          "description": "Compute Shader",
+          "stages": "COMPUTE",
+          "subgroupSize": 32,
+          "statistics": [
+            {
+              "name": "Register Count",
+              "description": "Number of temporary registers used by this shader stage",
+              "format": "UINT64",
+              "value": 70
+            },
+            {
+              "name": "Binary Size",
+              "description": "Size in bytes of the executable for this stage",
+              "format": "UINT64",
+              "value": 6656
+            },
+            {
+              "name": "Stack Size",
+              "description": "Size in bytes required for the shader stack",
+              "format": "UINT64",
+              "value": 0
+            },
+            {
+              "name": "Local Memory Size",
+              "description": "Size in bytes required per-thread for local memory",
+              "format": "UINT64",
+              "value": 68719476736
+            },
+            {
+              "name": "Shared Memory Size",
+              "description": "Size in bytes used for shared memory",
+              "format": "UINT64",
+              "value": 0
+            }
+          ],
+          "internalRepresentations": []
+        }
+      ]
+    },
+    {
+      "name": "pressure p64",
+      "shader": "tools/vk-probe/shaders/pressure.spv",
+      "entryPoints": [
+        "p64"
+      ],
+      "executables": [
+        {
+          "name": "CS",
+          "description": "Compute Shader",
+          "stages": "COMPUTE",
+          "subgroupSize": 32,
+          "statistics": [
+            {
+              "name": "Register Count",
+              "description": "Number of temporary registers used by this shader stage",
+              "format": "UINT64",
+              "value": 118
+            },
+            {
+              "name": "Binary Size",
+              "description": "Size in bytes of the executable for this stage",
+              "format": "UINT64",
+              "value": 6528
+            },
+            {
+              "name": "Stack Size",
+              "description": "Size in bytes required for the shader stack",
+              "format": "UINT64",
+              "value": 0
+            },
+            {
+              "name": "Local Memory Size",
+              "description": "Size in bytes required per-thread for local memory",
+              "format": "UINT64",
+              "value": 68719476736
+            },
+            {
+              "name": "Shared Memory Size",
+              "description": "Size in bytes used for shared memory",
+              "format": "UINT64",
+              "value": 0
+            }
+          ],
+          "internalRepresentations": []
+        }
+      ]
+    },
+    {
+      "name": "pressure p128",
+      "shader": "tools/vk-probe/shaders/pressure.spv",
+      "entryPoints": [
+        "p128"
+      ],
+      "executables": [
+        {
+          "name": "CS",
+          "description": "Compute Shader",
+          "stages": "COMPUTE",
+          "subgroupSize": 32,
+          "statistics": [
+            {
+              "name": "Register Count",
+              "description": "Number of temporary registers used by this shader stage",
+              "format": "UINT64",
+              "value": 230
+            },
+            {
+              "name": "Binary Size",
+              "description": "Size in bytes of the executable for this stage",
+              "format": "UINT64",
+              "value": 12800
+            },
+            {
+              "name": "Stack Size",
+              "description": "Size in bytes required for the shader stack",
+              "format": "UINT64",
+              "value": 0
+            },
+            {
+              "name": "Local Memory Size",
+              "description": "Size in bytes required per-thread for local memory",
+              "format": "UINT64",
+              "value": 68719476736
+            },
+            {
+              "name": "Shared Memory Size",
+              "description": "Size in bytes used for shared memory",
+              "format": "UINT64",
+              "value": 0
+            }
+          ],
+          "internalRepresentations": []
+        }
+      ]
+    },
+    {
+      "name": "pressure p192",
+      "shader": "tools/vk-probe/shaders/pressure.spv",
+      "entryPoints": [
+        "p192"
+      ],
+      "executables": [
+        {
+          "name": "CS",
+          "description": "Compute Shader",
+          "stages": "COMPUTE",
+          "subgroupSize": 32,
+          "statistics": [
+            {
+              "name": "Register Count",
+              "description": "Number of temporary registers used by this shader stage",
+              "format": "UINT64",
+              "value": 242
+            },
+            {
+              "name": "Binary Size",
+              "description": "Size in bytes of the executable for this stage",
+              "format": "UINT64",
+              "value": 18944
+            },
+            {
+              "name": "Stack Size",
+              "description": "Size in bytes required for the shader stack",
+              "format": "UINT64",
+              "value": 0
+            },
+            {
+              "name": "Local Memory Size",
+              "description": "Size in bytes required per-thread for local memory",
+              "format": "UINT64",
+              "value": 68719476736
+            },
+            {
+              "name": "Shared Memory Size",
+              "description": "Size in bytes used for shared memory",
+              "format": "UINT64",
+              "value": 0
+            }
+          ],
+          "internalRepresentations": []
+        }
+      ]
+    },
+    {
+      "name": "pressure p256",
+      "shader": "tools/vk-probe/shaders/pressure.spv",
+      "entryPoints": [
+        "p256"
+      ],
+      "executables": [
+        {
+          "name": "CS",
+          "description": "Compute Shader",
+          "stages": "COMPUTE",
+          "subgroupSize": 32,
+          "statistics": [
+            {
+              "name": "Register Count",
+              "description": "Number of temporary registers used by this shader stage",
+              "format": "UINT64",
+              "value": 255
+            },
+            {
+              "name": "Binary Size",
+              "description": "Size in bytes of the executable for this stage",
+              "format": "UINT64",
+              "value": 26240
+            },
+            {
+              "name": "Stack Size",
+              "description": "Size in bytes required for the shader stack",
+              "format": "UINT64",
+              "value": 0
+            },
+            {
+              "name": "Local Memory Size",
+              "description": "Size in bytes required per-thread for local memory",
+              "format": "UINT64",
+              "value": 68719476736
+            },
+            {
+              "name": "Shared Memory Size",
+              "description": "Size in bytes used for shared memory",
+              "format": "UINT64",
+              "value": 15360
+            }
+          ],
+          "internalRepresentations": []
+        }
+      ]
+    },
+    {
+      "name": "pressure d64",
+      "shader": "tools/vk-probe/shaders/pressure.spv",
+      "entryPoints": [
+        "d64"
+      ],
+      "executables": [
+        {
+          "name": "CS",
+          "description": "Compute Shader",
+          "stages": "COMPUTE",
+          "subgroupSize": 32,
+          "statistics": [
+            {
+              "name": "Register Count",
+              "description": "Number of temporary registers used by this shader stage",
+              "format": "UINT64",
+              "value": 40
+            },
+            {
+              "name": "Binary Size",
+              "description": "Size in bytes of the executable for this stage",
+              "format": "UINT64",
+              "value": 28032
+            },
+            {
+              "name": "Stack Size",
+              "description": "Size in bytes required for the shader stack",
+              "format": "UINT64",
+              "value": 0
+            },
+            {
+              "name": "Local Memory Size",
+              "description": "Size in bytes required per-thread for local memory",
+              "format": "UINT64",
+              "value": 68719476992
+            },
+            {
+              "name": "Shared Memory Size",
+              "description": "Size in bytes used for shared memory",
+              "format": "UINT64",
+              "value": 0
+            }
+          ],
+          "internalRepresentations": []
+        }
+      ]
+    }
+  ],
+  "pressure": {
+    "groupSize": 256,
+    "rounds": 8,
+    "threads": 4194304,
+    "runs": 5,
+    "kernels": [
+      {
+        "entry": "p8",
+        "floats": 8,
+        "medianMs": 0.046656,
+        "runsMs": [
+          0.04688,
+          0.0472,
+          0.046656,
+          0.046528,
+          0.046464
+        ]
+      },
+      {
+        "entry": "p16",
+        "floats": 16,
+        "medianMs": 0.084864,
+        "runsMs": [
+          0.085728,
+          0.084928,
+          0.08448,
+          0.084864,
+          0.084832
+        ]
+      },
+      {
+        "entry": "p32",
+        "floats": 32,
+        "medianMs": 0.167424,
+        "runsMs": [
+          0.168928,
+          0.167328,
+          0.166432,
+          0.167424,
+          0.167552
+        ]
+      },
+      {
+        "entry": "p64",
+        "floats": 64,
+        "medianMs": 0.347776,
+        "runsMs": [
+          0.35232,
+          0.347776,
+          0.346304,
+          0.348256,
+          0.347552
+        ]
+      },
+      {
+        "entry": "p128",
+        "floats": 128,
+        "medianMs": 0.846848,
+        "runsMs": [
+          0.856544,
+          0.846784,
+          0.846656,
+          0.84752,
+          0.846848
+        ]
+      },
+      {
+        "entry": "p192",
+        "floats": 192,
+        "medianMs": 1.204992,
+        "runsMs": [
+          1.21936,
+          1.20432,
+          1.204992,
+          1.204608,
+          1.205696
+        ]
+      },
+      {
+        "entry": "p256",
+        "floats": 256,
+        "medianMs": 1.86608,
+        "runsMs": [
+          1.88528,
+          1.863904,
+          1.86608,
+          1.866112,
+          1.863744
+        ]
+      },
+      {
+        "entry": "d64",
+        "floats": 64,
+        "medianMs": 316.821056,
+        "runsMs": [
+          316.329152,
+          317.859552,
+          317.228448,
+          316.821056,
+          311.787712
+        ]
+      }
+    ]
+  }
+}

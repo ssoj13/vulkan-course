@@ -16,6 +16,10 @@ path = "src/bin/buffer_requirements.rs"
 name = "validation-log"
 path = "src/bin/validation_log.rs"
 
+[[bin]]
+name = "pipeline-stats"
+path = "src/bin/pipeline_stats.rs"
+
 [dependencies]
 # Same pin as examples/rust: crates.io has no ash release with Vulkan 1.4 bindings yet.
 ash = { git = "https://github.com/ash-rs/ash", rev = "f4c2ca3e4f6b998d5254ad101a32f024d87cdec2" }
