@@ -161,9 +161,13 @@ the messages as recorded in the project notes:
   to VkBuffer ..., which was previously read by vkCmdDraw ... Vulkan insight: an execution dependency is sufficient";
 - without the compute-to-compute barrier: **nothing**, even with the heuristic.
 
-The last line is the lesson in miniature: the heuristic reads the SPIR-V statically and is documented to "ignore
-certain types of accesses", and a dispatch reading and writing what the previous dispatch wrote slipped through. A
-clean run means the tool found nothing, not that nothing is there. With all barriers in place, step 26 runs with both
+The last line is the lesson in miniature, and it needs reading carefully. Without that barrier the two dispatches are
+still chained through the draw between them: `before_draw` (compute writes to vertex input) and the next frame's
+write-after-read barrier (vertex input to compute) order them, and `before_draw`'s source access makes the writes
+available. What is missing is visibility: no barrier names the second dispatch's storage reads and writes in its
+destination access mask. The layer did not report that; why, we did not establish (the heuristic is documented to
+"ignore certain types of accesses", but no run tied the silence to it). A clean run means the tool found nothing, not
+that nothing is there. With all barriers in place, step 26 runs with both
 variables set without a message apart from the bandicam layer warning, in both languages.
 
 ## Why one buffer is enough
@@ -311,11 +315,11 @@ are not a benchmark. The [next lesson](lesson:async-compute) measures the GPU ti
 			options: [
 				{
 					text: 'That barrier is redundant: the barrier between the dispatch and the draw already orders consecutive dispatches as well',
-					why: 'That barrier orders the dispatch before the draw, not the next frame\'s dispatch after this one\'s writes; the RAW/WAW across frames is real.',
+					why: 'Together with the write-after-read barrier it does chain the dispatches and make the writes available, but nothing makes them visible to the next dispatch\'s storage reads and writes: that takes the compute-to-compute barrier\'s destination access mask.',
 				},
 				{
 					text: 'A clean validation run is evidence, not proof: the barrier comes from the hazard table, and the tool missed this case',
-					why: 'Right: the heuristic is documented to ignore some accesses; barriers are derived from the spec, validation only catches some mistakes.',
+					why: 'Right: the missing visibility went unreported, for a reason the runs did not establish; barriers are derived from the spec, validation only catches some mistakes.',
 				},
 				{
 					text: 'Shader writes to storage buffers are always visible to the next dispatch',

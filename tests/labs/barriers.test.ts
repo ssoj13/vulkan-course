@@ -209,11 +209,26 @@ describe('barriers: grading', () => {
 		const u = puzzleOf('upload').solution[0]!;
 		expect(extras(puzzleOf('upload'), [{ ...u, srcAccess: ['MEMORY_WRITE'] }])).toEqual([]);
 	});
-	test('of two flags that cover each other only one is reported (greedy)', () => {
+	test('of two flags that cover each other only the broader one is reported (greedy, broadest first)', () => {
 		const u = puzzleOf('upload').solution[0]!;
-		expect(extras(puzzleOf('upload'), [{ ...u, srcStage: ['COPY', 'ALL_TRANSFER'] }]).map((e) => `${e.flag}:${e.why}`)).toEqual(['COPY:drop', 'ALL_TRANSFER:part']);
+		expect(extras(puzzleOf('upload'), [{ ...u, srcStage: ['COPY', 'ALL_TRANSFER'] }]).map((e) => `${e.flag}:${e.why}`)).toEqual(['ALL_TRANSFER:drop']);
 		const c = puzzleOf('compute').solution[0]!;
-		expect(extras(puzzleOf('compute'), [{ ...c, dstAccess: ['SHADER_STORAGE_READ', 'SHADER_READ'] }]).map((e) => `${e.flag}:${e.why}`)).toEqual(['SHADER_STORAGE_READ:drop', 'SHADER_READ:part']);
+		expect(extras(puzzleOf('compute'), [{ ...c, dstAccess: ['SHADER_STORAGE_READ', 'SHADER_READ'] }]).map((e) => `${e.flag}:${e.why}`)).toEqual(['SHADER_READ:drop']);
+	});
+	// Review fix: the advice must never call the needed flag removable when a broad one next to it covers it.
+	test('a broad flag next to the needed one is named removable, never the needed one', () => {
+		const ex = (p: string, b: Barrier) => extras(puzzleOf(p), [b]).map((e) => `${e.mask}:${e.flag}:${e.why}`);
+		const war = puzzleOf('war').solution[0]!;
+		expect(ex('war', { ...war, dstStage: ['TOP_OF_PIPE', 'COMPUTE_SHADER'] })).toEqual(['dstStage:TOP_OF_PIPE:all']);
+		expect(ex('war', { ...war, srcStage: ['VERTEX_ATTRIBUTE_INPUT', 'BOTTOM_OF_PIPE'] })).toEqual(['srcStage:BOTTOM_OF_PIPE:all']);
+		const u = puzzleOf('upload').solution[0]!;
+		expect(ex('upload', { ...u, srcStage: ['COPY', 'ALL_COMMANDS'] })).toEqual(['srcStage:ALL_COMMANDS:drop']);
+		expect(ex('upload', { ...u, srcAccess: ['TRANSFER_WRITE', 'MEMORY_WRITE'] })).toEqual(['srcAccess:MEMORY_WRITE:drop']);
+		// Dropping every reported flag (and replacing TOP/BOTTOM by nothing) leaves a correct barrier.
+		const b = { ...war, dstStage: ['TOP_OF_PIPE', 'COMPUTE_SHADER'] as Barrier['dstStage'] };
+		let left: Barrier = b;
+		for (const e of extras(puzzleOf('war'), [b])) left = { ...left, [e.mask]: (left[e.mask] as readonly string[]).filter((f) => f !== e.flag) } as Barrier;
+		expect(correct(puzzleOf('war'), [left])).toBe(true);
 	});
 	test('a read in srcAccessMask has nothing to publish: reported as not needed', () => {
 		const b = barrier({ srcStage: ['VERTEX_ATTRIBUTE_INPUT'], srcAccess: ['VERTEX_ATTRIBUTE_READ'], dstStage: ['COMPUTE_SHADER'] });
@@ -249,8 +264,26 @@ describe('barriers: the scenario', () => {
 		const tex = solve(begin(sc), 'texture', [t0, { ...t1, srcAccess: [] }]);
 		expect(tex.last!.log.some((e) => e.text.startsWith('vkCmdPipelineBarrier2(): WRITE_AFTER_WRITE hazard detected. vkCmdPipelineBarrier2 performs image layout transition'))).toBe(true);
 		expect(tex.last!.log.some((e) => e.text.startsWith('Barrier 2: WRITE_AFTER_WRITE'))).toBe(true);
-		const comp = solve(begin(sc), 'compute', [barrier()]);
+		// Step 26's silent run lacked only visibility (the draw's barriers chained the dispatches): its remark follows an
+		// access-scope miss of the second dispatch, never an execution miss the run did not have.
+		const comp = solve(begin(sc), 'compute', [barrier({ srcStage: ['COMPUTE_SHADER'], srcAccess: ['SHADER_STORAGE_WRITE'], dstStage: ['COMPUTE_SHADER'] })]);
+		expect(comp.last!.log.at(-1)!.text).toStartWith('In a run of step 26_particles with this barrier removed, synchronization validation');
 		expect(comp.last!.log.at(-1)!.text).toContain('reported nothing');
+		for (const slots of [[barrier()], [barrier({ srcStage: ['COMPUTE_SHADER'], dstStage: ['COMPUTE_SHADER'], dstAccess: ['SHADER_STORAGE_READ'] })]]) {
+			const r = solve(begin(sc), 'compute', slots);
+			expect(r.last!.log.some((e) => e.text.includes('reported nothing'))).toBe(false);
+		}
+	});
+	test('evidence says what the probe run changed in the barrier (removed, or the field it set)', () => {
+		const [t0, t1] = puzzleOf('texture').solution as [Barrier, Barrier];
+		const tex = solve(begin(sc), 'texture', [{ ...t0, dstAccess: [] }, t1]);
+		expect(tex.last!.log.some((e) => e.text === 'Barrier 1: The real layer, in a run of step 21_texture with dstAccessMask = VK_ACCESS_2_NONE in this barrier (first message, handles shortened):')).toBe(true);
+		const war = solve(begin(sc), 'war', [barrier({ dstStage: ['COMPUTE_SHADER'] })]);
+		expect(war.last!.log[3]!.text).toBe('The real layer, in a run of step 26_particles with this barrier removed (first message, handles shortened):');
+		const ru = barrierScenario('ru', V);
+		const r = act(ru, begin(ru), { item: 'war', verb: 'submit' });
+		expect(r.last!.log.some((e) => e.text.startsWith('Настоящий слой при запуске шага 26_particles без этого барьера'))).toBe(true);
+		for (const p of PUZZLES) for (const e of p.evidence ?? []) expect(e.fault === 'removed' || /^(src|dst)(Stage|Access)Mask = VK_/.test(e.fault)).toBe(true);
 	});
 	test('pressing "Set" without a change keeps a solved puzzle solved', () => {
 		let r = solve(begin(sc), 'upload', puzzleOf('upload').solution);

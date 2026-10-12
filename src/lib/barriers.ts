@@ -33,9 +33,11 @@
  *   are no transition: "the layout values are ignored and the image contents are preserved regardless of the values of
  *   oldLayout, newLayout, and the current layout of the image". Old layout UNDEFINED: "the contents of that range may be
  *   discarded" (accepted, but where the later command needs the contents the puzzle stays open).
- * - Render passes face outside work only through their load and store operations ("external synchronization with
- *   attachment access only needs to synchronize the load operations with previous commands"; "... in an earlier render
- *   pass only needs to synchronize with the store operations"). Depth/stencil load ops run in EARLY_FRAGMENT_TESTS, store
+ * - Render passes face outside work only through their load and store operations (vkspec 1.4.365 8.5 "Render Pass Load
+ *   Operations": "The load operation for each sample in an attachment happens-before any recorded command which accesses
+ *   the sample in that render pass instance via that attachment or an alias"; 8.6 "Render Pass Store Operations": "The
+ *   store operation for each sample in an attachment happens-after any recorded command which accesses the sample via
+ *   that attachment or an alias"). Depth/stencil load ops run in EARLY_FRAGMENT_TESTS, store
  *   ops in LATE_FRAGMENT_TESTS, color ones in COLOR_ATTACHMENT_OUTPUT; LOAD_OP_CLEAR and STORE_OP_STORE/DONT_CARE are
  *   writes (DEPTH_STENCIL_ATTACHMENT_WRITE / COLOR_ATTACHMENT_WRITE).
  * - Valid usage checked at submit (validusage.json, SDK 1.4.341): every access flag needs a stage that can perform it,
@@ -50,7 +52,10 @@
  *
  * Simplifications (stated in Barriers.astro's caption): one queue, commands in submission order, no host accesses, no
  * queue family ownership transfers, whole resources (no ranges or subresources); each command is reduced to the
- * accesses that face the barrier (a render pass to its load and store operations). Hazards are the spec's rules above;
+ * accesses that face the barrier (a render pass to its load and store operations); a slot is judged only against the
+ * commands right before and after it (no dependency chains through other barriers or commands, no semaphores); a subset
+ * of stages and access types (no tessellation, geometry, task/mesh shaders, input attachments, depth read-only layouts,
+ * and MEMORY_READ/WRITE expand only to the access types modelled here). Hazards are the spec's rules above;
  * the layer's own messages are quoted where a real run of a course step produced them (`Puzzle.evidence`). Pure: tested in
  * tests/labs/barriers.test.ts.
  */
@@ -250,6 +255,14 @@ export interface Evidence {
 	after: string;
 	/** The course step that was run with this barrier weakened or removed. */
 	step: string;
+	/** What the probe run did to the step's barrier: 'removed', or one field set as code (`srcAccessMask = VK_ACCESS_2_NONE`). */
+	fault: string;
+	/**
+	 * The misses the probe run really had, when it lacked less than the hazard's parties suggest (e.g. step 26 without its
+	 * compute->compute barrier still chained the dispatches through the draw's barriers: only visibility was missing).
+	 * The evidence is shown only for these misses; absent = any miss of this hazard.
+	 */
+	miss?: readonly Miss[];
 	/** The layer's message (an excerpt as recorded in the course notes, handles as "..."), or null: it reported nothing. */
 	text: string | null;
 }
@@ -308,7 +321,7 @@ export const PUZZLES: readonly Puzzle[] = [
 		struct: 'VkMemoryBarrier2',
 		step: '26_particles',
 		evidence: [
-			{ slot: 0, hazard: 'WRITE_AFTER_READ', before: 'draw', after: 'dispatch', step: '26_particles', text: 'vkQueueSubmit2(): WRITE_AFTER_READ hazard detected. vkCmdDispatch (from VkCommandBuffer 0x... submitted on the current VkQueue 0x...) writes to VkBuffer 0x..., which was previously read by vkCmdDraw (from VkCommandBuffer 0x... submitted on VkQueue 0x...). The current synchronization defines the destination stage mask as VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, but to prevent this hazard, it must include VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT. Vulkan insight: an execution dependency is sufficient to prevent this hazard.' },
+			{ slot: 0, hazard: 'WRITE_AFTER_READ', before: 'draw', after: 'dispatch', step: '26_particles', fault: 'removed', text:'vkQueueSubmit2(): WRITE_AFTER_READ hazard detected. vkCmdDispatch (from VkCommandBuffer 0x... submitted on the current VkQueue 0x...) writes to VkBuffer 0x..., which was previously read by vkCmdDraw (from VkCommandBuffer 0x... submitted on VkQueue 0x...). The current synchronization defines the destination stage mask as VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, but to prevent this hazard, it must include VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT. Vulkan insight: an execution dependency is sufficient to prevent this hazard.' },
 		],
 		seq: [
 			{ kind: 'cmd', id: 'draw', call: 'vkCmdDraw (frame N-1)', acc: [acc('VERTEX_ATTRIBUTE_INPUT', 'VERTEX_ATTRIBUTE_READ', false)] },
@@ -337,7 +350,11 @@ export const PUZZLES: readonly Puzzle[] = [
 		step: '26_particles',
 		evidence: [
 			// Step 26's dispatch reads what the previous frame's dispatch wrote; without that barrier the layer was silent.
-			{ slot: 0, hazard: 'READ_AFTER_WRITE', before: 'pass1', after: 'pass2', step: '26_particles', text: null },
+			// The draw between them kept the rest: before_draw (COMPUTE_SHADER / SHADER_STORAGE_WRITE -> VERTEX_ATTRIBUTE_INPUT)
+			// and the next frame's WAR barrier (VERTEX_ATTRIBUTE_INPUT -> COMPUTE_SHADER) chain the two dispatches and make
+			// the writes available, so that run lacked only visibility to the second dispatch (examples/rust/src/bin/
+			// 26_particles.rs, region frame-barriers).
+			{ slot: 0, hazard: 'READ_AFTER_WRITE', before: 'pass1', after: 'pass2', step: '26_particles', fault: 'removed', miss: ['acc2'], text: null },
 		],
 		seq: [
 			{ kind: 'cmd', id: 'pass1', call: 'vkCmdDispatch (pass 1)', acc: [acc('COMPUTE_SHADER', 'SHADER_STORAGE_WRITE', true)] },
@@ -388,8 +405,8 @@ export const PUZZLES: readonly Puzzle[] = [
 		usage: ['TRANSFER_DST', 'SAMPLED'],
 		initial: 'UNDEFINED',
 		evidence: [
-			{ slot: 0, hazard: 'WRITE_AFTER_WRITE', before: 'transition', after: 'copy', step: '21_texture', text: 'vkCmdCopyBufferToImage2(): pCopyBufferToImageInfo WRITE_AFTER_WRITE hazard detected. vkCmdCopyBufferToImage2 writes to VkImage 0x..., which was previously written during an image layout transition initiated by vkCmdPipelineBarrier2. No sufficient synchronization is present to ensure that a write (VK_ACCESS_2_TRANSFER_WRITE_BIT) at VK_PIPELINE_STAGE_2_COPY_BIT does not conflict with a prior layout transition.' },
-			{ slot: 1, hazard: 'WRITE_AFTER_WRITE', before: 'copy', after: 'transition', step: '21_texture', text: 'vkCmdPipelineBarrier2(): WRITE_AFTER_WRITE hazard detected. vkCmdPipelineBarrier2 performs image layout transition on the VkImage 0x..., which was previously written by vkCmdCopyBufferToImage2. No sufficient synchronization is present to ensure that a layout transition does not conflict with a prior write (VK_ACCESS_2_TRANSFER_WRITE_BIT) at VK_PIPELINE_STAGE_2_COPY_BIT.' },
+			{ slot: 0, hazard: 'WRITE_AFTER_WRITE', before: 'transition', after: 'copy', step: '21_texture', fault: 'dstAccessMask = VK_ACCESS_2_NONE', text:'vkCmdCopyBufferToImage2(): pCopyBufferToImageInfo WRITE_AFTER_WRITE hazard detected. vkCmdCopyBufferToImage2 writes to VkImage 0x..., which was previously written during an image layout transition initiated by vkCmdPipelineBarrier2. No sufficient synchronization is present to ensure that a write (VK_ACCESS_2_TRANSFER_WRITE_BIT) at VK_PIPELINE_STAGE_2_COPY_BIT does not conflict with a prior layout transition.' },
+			{ slot: 1, hazard: 'WRITE_AFTER_WRITE', before: 'copy', after: 'transition', step: '21_texture', fault: 'srcAccessMask = VK_ACCESS_2_NONE', text:'vkCmdPipelineBarrier2(): WRITE_AFTER_WRITE hazard detected. vkCmdPipelineBarrier2 performs image layout transition on the VkImage 0x..., which was previously written by vkCmdCopyBufferToImage2. No sufficient synchronization is present to ensure that a layout transition does not conflict with a prior write (VK_ACCESS_2_TRANSFER_WRITE_BIT) at VK_PIPELINE_STAGE_2_COPY_BIT.' },
 		],
 		seq: [
 			SLOT(false),
@@ -435,8 +452,9 @@ export const PUZZLES: readonly Puzzle[] = [
 		usage: ['DEPTH_STENCIL_ATTACHMENT'],
 		initial: 'DEPTH_ATTACHMENT_OPTIMAL',
 		evidence: [
-			{ slot: 0, hazard: 'WRITE_AFTER_WRITE', before: 'prev', after: 'transition', step: '22_depth', text: 'vkQueueSubmit2(): WRITE_AFTER_WRITE hazard detected. vkCmdPipelineBarrier2 (from VkCommandBuffer 0x... submitted on the current VkQueue 0x...) writes to VkImage 0x..., which was previously written by vkCmdEndRendering (from VkCommandBuffer 0x... submitted on VkQueue 0x...). No sufficient synchronization is present to ensure that a layout transition does not conflict with a prior write (VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT) at VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT.' },
-			{ slot: 0, hazard: 'WRITE_AFTER_WRITE', before: 'transition', after: 'next', step: '22_depth', text: 'vkCmdBeginRendering(): WRITE_AFTER_WRITE hazard detected. vkCmdBeginRendering clears pRenderingInfo.pDepthAttachment (VkImageView 0x..., loadOp VK_ATTACHMENT_LOAD_OP_CLEAR), which was previously written during an image layout transition initiated by vkCmdPipelineBarrier2. No sufficient synchronization is present to ensure that a write (VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT) at VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT does not conflict with a prior layout transition.' },
+			// The probe with srcStageMask EARLY_FRAGMENT_TESTS only printed the same message.
+			{ slot: 0, hazard: 'WRITE_AFTER_WRITE', before: 'prev', after: 'transition', step: '22_depth', fault: 'srcAccessMask = VK_ACCESS_2_NONE', text:'vkQueueSubmit2(): WRITE_AFTER_WRITE hazard detected. vkCmdPipelineBarrier2 (from VkCommandBuffer 0x... submitted on the current VkQueue 0x...) writes to VkImage 0x..., which was previously written by vkCmdEndRendering (from VkCommandBuffer 0x... submitted on VkQueue 0x...). No sufficient synchronization is present to ensure that a layout transition does not conflict with a prior write (VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT) at VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT.' },
+			{ slot: 0, hazard: 'WRITE_AFTER_WRITE', before: 'transition', after: 'next', step: '22_depth', fault: 'dstAccessMask = VK_ACCESS_2_NONE', text:'vkCmdBeginRendering(): WRITE_AFTER_WRITE hazard detected. vkCmdBeginRendering clears pRenderingInfo.pDepthAttachment (VkImageView 0x..., loadOp VK_ATTACHMENT_LOAD_OP_CLEAR), which was previously written during an image layout transition initiated by vkCmdPipelineBarrier2. No sufficient synchronization is present to ensure that a write (VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT) at VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT does not conflict with a prior layout transition.' },
 		],
 		seq: [
 			{
@@ -710,27 +728,35 @@ export interface Extra {
 const withMask = (slots: readonly Barrier[], k: number, mask: MaskKey, v: readonly string[]) => slots.map((b, i) => (i === k ? { ...b, [mask]: v } : b));
 
 /**
- * Flags a correct barrier does not need. Greedy: each flag is dropped in turn and stays dropped when the barrier stays
- * correct (so of two flags that cover each other only one is reported). A meta flag that must stay is split into the
+ * Flags a correct barrier does not need. Greedy: each flag is dropped in turn, broadest first, and stays dropped when the
+ * barrier stays correct (so of two flags that cover each other only the broader one is reported). A meta flag that must stay is split into the
  * parts that are valid in its mask (MEMORY_READ on FRAGMENT_SHADER = UNIFORM | SAMPLED | STORAGE reads: "all READ
  * access flags that are valid where it is used") and each part dropped in turn (still correct = a smaller flag would
  * do). A stage that must stay is compared with the stages whose execution scope is a strict part of its own (the
  * narrowest that keeps the barrier correct is named). TOP_OF_PIPE in the destination and BOTTOM_OF_PIPE in the source
- * mean ALL_COMMANDS (with no access) and are always reported.
+ * mean ALL_COMMANDS (with no access) and are always reported (and dropped like any flag when the rest suffices).
  */
 export function extras(p: Puzzle, slots: readonly Barrier[]): Extra[] {
 	const out: Extra[] = [];
 	let cur = slots;
 	for (const k of slots.keys()) {
 		for (const mask of MASKS) {
-			for (const f of slots[k]![mask] as readonly string[]) {
+			const side: Side = mask.startsWith('src') ? 'src' : 'dst';
+			// Broad flags are tried first: of COPY | ALL_COMMANDS the greedy drop must remove ALL_COMMANDS and keep COPY,
+			// not the other way round (stages by execution scope, access types by what they expand to; stable sort).
+			const size = (f: string) => (mask.endsWith('Stage') ? execScope([f as Stage], side).size : accessScope([f as Access]).size);
+			const order = [...(slots[k]![mask] as readonly string[])].sort((x, y) => size(y) - size(x));
+			for (const f of order) {
 				const flags = cur[k]![mask] as readonly string[];
 				const rest = flags.filter((x) => x !== f);
+				const without = withMask(cur, k, mask, rest);
 				if ((mask === 'dstStage' && f === 'TOP_OF_PIPE') || (mask === 'srcStage' && f === 'BOTTOM_OF_PIPE')) {
+					// Always reported; when the rest of the mask suffices it is also dropped, so the flags after it are
+					// judged without it.
 					out.push({ slot: k, mask, flag: f, why: 'all' });
+					if (correct(p, without)) cur = without;
 					continue;
 				}
-				const without = withMask(cur, k, mask, rest);
 				if (correct(p, without)) {
 					out.push({ slot: k, mask, flag: f, why: 'drop' });
 					cur = without;
@@ -745,7 +771,6 @@ export function extras(p: Puzzle, slots: readonly Barrier[]): Extra[] {
 				// A stage whose execution scope is a strict part of this one's (e.g. VERTEX_ATTRIBUTE_INPUT instead of
 				// VERTEX_SHADER as a source, which pulls in every logically earlier stage).
 				if (mask === 'srcStage' || mask === 'dstStage') {
-					const side: Side = mask === 'srcStage' ? 'src' : 'dst';
 					const own = execScope([f as Stage], side);
 					const alts = ATOMIC.filter((g) => {
 						const sub = execScope([g], side);
@@ -816,9 +841,12 @@ export function submit(s: BarrierState, id: string): Step {
 	for (const f of found) {
 		const vars = { hazard: f.hazard, before: partyOf(p, f.before), after: partyOf(p, f.after), stage: f.acc ? stageName(f.acc.stage) : '', access: f.acc ? accessName(f.acc.access) : '', slot: f.slot + 1, slots };
 		log.push({ ...msg('error', `hazard_${f.miss}`, vars), sync: syncId(f.hazard) });
-		const ev = p.evidence?.find((e) => e.slot === f.slot && e.hazard === f.hazard && e.before === f.before && e.after === f.after);
-		if (ev?.text) log.push(msg('info', 'evidence', { step: ev.step, slot: f.slot + 1, slots }), { kind: 'error', text: ev.text, sync: syncId(f.hazard) });
-		else if (ev) log.push(msg('info', 'silent', { step: ev.step, slot: f.slot + 1, slots }));
+		const ev = p.evidence?.find((e) => e.slot === f.slot && e.hazard === f.hazard && e.before === f.before && e.after === f.after && (!e.miss || e.miss.includes(f.miss)));
+		if (ev) {
+			const ctx = { step: ev.step, fault: ev.fault, slot: f.slot + 1, slots };
+			if (ev.text) log.push(msg('info', 'evidence', ctx), { kind: 'error', text: ev.text, sync: syncId(f.hazard) });
+			else log.push(msg('info', 'silent', ctx));
+		}
 	}
 	for (const k of discard) log.push(msg('warn', 'discard', { slot: k + 1, slots }));
 	let grade: Grade = 'hazard';

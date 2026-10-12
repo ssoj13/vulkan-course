@@ -52,7 +52,9 @@ export function entryOf(l: Line, lang: string): Entry {
 	if ('text' in l) return ref ? { kind: l.kind, text: l.text, ref } : { kind: l.kind, text: l.text };
 	const t = textOf(lang);
 	const party = (x: string | number | undefined) => (x === 'transition' ? t.transition : String(x ?? ''));
-	const vars = { ...l.vars, before: party(l.vars.before), after: party(l.vars.after) };
+	// Evidence remarks name what the probe run changed: 'removed', or a field as code (`srcAccessMask = VK_ACCESS_2_NONE`).
+	const fault = (x: string | number | undefined) => (x === undefined ? '' : x === 'removed' ? t.fault_removed : tfmt(lang, t.fault_mask, { change: x }));
+	const vars = { ...l.vars, before: party(l.vars.before), after: party(l.vars.after), fault: fault(l.vars.fault) };
 	// Puzzles with several barriers name the one a remark is about.
 	const prefix = Number(l.vars.slots) > 1 && l.vars.slot !== undefined ? tfmt(lang, t.slotPrefix, { slot: l.vars.slot }) : '';
 	const text = prefix + tfmt(lang, t[`m_${l.msg}`], vars);

@@ -25,9 +25,11 @@ What the submit can answer:
   later command that finds the image in another layout than the one it names. Nothing is submitted;
 - an open **hazard** (`READ_AFTER_WRITE`, `WRITE_AFTER_READ`, `WRITE_AFTER_WRITE`, the names synchronization validation
   uses), with the access and the scope that misses it. The submit is valid, so it goes through and the puzzle stays
-  open. Where a run of the course step with the same mistake produced a message, the layer's own text follows;
-- **closed**, and either tight (★) or with the flags the hazard does not need: `ALL_COMMANDS`, `MEMORY_WRITE`, a stage
-  that drags in more than it must. Those barriers are correct; they only make the GPU wait or flush more.
+  open. Where a run of the course step with its barrier removed or weakened met the same hazard, the layer's own text
+  follows, with what that run changed;
+- **closed**, and either tight (★) or with the flags the hazard does not need: `ALL_COMMANDS`,
+  `MEMORY_WRITE` over a broad stage mask, a stage that drags in more than it must. Those barriers are correct; they
+  only make the GPU wait or flush more.
 
 <Barriers />
 

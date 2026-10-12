@@ -95,9 +95,12 @@ export const TEXT = {
 			'{hazard}: {after} accesses the memory at {stage}, which is not in the second synchronization scope (dstStageMask and the stages logically later), so it may start before {before} is done.',
 		m_hazard_acc2:
 			'{hazard}: {after} accesses with {access} at {stage}, which is not in the second access scope (an access type of dstAccessMask, performed by a stage NAMED in dstStageMask): the earlier write is never made visible to it.',
-		m_evidence: 'The real layer, in a run of step {step} with this barrier weakened the same way (first message, handles shortened):',
-		m_silent: 'In a run of step {step} without this barrier, synchronization validation (with the shader-access heuristic) reported nothing: it reads SPIR-V statically and may miss accesses. A silent layer is not proof.',
-		m_discard: 'oldLayout UNDEFINED: "the contents of that range may be discarded" (spec). The later command needs exactly those contents, so it may read garbage. No validation message reports this; the old layout must be the current one.',
+		m_evidence: 'The real layer, in a run of step {step} with {fault} (first message, handles shortened):',
+		m_silent:
+			'In a run of step {step} with {fault}, synchronization validation (with the shader-access heuristic) reported nothing, although that run lacked what this barrier lacks: the writes were never made visible to the reader. Why the layer stayed silent was not established; a silent layer is not proof.',
+		fault_removed: 'this barrier removed',
+		fault_mask: '{change} in this barrier',
+		m_discard: 'oldLayout UNDEFINED: "the contents of that range may be discarded" (spec). The later command needs exactly those contents, so it may read garbage. Neither core nor synchronization validation reports this; the old layout must be the current one.',
 		m_tight: 'No hazard, and nothing could be removed without bringing one back: tight ★.',
 		m_wide: 'Correct: no hazard. But wider than needed ({n|# flag|# flags}), and that can cost GPU time (longer waits, extra cache work):',
 		m_extra_drop: '{flag} in {mask}: the barrier stays correct without it.',
@@ -107,7 +110,7 @@ export const TEXT = {
 		m_noTransition: 'Old and new layout are equal: no layout transition (synchronization2 ignores both values and keeps the contents).',
 		m_transition: 'A layout transition: a write between the two scopes. Earlier accesses must be done (and earlier writes available) before it; later accesses must wait for it and see its result.',
 		simplified:
-			'Simplifications of the simulator: one queue and its submission order; whole buffers and images (no ranges, mip levels or aspects); no host access and no queue family ownership transfers; each command reduced to the accesses that face the barrier (a render pass to its load and store operations). Refusals quote the real VUIDs; hazards follow the spec\'s scope rules, and where a run of the course step with that mistake produced one, the layer\'s own message is quoted below them.',
+			'Simplifications of the simulator: one queue and its submission order; whole buffers and images (no ranges, mip levels or aspects); no host access and no queue family ownership transfers; each command reduced to the accesses that face the barrier (a render pass to its load and store operations); each barrier judged only against the commands right before and after it (no dependency chains through other barriers or commands, no semaphores); a subset of the stages and access types (no tessellation, geometry or mesh shaders, no input attachments, no depth read-only layouts; MEMORY_READ and MEMORY_WRITE expand only to the access types modelled here). Refusals quote the real VUIDs; hazards follow the spec\'s scope rules. Where a run of the course step with its barrier removed or weakened met the same hazard, the layer\'s own message (or its silence) follows, with what that run changed.',
 		asText: 'The puzzles as text',
 		fb_intro: 'Each puzzle: two commands on one queue, the barrier between them is yours to write.',
 	},
@@ -201,10 +204,13 @@ export const TEXT = {
 			'{hazard}: {after} обращается к памяти на стадии {stage}, а её нет во втором scope синхронизации (dstStageMask и логически более поздние стадии), поэтому обращение может начаться раньше, чем закончится {before}.',
 		m_hazard_acc2:
 			'{hazard}: {after} обращается с {access} на стадии {stage}, а этого нет во втором access scope (тип доступа из dstAccessMask, выполненный стадией, НАЗВАННОЙ в dstStageMask): более ранняя запись для него так и не становится visible.',
-		m_evidence: 'Настоящий слой при запуске шага {step} с так же ослабленным барьером (первое сообщение, handle сокращены):',
-		m_silent: 'При запуске шага {step} без этого барьера синхронизационная валидация (с эвристикой обращений шейдеров) ничего не сообщила: она разбирает SPIR-V статически и может пропускать обращения. Молчание слоя не доказательство.',
+		m_evidence: 'Настоящий слой при запуске шага {step} {fault} (первое сообщение, handle сокращены):',
+		m_silent:
+			'При запуске шага {step} {fault} синхронизационная валидация (с эвристикой обращений шейдеров) ничего не сообщила, хотя тому запуску не хватало того же, чего не хватает этому барьеру: записи так и не стали visible для читающей команды. Почему слой промолчал, не выяснено; молчание слоя не доказательство.',
+		fault_removed: 'без этого барьера',
+		fault_mask: 'с {change} в этом барьере',
 		m_discard:
-			'oldLayout UNDEFINED: «the contents of that range may be discarded» (спецификация). А следующей команде нужно именно это содержимое, так что она может прочитать мусор. Никакое сообщение валидации об этом не скажет; старым layout должен быть текущий.',
+			'oldLayout UNDEFINED: «the contents of that range may be discarded» (спецификация). А следующей команде нужно именно это содержимое, так что она может прочитать мусор. Ни основная, ни синхронизационная валидация об этом не сообщают; старым layout должен быть текущий.',
 		m_tight: 'Hazard нет, и ничего нельзя убрать, не вернув его: барьер точный ★.',
 		m_wide: 'Верно: hazard нет. Но барьер шире нужного ({n|# флаг|# флага|# флагов}), а это может стоить времени GPU (дольше ожидание, лишняя работа с кэшами):',
 		m_extra_drop: '{flag} в {mask}: без него барьер остаётся верным.',
@@ -215,7 +221,7 @@ export const TEXT = {
 		m_transition:
 			'Смена layout — это запись между двумя scope. Более ранние обращения должны закончиться (а более ранние записи стать available) до неё; более поздние должны её дождаться и увидеть её результат.',
 		simplified:
-			'Упрощения симулятора: одна очередь и её порядок submit; буферы и изображения целиком (без диапазонов, mip-уровней и аспектов); нет обращений с хоста и передачи владения между семействами очередей; от каждой команды остаются только обращения, которые смотрят на барьер (от render pass — его load- и store-операции). Отказы цитируют настоящие VUID; hazard проверяются по правилам scope из спецификации, а если запуск шага курса с той же ошибкой дал сообщение слоя, оно приведено под ними дословно.',
+			'Упрощения симулятора: одна очередь и её порядок submit; буферы и изображения целиком (без диапазонов, mip-уровней и аспектов); нет обращений с хоста и передачи владения между семействами очередей; от каждой команды остаются только обращения, которые смотрят на барьер (от render pass — его load- и store-операции); каждый барьер проверяется только против команд прямо перед ним и после него (без цепочек зависимостей через другие барьеры и команды, без семафоров); стадии и типы доступа взяты не все (нет тесселяции, геометрических и mesh-шейдеров, input attachment и read-only layout глубины, а MEMORY_READ и MEMORY_WRITE раскрываются только в смоделированные здесь типы доступа). Отказы цитируют настоящие VUID; hazard проверяются по правилам scope из спецификации. Если запуск шага курса, где этот барьер убран или ослаблен, упёрся в тот же hazard, дальше дословно приведено сообщение слоя (или сказано, что он промолчал) и что именно в том запуске изменили.',
 		asText: 'Задачи текстом',
 		fb_intro: 'В каждой задаче две команды в одной очереди, а барьер между ними пишете вы.',
 	},

@@ -192,11 +192,11 @@ on one queue with barrier slots. Model `src/lib/barriers.ts` (rules + spec quote
   (EARLY|LATE, READ|WRITE) grades as correct but wider than needed: tight = src LATE / DS_WRITE -> dst EARLY / DS_WRITE.
 - VUIDs: access-mask ids are built from `SUPPORT` numbers and must be listed literally in `ACCESS_VUIDS` (vuid-refs.ts
   finds ids by text); layout ids 01197/01198/01208/01211/01212/01213/04066; later-command layout 09600/00180/09588.
-- Grading (`extras`): drop each flag; split meta flags (ALL_COMMANDS, ALL_GRAPHICS, ALL_TRANSFER, VERTEX_INPUT,
+- Grading (`extras`): drop each flag (broadest first); split meta flags (ALL_COMMANDS, ALL_GRAPHICS, ALL_TRANSFER, VERTEX_INPUT,
   MEMORY_*, SHADER_READ); try a stage with a strictly smaller execution scope (`narrow`); TOP in dst / BOTTOM in src
   always reported. Tight (★) = none.
 - Hazard lines are the simulator's own wording with the syncval hazard id as `ref`; real layer texts only in
-  `Puzzle.evidence`, matched by (slot, hazard, before, after). Probe runs 2026-10-11 (copies of steps 21/22/26 built
+  `Puzzle.evidence`, matched by (slot, hazard, before, after, optional miss). Probe runs 2026-10-11 (copies of steps 21/22/26 built
   OUTSIDE the repo under the lock, env PROBE faults, VALIDATE_SYNC + SHADER_ACCESSES_HEURISTIC; logs scratchpad
   barriers/runs, session-local): 22 `min` (src LATE/DS_WRITE -> dst EARLY/DS_WRITE) CLEAN = the depth tight answer is
   real; 22 src EARLY only or src access NONE -> WAW "vkCmdPipelineBarrier2 writes ... previously written by
@@ -209,6 +209,15 @@ on one queue with barrier slots. Model `src/lib/barriers.ts` (rules + spec quote
   "all READ access flags that are valid where it is used"), greedy `drop` (one of two mutually covering flags),
   narrowest `narrow` candidate, "Set" without a change keeps the verdict, depth texts quote the normative
   "happens-after/-before any recorded command which accesses the sample" (the "only needs to synchronize" lines are Notes).
+- Review fixes, round 2 (2026-10-11, tests in tests/labs/barriers.test.ts; reviewer's brute-force scripts rerun: 0
+  disagreements): `extras` tries each mask's flags broadest first (stages by execScope size, accesses by expansion) and
+  drops TOP(dst)/BOTTOM(src) from the working mask when the rest suffices, so COPY|ALL_COMMANDS names ALL_COMMANDS,
+  never the needed flag. `Evidence.fault` = what the probe changed ('removed' or `<field> = <value>`, worded by
+  `fault_removed`/`fault_mask`); `Evidence.miss` limits it to the misses the run really had: step 26 without its
+  compute->compute barrier still chained the dispatches through the draw's barriers (before_draw + next frame's WAR) and
+  made the writes available, so only visibility (acc2) was missing; the silent remark shows only for acc2 and no longer
+  guesses a cause (also fixed in compute/particles.mdx EN+RU, text + quiz whys). Caption states the adjacent-commands-only
+  and stage/access-subset simplifications.
 - Finding (not changed, examples are another owner's): step 22's depth barrier and its comment use EARLY|LATE on both
   sides and DS_READ|WRITE as destination; the probe proves LATE/DS_WRITE -> EARLY/DS_WRITE is enough (the trainer grades
   step 22's barrier as correct but wider). No evidence (no real run) for puzzles upload, waw, sample.
