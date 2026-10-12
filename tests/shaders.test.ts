@@ -36,6 +36,7 @@ const REQUIRED: Record<string, Cap[]> = {
 	'device_address.spv': ['Shader', 'PhysicalStorageBufferAddresses'],
 	'mesh.spv': ['Shader'],
 	'particles.spv': ['Shader'],
+	'pbr_variants.spv': ['Shader'],
 	'reduce.spv': ['Shader'],
 	'saxpy.spv': ['Shader'],
 	'textured.spv': ['Shader'],

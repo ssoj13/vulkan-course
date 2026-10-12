@@ -75,6 +75,17 @@
 			]
 		},
 		{
+			"source": "pbr_variants.slang",
+			"sourceSha256": "1962059eb2f645c654609796119684cfa28886976c750e14f8ba7fa88bc061af",
+			"outputs": [
+				{
+					"file": "pbr_variants.spv",
+					"bytes": 16380,
+					"sha256": "588c3dd6f949695dc0c64be5919c672af6f1083955022ada80955d3d72300add"
+				}
+			]
+		},
+		{
 			"source": "reduce.slang",
 			"sourceSha256": "bddf95c5c5990a391c5003905e6d3e379674e96752f88e96d3c45b7e80d81456",
 			"outputs": [

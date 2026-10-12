@@ -64,7 +64,8 @@ set(STEPS
     26_particles
     27_async_compute
     28_debug_labels
-    29_gpu_queries)
+    29_gpu_queries
+    30_pipeline_cache)
 # Steps that open a window.
 set(WINDOW_STEPS 06_window_surface 07_swapchain 08_pipeline 09_triangle
                  10_frames_in_flight 11_resize 12_timeline 14_vertex_buffer

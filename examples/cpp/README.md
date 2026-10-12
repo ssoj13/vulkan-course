@@ -92,6 +92,7 @@ and 25 on it, on Linux and on Windows.
 | 27 | `src/27_async_compute.cpp` | the simulation on a compute-only queue family: ping-pong buffers, CONCURRENT sharing, two timeline semaphores, timestamps on both queues measure the overlap; `--same-queue` |
 | 28 | `src/28_debug_labels.cpp` | VK_EXT_debug_utils: names on every object, nested command-buffer labels + an inserted label, queue labels around submit + present, messenger prints objects and labels; `--printf` (`shaders/debug_printf.slang`) |
 | 29 | `src/29_gpu_queries.cpp` | timestamps per pass, pipeline statistics vs predictions, host query reset, calibrated timestamps (submit -> GPU start latency); `--frames N`, `--no-stats` |
+| 30 | `src/30_pipeline_cache.cpp` | N pipeline variants from specialization constants (`shaders/pbr_variants.slang`, `--count`); creation without / with an in-memory / a loaded `PipelineCache` (`--save`, `--load` with a header check), creation feedback, `--probe` (FAIL_ON_PIPELINE_COMPILE_REQUIRED), `--no-driver-cache` and `--binary` (VK_KHR_pipeline_binary), `--no-validation` for timing; no window |
 
 Lessons embed code by `// #region <name>` ... `// #endregion` markers; the names
 match the Rust examples.
