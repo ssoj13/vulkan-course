@@ -806,6 +806,33 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
   p256 255 + Shared Memory Size 15360 (= 60 B/thread; the shader declares no groupshared: presumably spilled to shared
   memory, an interpretation), d64 40 regs. Times (4 Mi invocations, median of 5, shared machine, run 2): p8 0.047,
   p16 0.085, p32 0.167, p64 0.348, p128 0.847, p192 1.205, p256 1.866, d64 ~317 ms. Validation: bandicam warning only.
+- examples 30 (WIP, PAUSED 2026-10-11; Rust committed in faf9520): 30_pipeline_cache in both languages, no window,
+  shader `shaders/pbr_variants.slang` (5 int spec constants SpecId 0-4 LIGHTS/OCTAVES/BRDF/TONEMAP/VARIANT, full-screen
+  triangle VS + Cook-Torrance-ish FS; spv 16380 B, pinned ['Shader'] in tests/shaders.test.ts, test passes). CMake STEPS
+  and both example READMEs list 30 (root README step->lesson table: regenerate when the lesson exists; it lacks 28/29 too).
+  Flags --count --probe --save --load --no-driver-cache --binary --no-validation --verbose. Rust: fmt + clippy -D warnings
+  clean; C++ built /W4 clean once (before the uncommitted edits below). Measured (validation ON, both langs, first runs):
+  cold compile ~100 ms per pipeline (64 -> ~7.6 s); phase 2 (empty VkPipelineCache after phase 1) is NOT warmer (~7 s,
+  vertex stage hits 63/64, fragment 0/64): the NVIDIA in-process internal cache did not help; phase 3 64/64 hits, host
+  median 14 ms vs driver-reported 4 ms (validation on; redo with --no-validation); a second process's phase 1 was cold
+  again (disk cache did not help here - verify). Probe: empty cache -> VK_PIPELINE_COMPILE_REQUIRED + VK_NULL_HANDLE,
+  then VK_SUCCESS. Global binary key 8 bytes; 64 distinct pipeline keys; capture = 2 binaries per pipeline.
+  Experiments (C++, file from --save): UUID byte flipped -> app rejects; 64 bytes after the header XORed ->
+  vkCreatePipelineCache VK_ERROR_UNKNOWN (also with --no-validation; with validation a GENERAL WARNING "PipelineCache:
+  unable to load pipeline cache entry"); 64 bytes at offset 700000 XORed -> accepted, 63/64 hits in phases 2 AND 3, data
+  size unchanged (bad entry neither used nor replaced). OPEN BUG: --binary reload fails, vkCreateGraphicsPipelines
+  returns VK_PIPELINE_COMPILE_REQUIRED (no FAIL flag) for pipelines from binaries, both languages, with/without
+  validation, also when reusing the handles from vkCreatePipelineBinariesKHR(pipeline) directly and without the
+  feedback struct. Next experiments (were being added, reverted, not run): reload with VkPipelineCreateFlags2CreateInfo
+  {0} or {CAPTURE_DATA} in the chain; binaries from the internal cache (pPipelineCreateInfo) after a normal create.
+  UNCOMMITTED C++ edits (keep, mirror in Rust): vkCreatePipelineCache failure with file data -> print "vkCreatePipelineCache
+  refused the data: <VkResult>; starting with an empty cache" and retry empty; driver-made byte counts moved to `[size]`
+  lines (cache data, Loading/Saved, binary data; Rust/C++ differ by ~14 bytes: 1452837 vs 1452851), Phase 2 line without
+  size. Remaining: mirror those in Rust; fix --binary; rebuild both under the lock (one lock call for both:
+  scratchpad m12p30/build.ps1); validation runs (VALIDATE_SYNC + heuristic: so far only the bandicam warning) incl. --probe
+  --save --load --binary --no-driver-cache; stdout identity w/o [timing]/[size] (scratchpad m12p30/run.ps1 tag mode
+  'args'); timing: --no-validation, 3 alternating runs per language, medians; process-to-process cold with/without
+  --no-driver-cache; then TODO entry + review.
 ## TODO
 
 - [ ] Concept trees (engine v0.5.0): a reader check in a real browser (keyboard through all four views, window
