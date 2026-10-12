@@ -90,6 +90,9 @@ Vulkan Configurator (`vkconfig`, in the SDK) can set the same options without en
 | `25_compute` | [Compute pipelines](https://ssoj13.github.io/vulkan-course/compute/compute-pipelines/) |
 | `26_particles` | [Particles](https://ssoj13.github.io/vulkan-course/compute/particles/) |
 | `27_async_compute` | [Async compute](https://ssoj13.github.io/vulkan-course/compute/async-compute/) |
+| `28_debug_labels` | [Debugging and profiling](https://ssoj13.github.io/vulkan-course/advanced/debugging-and-profiling/) |
+| `29_gpu_queries` | [Debugging and profiling](https://ssoj13.github.io/vulkan-course/advanced/debugging-and-profiling/) |
+| `30_pipeline_cache` | Pipeline cache (lesson in progress) |
 
 ## Repository
 

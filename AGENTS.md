@@ -97,8 +97,11 @@ those as real output); never invented. Check content with `bun run lint` before 
     (33), ray-tracing-pipeline (34), capstone-renderer (35, glTF + PBR, multi-file). Not planned yet: shader objects,
     tile-based mobile GPUs.
 
-Status (2026-10-11): modules 1-11 published EN + RU (examples 01-27, 12 labs, screenshots 09-27 pixel-verified).
-Module 12 in progress.
+Status (2026-10-12): modules 1-11 published EN + RU (examples 01-27, 12 labs + 2 trainers frame-assembly and
+barriers, screenshots 09-29 pixel-verified). Module 12: lesson advanced/debugging-and-profiling EN + RU (steps 28-29);
+step 30 pipeline cache compiles on all CI compilers but is unfinished (State "examples 30": --binary reload bug,
+Rust lacks the last two C++ changes, clean timing runs pending). Engine course-kit v0.7.1. Single branch main in both
+repos, no worktrees.
 
 ## Visualizations (planned, Vulkan-specific, live in this repo)
 
@@ -839,10 +842,11 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
   drag/resize, phones); headless Chrome verified click, Create, content swap, Escape and focus return in all four
   views (2026-10-11). Screenshots: scratchpad nodeview/final/ (session-local).
 
-Current plan (2026-10-11), in order:
+Current plan (updated 2026-10-12), in order:
 1. Module 12 per `notes/module-12-plan.md`: per pair of steps code (both languages) -> independent code review -> fixes
-   -> EN lessons -> review -> fixes + RU -> push. Wave 1 = Slang check (mesh/task, ray query, RT pipeline, printf) +
-   28/29 (in progress); then 30, 31, 32, 33+34, 35.
+   -> EN lessons -> review -> fixes + RU -> push. Done: Slang check, 28/29 + lesson EN/RU. Next: finish 30 (State
+   "examples 30"), then 31, 32, 33+34, 35; tools lessons (plan's "Tools section"); trainers: layouts, descriptors,
+   pipeline creation.
 2. Open reviews: RU lessons of modules 4-11 (language + facts vs EN); second look at the module 11 EN fixes.
 3. Course-wide cleanups listed below (Vk::new guard pattern, compute pipeline object in objects.json, README .spv list,
    15_staging.cpp comment, labs/graphics-pipeline wording, course-kit v0.4.1 release + `bun run check` in CI, C++ in CI).
