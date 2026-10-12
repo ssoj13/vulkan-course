@@ -7,6 +7,14 @@
  * RESET_COMMAND_BUFFER), a fence and an `image_available` semaphore; per swapchain image i a `render_finished`
  * semaphore. Fences start "not created": the reader picks VK_FENCE_CREATE_SIGNALED_BIT or not.
  *
+ * Two kinds of truth. The GPU and the presentation engine know when a batch, a semaphore wait or a signal has executed
+ * (`Batch.done`, `Sig.fired`, `Sig.used`, `Fence.signaled`). The host knows a batch has completed only once a fence
+ * wait returned VK_SUCCESS for that batch or a later one on the queue (`Batch.seen`; the spec: "Before a fence or
+ * semaphore is signaled, it is guaranteed that any previously submitted queue operations have completed execution").
+ * Until then the command buffer stays pending, the fence stays in use and the semaphore keeps the batch's wait, as far
+ * as the host (and the validation layer, which tracks completion through the same waits) can tell. A present's wait is
+ * known to be over only when the same image is acquired again. The rules about host calls read the host's view.
+ *
  * Rules and their sources (registry texts through `vuReport`, never pasted). Marked [run]: also reported by the real
  * validation layer on the course machine (2026-10-11, step 10 with a temporary fault, see AGENTS.md "Frame assembly
  * trainer"); the others are from validusage.json and the spec only:
@@ -17,28 +25,36 @@
  *   still in use (VUID-vkQueueSubmit2-fence-04895); binary wait without an unclaimed submitted signal
  *   (VUID-vkQueueSubmit2-semaphore-03873); binary signal that cannot be proven unsignaled when it executes
  *   (VUID-vkQueueSubmit2-semaphore-03868 [run]; for a render_finished still waited on by a present the layer adds "may still
- *   be in use by VkSwapchainKHR ... was presented but was not re-acquired").
+ *   be in use by VkSwapchainKHR ... was presented but was not re-acquired"). A signal behind a wait of an earlier batch
+ *   on the same queue is fine: that wait executes first ("The first synchronization scope of each semaphore signal
+ *   operation ... includes ... all commands that occur earlier in submission order"), so the semaphore is unsignaled
+ *   when the new signal executes.
  * - vkAcquireNextImageKHR: semaphore signaled (VUID-vkAcquireNextImageKHR-semaphore-01286) or with a pending signal or
- *   wait (VUID-vkAcquireNextImageKHR-semaphore-01779 [run]); more than S - minImageCount images held with an infinite
- *   timeout (VUID-vkAcquireNextImageKHR-surface-07783, spec: "Acquiring too many images at once may block
+ *   wait (VUID-vkAcquireNextImageKHR-semaphore-01779 [run]); with UINT64_MAX while the app holds more than S - M images
+ *   (VUID-vkAcquireNextImageKHR-surface-07783; spec: vkAcquireNextImageKHR "should not be called if the number of images
+ *   that the application has currently acquired is greater than S-M", and "Acquiring too many images at once may block
  *   indefinitely, which is covered by valid usage when attempting to use UINT64_MAX").
  * - vkQueuePresentKHR: image not acquired or not transitioned by a submitted batch
  *   (VUID-VkPresentInfoKHR-pImageIndices-01430 [run]); wait without a submitted signal
  *   (VUID-vkQueuePresentKHR-pWaitSemaphores-03268).
- * - vkResetFences on a fence of a pending submission: VUID-vkResetFences-pFences-01123 [run].
+ * - vkResetFences on a fence of a submission the host has not seen complete: VUID-vkResetFences-pFences-01123 [run].
  * - Not VUIDs, refused with a labeled explanation: vkWaitForFences(UINT64_MAX) on an unsignaled fence that no
  *   submission will signal (spec: it "will block and wait until the condition is satisfied or the timeout has
- *   expired" = forever); recording for an image the app does not hold (spec: "Use of a presentable image must occur
- *   only after the image is returned by vkAcquireNextImageKHR, and before it is released by vkQueuePresentKHR").
+ *   expired" = forever); submitting commands that render to an image the app does not hold (spec: "Use of a
+ *   presentable image must occur only after the image is returned by vkAcquireNextImageKHR, and before it is released
+ *   by vkQueuePresentKHR"; recording does not touch the image, executing does, so the trainer checks at the submit).
  * - Hazards (valid usage holds, synchronization validation reports them; accepted, logged as errors, the frame counts
- *   as broken): the batch does not wait on the image's acquire semaphore, or waits at BOTTOM_OF_PIPE ("equivalent to
- *   VK_PIPELINE_STAGE_2_NONE in the second scope"), so the UNDEFINED -> COLOR_ATTACHMENT_OPTIMAL transition (src
- *   stage COLOR_ATTACHMENT_OUTPUT) is not chained after the acquire: WRITE_AFTER_READ; the present does not wait on
- *   the semaphore the rendering batch signals: PRESENT_AFTER_WRITE.
+ *   as broken): no batch rendering the image is chained after its acquire (the batch neither waits on the acquire
+ *   semaphore nor follows in submission order a batch that did, or it waits at BOTTOM_OF_PIPE, "equivalent to
+ *   VK_PIPELINE_STAGE_2_NONE in the second scope"), so the UNDEFINED -> COLOR_ATTACHMENT_OPTIMAL transition (src stage
+ *   COLOR_ATTACHMENT_OUTPUT) is not ordered after the acquire: WRITE_AFTER_READ, and the frame stays broken whatever
+ *   later batches do; the present waits on no signal of the image's last rendering batch or of a batch after it in
+ *   submission order: PRESENT_AFTER_WRITE.
  *
- * Simplifications (stated on the lab page): the queue completes batches in submission order; the presentation engine
- * is FIFO (step 10 used MAILBOX on the course machine) and returns images in the order they were presented; the host
- * calls never fail (no OUT_OF_DATE). Pure module: no DOM, tested in tests/labs/frame-assembly.test.ts.
+ * Simplifications (stated in FrameAssembly.astro's caption, so on every page that embeds the trainer): the queue
+ * completes batches in submission order; the presentation engine is FIFO (step 10 used MAILBOX on the course machine)
+ * and returns images in the order they were presented; the host learns of completions only through vkWaitForFences;
+ * the host calls never fail (no OUT_OF_DATE). Pure module: no DOM, tested in tests/labs/frame-assembly.test.ts.
  */
 import { vuReport } from './vuids';
 
@@ -62,37 +78,49 @@ export type Stage = (typeof STAGES)[number];
 export const stageName = (s: Stage) => `VK_PIPELINE_STAGE_2_${s}_BIT`;
 
 /**
- * A binary semaphore as the app can know it. `sig`: no signal / a submitted signal not executed yet / signaled.
- * `claim`: the wait that takes the current signal (a batch not yet executed, or a present whose wait the app cannot
- * see complete until the same image is acquired again).
+ * One signal operation on a binary semaphore. It leaves the semaphore once the host knows the wait that took it is
+ * over: the waiting batch was seen complete, or the image whose present waited was acquired again.
  */
-export interface Sem {
-	sig: 'none' | 'pending' | 'signaled';
+export interface Sig {
+	/** The signaling operation: a batch, or the acquire of an image. */
+	from: { by: 'batch'; id: number } | { by: 'acquire'; img: number };
+	/** The signal has executed. */
+	fired: boolean;
+	/** The wait that takes this signal: a submitted batch, or a present of image `img`. */
 	claim: null | { by: 'batch'; id: number } | { by: 'present'; img: number };
+	/** That wait has executed (the semaphore is unsignaled again, whether or not the host knows it). */
+	used: boolean;
+}
+/** A binary semaphore: its signal operations, oldest first; none = unsignaled as far as the host knows. */
+export interface Sem {
+	sigs: readonly Sig[];
 }
 export interface Fence {
 	created: boolean;
 	signaled: boolean;
-	/** Id of the pending batch that will signal it. */
+	/** The batch last submitted with it (null when none, or after vkResetFences). */
 	batch: number | null;
 }
+/** Command buffer states as the host knows them: `pending` until the host saw its batch complete. */
 export type CbState = 'initial' | 'executable' | 'pending' | 'invalid';
 export interface Cb {
 	state: CbState;
 	/** Image the recorded commands render to. */
 	image: number | null;
+	/** Batch that executes it while pending. */
+	batch: number | null;
 }
 export interface Img {
 	/** free = not held by anyone, app = acquired, queued = presented and not shown yet, shown = on screen. */
 	owner: 'free' | 'app' | 'queued' | 'shown';
 	/** Semaphore the acquire signals for this image (while the app holds it). */
 	acq: string | null;
-	/** True once a batch rendering it waited on `acq`. */
+	/** A batch rendering it since the acquire is chained after the acquire: later batches are too (submission order). */
 	acqWaited: boolean;
+	/** A batch rendering it since the acquire was not chained after the acquire: the frame is broken. */
+	broken: boolean;
 	/** Last batch that rendered it since the acquire. */
 	rendered: number | null;
-	/** Semaphore whose pending acquire signal fires when the presentation engine releases the image. */
-	release: string | null;
 }
 export interface Batch {
 	id: number;
@@ -103,7 +131,10 @@ export interface Batch {
 	signal: string;
 	fence: string;
 	hazard: boolean;
+	/** Executed by the GPU. */
 	done: boolean;
+	/** The host saw it complete (a fence wait returned VK_SUCCESS for it or a later batch). */
+	seen: boolean;
 }
 export interface FrameState {
 	sems: Readonly<Record<string, Sem>>;
@@ -124,10 +155,10 @@ export interface FrameState {
 }
 
 export const INIT: FrameState = {
-	sems: Object.fromEntries(SEMS.map((s) => [s, { sig: 'none', claim: null }])),
+	sems: Object.fromEntries(SEMS.map((s) => [s, { sigs: [] }])),
 	fences: SLOTS.map(() => ({ created: false, signaled: false, batch: null })),
-	cbs: SLOTS.map(() => ({ state: 'initial', image: null })),
-	imgs: IMAGES.map(() => ({ owner: 'free', acq: null, acqWaited: false, rendered: null, release: null })),
+	cbs: SLOTS.map(() => ({ state: 'initial', image: null, batch: null })),
+	imgs: IMAGES.map(() => ({ owner: 'free', acq: null, acqWaited: false, broken: false, rendered: null })),
 	order: [...IMAGES],
 	screen: null,
 	queue: [],
@@ -149,7 +180,7 @@ export type Msg =
 	| 'gpuWaits'
 	| 'peNothing'
 	| 'peWaits'
-	| 'noImage'
+	| 'noPick'
 	| 'notHeld'
 	| 'slowStage'
 	| 'semInUseByPresent'
@@ -172,6 +203,8 @@ export interface Step {
 const vu = (id: string, call: string): Line => ({ kind: 'error', vuid: id, text: vuReport(id, call) });
 const call = (text: string): Line => ({ kind: 'call', text });
 const msg = (kind: LogKind, m: Msg, vars: Record<string, string | number> = {}): Line => ({ kind, msg: m, vars });
+/** A stored run can carry an option value no longer offered as an object ('' = none picked): refused, never thrown. */
+const noPick = (): Line[] => [msg('error', 'noPick')];
 
 /**
  * Hazard reports of synchronization validation (VK_KHRONOS_VALIDATION_VALIDATE_SYNC=true), copied from step 10 runs
@@ -190,21 +223,52 @@ export const SYNC = {
 
 const slotOf = (id: string) => Number(id.slice(-1));
 const pendingBatches = (s: FrameState) => s.batches.filter((b) => !b.done);
-/** Images the app holds and has not presented: what a command buffer can be recorded for. */
+/** Images the app holds and has not presented. */
 export const heldImages = (s: FrameState): number[] => IMAGES.filter((i) => s.imgs[i]!.owner === 'app');
+/** Images a command buffer can be recorded for: any (recording does not touch the image), held ones first. */
+export const recordImages = (s: FrameState): number[] => [...heldImages(s), ...IMAGES.filter((i) => s.imgs[i]!.owner !== 'app')];
 export const createdFences = (s: FrameState): string[] => SLOTS.filter((k) => s.fences[k]!.created).map((k) => `f${k}`);
 
 // Small immutable updates (the state is tiny; clarity over cleverness).
-const setSem = (s: FrameState, id: string, v: Partial<Sem>): FrameState => ({ ...s, sems: { ...s.sems, [id]: { ...s.sems[id]!, ...v } } });
 const setFence = (s: FrameState, k: number, v: Partial<Fence>): FrameState => ({ ...s, fences: s.fences.map((f, i) => (i === k ? { ...f, ...v } : f)) });
 const setCb = (s: FrameState, k: number, v: Partial<Cb>): FrameState => ({ ...s, cbs: s.cbs.map((c, i) => (i === k ? { ...c, ...v } : c)) });
 const setImg = (s: FrameState, n: number, v: Partial<Img>): FrameState => ({ ...s, imgs: s.imgs.map((m, i) => (i === n ? { ...m, ...v } : m)) });
 const setBatch = (s: FrameState, id: number, v: Partial<Batch>): FrameState => ({ ...s, batches: s.batches.map((b) => (b.id === id ? { ...b, ...v } : b)) });
+/** Rewrites the signal operations of every semaphore (`f` returns the new list for one semaphore). */
+const mapSigs = (s: FrameState, f: (sigs: readonly Sig[], id: string) => readonly Sig[]): FrameState => ({
+	...s,
+	sems: Object.fromEntries(Object.entries(s.sems).map(([id, x]) => [id, { sigs: f(x.sigs, id) }])),
+});
+const sameClaim = (a: Sig['claim'], b: NonNullable<Sig['claim']>) => a !== null && a.by === b.by && (a.by === 'batch' ? a.id === (b as { id: number }).id : a.img === (b as { img: number }).img);
 
-/** The semaphore may receive a new signal: no signal, no wait the app cannot see completed. */
-const semIdle = (x: Sem) => x.sig === 'none' && x.claim === null;
-/** The semaphore holds a submitted signal no other wait has taken. */
-const semWaitable = (x: Sem) => x.sig !== 'none' && x.claim === null;
+/** The signal a new wait takes: the oldest one no wait has taken. */
+const unclaimed = (x: Sem): Sig | undefined => x.sigs.find((g) => g.claim === null);
+/** Gives the oldest unclaimed signal of `sem` to the wait `claim`. */
+function claimSig(s: FrameState, sem: string, claim: NonNullable<Sig['claim']>): FrameState {
+	const k = s.sems[sem]!.sigs.findIndex((g) => g.claim === null);
+	return mapSigs(s, (sigs, id) => (id === sem ? sigs.map((g, i) => (i === k ? { ...g, claim } : g)) : sigs));
+}
+/** The signal a wait took, with its semaphore. */
+function claimedBy(s: FrameState, claim: NonNullable<Sig['claim']>): { sem: string; sig: Sig } | null {
+	for (const sem of SEMS) {
+		const sig = s.sems[sem]!.sigs.find((g) => sameClaim(g.claim, claim));
+		if (sig) return { sem, sig };
+	}
+	return null;
+}
+/**
+ * A new signal from a batch is proven to execute on an unsignaled semaphore: every signal it has is taken by a wait
+ * of an earlier batch on this queue, which executes first (submission order). A present's wait gives no such order.
+ */
+const signalable = (sigs: readonly Sig[]) => sigs.every((g) => g.claim?.by === 'batch');
+
+/** The host saw batch `id` complete: so are all batches before it on this queue (they completed first). */
+function see(s: FrameState, id: number): FrameState {
+	let st: FrameState = { ...s, batches: s.batches.map((b) => (b.id <= id ? { ...b, seen: true } : b)) };
+	const seen = (n: number | null) => n !== null && st.batches[n]!.seen;
+	st = { ...st, cbs: st.cbs.map((c) => (c.state === 'pending' && seen(c.batch) ? { ...c, state: 'invalid', batch: null } : c)) };
+	return mapSigs(st, (sigs) => sigs.filter((g) => !(g.claim?.by === 'batch' && seen(g.claim.id))));
+}
 
 // ---------------------------------------------------------------------------------------------------------------
 // Fences
@@ -217,8 +281,8 @@ export function createFence(s: FrameState, k: number, signaled: boolean): Step {
 }
 
 /**
- * Why vkWaitForFences on fence k with an infinite timeout would never return: no pending submission signals the fence,
- * or the GPU and the presentation engine can never get that far. Empty when the wait returns.
+ * Why vkWaitForFences on fence k with an infinite timeout would never return: no submission signals the fence, or the
+ * GPU and the presentation engine can never get that far. Empty when the wait returns.
  */
 export function waitBlockers(s: FrameState, k: number, infinite: boolean): Line[] {
 	const f = s.fences[k]!;
@@ -227,34 +291,48 @@ export function waitBlockers(s: FrameState, k: number, infinite: boolean): Line[
 	return [];
 }
 
+/** vkWaitForFences: VK_SUCCESS tells the host that the fence's batch, and every batch before it, has completed. */
 export function waitFence(s: FrameState, k: number, infinite: boolean): Step {
-	const f = s.fences[k]!;
 	const head = call(`vkWaitForFences(in_flight[${k}], timeout = ${infinite ? 'UINT64_MAX' : '0'})`);
-	if (f.signaled) return { state: s, log: [head, call('-> VK_SUCCESS')] };
+	const ok = (st: FrameState, log: Line[]): Step => {
+		const b = st.fences[k]!.batch;
+		return { state: b === null ? st : see(st, b), log: [...log, call('-> VK_SUCCESS')] };
+	};
+	const f = s.fences[k]!;
+	if (f.signaled) return ok(s, [head]);
 	if (!infinite || f.batch === null) return { state: s, log: [head, call('-> VK_TIMEOUT'), msg('info', 'timeout', { fence: `in_flight[${k}]` })] };
 	const r = runUntil(s, (x) => x.fences[k]!.signaled)!;
-	return { state: r.state, log: [head, msg('info', 'blocked'), ...r.log, call('-> VK_SUCCESS')] };
+	return ok(r.state, [head, msg('info', 'blocked'), ...r.log]);
 }
 
+/** The fence belongs to a submission the host has not seen complete. */
+const fenceInUse = (s: FrameState, k: number) => {
+	const b = s.fences[k]!.batch;
+	return b !== null && !s.batches[b]!.seen;
+};
+
 export function resetBlockers(s: FrameState, k: number): Line[] {
-	return s.fences[k]!.batch !== null ? [vu('VUID-vkResetFences-pFences-01123', 'vkResetFences')] : [];
+	return fenceInUse(s, k) ? [vu('VUID-vkResetFences-pFences-01123', 'vkResetFences')] : [];
 }
 
 export function resetFence(s: FrameState, k: number): Step {
-	return { state: setFence(s, k, { signaled: false }), log: [call(`vkResetFences(in_flight[${k}])`)] };
+	return { state: setFence(s, k, { signaled: false, batch: null }), log: [call(`vkResetFences(in_flight[${k}])`)] };
 }
 
 // ---------------------------------------------------------------------------------------------------------------
 // Acquire
 
 export function acquireBlockers(s: FrameState, sem: string): Line[] {
+	const x = s.sems[sem];
+	if (!x) return noPick();
 	const out: Line[] = [];
-	const x = s.sems[sem]!;
 	// A submitted wait takes the signal: the layer reports the pending wait (01779), not the payload (01286); seen in
 	// step 10 without its fence wait.
-	if (x.claim?.by === 'batch' || (x.claim === null && x.sig === 'pending')) out.push(vu('VUID-vkAcquireNextImageKHR-semaphore-01779', 'vkAcquireNextImageKHR'));
-	else if (x.claim === null && x.sig === 'signaled') out.push(vu('VUID-vkAcquireNextImageKHR-semaphore-01286', 'vkAcquireNextImageKHR'));
-	else if (x.claim?.by === 'present') out.push(vu('VUID-vkAcquireNextImageKHR-semaphore-01779', 'vkAcquireNextImageKHR'), msg('info', 'semInUseByPresent', { sem: semName(sem), i: x.claim.img }));
+	const pending = x.sigs.some((g) => g.claim?.by === 'batch' || (g.claim === null && !g.fired));
+	const present = x.sigs.find((g) => g.claim?.by === 'present')?.claim;
+	if (pending || present) out.push(vu('VUID-vkAcquireNextImageKHR-semaphore-01779', 'vkAcquireNextImageKHR'));
+	else if (x.sigs.length) out.push(vu('VUID-vkAcquireNextImageKHR-semaphore-01286', 'vkAcquireNextImageKHR'));
+	if (!pending && present?.by === 'present') out.push(msg('info', 'semInUseByPresent', { sem: semName(sem), i: present.img }));
 	if (s.imgs[s.order[0]!]!.owner === 'queued' && !runUntil(s, (x) => x.imgs[x.order[0]!]!.owner !== 'queued')) out.push(msg('error', 'stuck'));
 	if (heldImages(s).length > S - MIN_IMAGES) out.push(vu('VUID-vkAcquireNextImageKHR-surface-07783', 'vkAcquireNextImageKHR'), msg('info', 'tooManyImages', { held: heldImages(s).length, s: S, m: MIN_IMAGES }));
 	return out;
@@ -275,16 +353,13 @@ export function acquire(s: FrameState, sem: string): Step {
 		st = r.state;
 	}
 	const i = head();
-	const img = st.imgs[i]!;
-	const now = img.owner === 'free';
+	const now = st.imgs[i]!.owner === 'free';
 	st = { ...st, order: st.order.slice(1) };
-	st = setImg(st, i, { owner: 'app', acq: sem, acqWaited: false, rendered: null, release: now ? null : sem });
-	st = setSem(st, sem, { sig: now ? 'signaled' : 'pending' });
-	// The image is back, so the present that showed it has finished waiting on its semaphore.
-	for (const id of SEMS) {
-		const c = st.sems[id]!.claim;
-		if (c?.by === 'present' && c.img === i) st = setSem(st, id, { claim: null });
-	}
+	st = setImg(st, i, { owner: 'app', acq: sem, acqWaited: false, broken: false, rendered: null });
+	// The image is back, so the present that showed it has finished waiting on its semaphore: the host knows now.
+	st = mapSigs(st, (sigs) => sigs.filter((g) => !(g.claim?.by === 'present' && g.claim.img === i)));
+	const sig: Sig = { from: { by: 'acquire', img: i }, fired: now, claim: null, used: false };
+	st = mapSigs(st, (sigs, id) => (id === sem ? [...sigs, sig] : sigs));
 	log.push(call(`vkAcquireNextImageKHR(UINT64_MAX, ${semName(sem)}) -> image ${i}`));
 	if (!now) log.push(msg('info', 'pendingAcquire', { i, sem: semName(sem) }));
 	return { state: st, log };
@@ -293,16 +368,15 @@ export function acquire(s: FrameState, sem: string): Step {
 // ---------------------------------------------------------------------------------------------------------------
 // Command buffers
 
+/** `image` null = none picked. Any image may be recorded for: the submit checks that the app holds it. */
 export function recordBlockers(s: FrameState, k: number, image: number | null): Line[] {
-	const out: Line[] = [];
-	if (s.cbs[k]!.state === 'pending') out.push(vu('VUID-vkResetCommandBuffer-commandBuffer-00045', 'vkResetCommandBuffer'), vu('VUID-vkBeginCommandBuffer-commandBuffer-00049', 'vkBeginCommandBuffer'));
-	if (image === null) out.push(msg('error', 'noImage'));
-	return out;
+	if (image === null || !s.imgs[image]) return noPick();
+	return s.cbs[k]!.state === 'pending' ? [vu('VUID-vkResetCommandBuffer-commandBuffer-00045', 'vkResetCommandBuffer'), vu('VUID-vkBeginCommandBuffer-commandBuffer-00049', 'vkBeginCommandBuffer')] : [];
 }
 
 export function record(s: FrameState, k: number, image: number): Step {
 	return {
-		state: setCb(s, k, { state: 'executable', image }),
+		state: setCb(s, k, { state: 'executable', image, batch: null }),
 		log: [
 			call(`vkResetCommandBuffer(cmd[${k}]); vkBeginCommandBuffer(cmd[${k}], ONE_TIME_SUBMIT)`),
 			call(`vkCmdPipelineBarrier2(image ${image}: UNDEFINED -> COLOR_ATTACHMENT_OPTIMAL, src COLOR_ATTACHMENT_OUTPUT)`),
@@ -321,23 +395,25 @@ export interface SubmitOpts {
 }
 
 export function submitBlockers(s: FrameState, k: number, o: SubmitOpts): Line[] {
+	if (!s.sems[o.wait] || !s.sems[o.signal] || (o.fence && !s.fences[slotOf(o.fence)])) return noPick();
 	const out: Line[] = [];
 	const cb = s.cbs[k]!;
 	if (cb.state === 'pending') out.push(vu('VUID-vkQueueSubmit2-commandBuffer-03875', 'vkQueueSubmit2'));
 	else if (cb.state !== 'executable') out.push(vu('VUID-vkQueueSubmit2-commandBuffer-03874', 'vkQueueSubmit2'));
 	else if (s.imgs[cb.image!]!.owner !== 'app') out.push(msg('error', 'notHeld', { i: cb.image! }));
 	if (o.fence) {
-		const f = s.fences[slotOf(o.fence)]!;
-		if (f.signaled) out.push(vu('VUID-vkQueueSubmit2-fence-04894', 'vkQueueSubmit2'));
-		else if (f.batch !== null) out.push(vu('VUID-vkQueueSubmit2-fence-04895', 'vkQueueSubmit2'));
+		const k2 = slotOf(o.fence);
+		if (s.fences[k2]!.signaled) out.push(vu('VUID-vkQueueSubmit2-fence-04894', 'vkQueueSubmit2'));
+		else if (fenceInUse(s, k2)) out.push(vu('VUID-vkQueueSubmit2-fence-04895', 'vkQueueSubmit2'));
 	}
-	const w = s.sems[o.wait]!;
-	if (!semWaitable(w)) out.push(vu('VUID-vkQueueSubmit2-semaphore-03873', 'vkQueueSubmit2'));
-	// The batch's own wait unsignals its semaphore before the batch's signal executes.
-	const sg: Sem = o.signal === o.wait && semWaitable(w) ? { sig: 'none', claim: null } : s.sems[o.signal]!;
-	if (!semIdle(sg)) {
+	if (!unclaimed(s.sems[o.wait]!)) out.push(vu('VUID-vkQueueSubmit2-semaphore-03873', 'vkQueueSubmit2'));
+	// The batch's own wait takes its signal before the batch's signal executes.
+	const own = o.signal === o.wait && unclaimed(s.sems[o.wait]!) ? claimSig(s, o.wait, { by: 'batch', id: s.batches.length }) : s;
+	const sigs = own.sems[o.signal]!.sigs;
+	if (!signalable(sigs)) {
 		out.push(vu('VUID-vkQueueSubmit2-semaphore-03868', 'vkQueueSubmit2'));
-		if (sg.claim?.by === 'present') out.push(msg('info', 'semInUseByPresent', { sem: semName(o.signal), i: sg.claim.img }));
+		const p = sigs.find((g) => g.claim?.by === 'present')?.claim;
+		if (p?.by === 'present') out.push(msg('info', 'semInUseByPresent', { sem: semName(o.signal), i: p.img }));
 	}
 	return out;
 }
@@ -345,7 +421,7 @@ export function submitBlockers(s: FrameState, k: number, o: SubmitOpts): Line[] 
 /** Whether a batch rendering `image` and waiting on `wait` at `stage` is chained after the image's acquire. */
 function acquireChained(s: FrameState, image: number, wait: string, stage: Stage): boolean {
 	const img = s.imgs[image]!;
-	if (img.acqWaited) return true; // an earlier batch of this acquire already waited on it
+	if (img.acqWaited) return true; // an earlier batch of this acquire was chained: this one follows it in submission order
 	return wait === img.acq && stage !== 'BOTTOM_OF_PIPE';
 }
 
@@ -354,14 +430,16 @@ export function submit(s: FrameState, k: number, o: SubmitOpts): Step {
 	const hazard = !acquireChained(s, image, o.wait, o.stage);
 	const id = s.batches.length;
 	const others = pendingBatches(s).some((b) => b.slot !== k);
-	let st: FrameState = { ...s, batches: [...s.batches, { id, slot: k, image, wait: o.wait, stage: o.stage, signal: o.signal, fence: o.fence, hazard, done: false }], overlap: s.overlap || others };
-	st = setCb(st, k, { state: 'pending' });
-	st = setSem(st, o.wait, { claim: { by: 'batch', id } });
-	if (o.signal !== o.wait) st = setSem(st, o.signal, { sig: 'pending' });
+	let st: FrameState = { ...s, batches: [...s.batches, { id, slot: k, image, wait: o.wait, stage: o.stage, signal: o.signal, fence: o.fence, hazard, done: false, seen: false }], overlap: s.overlap || others };
+	st = setCb(st, k, { state: 'pending', batch: id });
+	st = claimSig(st, o.wait, { by: 'batch', id });
+	const sig: Sig = { from: { by: 'batch', id }, fired: false, claim: null, used: false };
+	st = mapSigs(st, (sigs, sem) => (sem === o.signal ? [...sigs, sig] : sigs));
 	if (o.fence) st = setFence(st, slotOf(o.fence), { batch: id });
-	st = setImg(st, image, { rendered: id, acqWaited: st.imgs[image]!.acqWaited || o.wait === st.imgs[image]!.acq });
+	const img = st.imgs[image]!;
+	st = setImg(st, image, { rendered: id, acqWaited: img.acqWaited || !hazard, broken: img.broken || hazard });
 	const log: Line[] = [call(`vkQueueSubmit2(cmd[${k}], wait ${semName(o.wait)} at ${stageName(o.stage)}, signal ${semName(o.signal)}, fence ${o.fence ? `in_flight[${slotOf(o.fence)}]` : 'VK_NULL_HANDLE'}) -> batch #${id}`)];
-	if (hazard) log.push({ kind: 'error', text: SYNC.acquire.text, sync: SYNC.acquire.id }, o.wait === s.imgs[image]!.acq ? msg('info', 'hazardStage', { i: image, stage: stageName(o.stage) }) : msg('info', 'hazardAcquire', { i: image, sem: semName(s.imgs[image]!.acq!) }));
+	if (hazard) log.push({ kind: 'error', text: SYNC.acquire.text, sync: SYNC.acquire.id }, o.wait === img.acq ? msg('info', 'hazardStage', { i: image, stage: stageName(o.stage) }) : msg('info', 'hazardAcquire', { i: image, sem: semName(img.acq!) }));
 	else if (o.stage === 'TOP_OF_PIPE' || o.stage === 'ALL_COMMANDS') log.push(msg('info', 'slowStage', { stage: stageName(o.stage) }));
 	return { state: st, log };
 }
@@ -370,19 +448,24 @@ export function submit(s: FrameState, k: number, o: SubmitOpts): Step {
 // Present
 
 export function presentBlockers(s: FrameState, i: number, wait: string): Line[] {
+	if (!s.sems[wait]) return noPick();
 	const out: Line[] = [];
 	const img = s.imgs[i]!;
 	if (img.owner !== 'app' || img.rendered === null) out.push(vu('VUID-VkPresentInfoKHR-pImageIndices-01430', 'vkQueuePresentKHR'));
-	if (!semWaitable(s.sems[wait]!)) out.push(vu('VUID-vkQueuePresentKHR-pWaitSemaphores-03268', 'vkQueuePresentKHR'));
+	if (!unclaimed(s.sems[wait]!)) out.push(vu('VUID-vkQueuePresentKHR-pWaitSemaphores-03268', 'vkQueuePresentKHR'));
 	return out;
 }
 
 export function present(s: FrameState, i: number, wait: string): Step {
-	const b = s.batches[s.imgs[i]!.rendered!]!;
-	const badWait = wait !== b.signal;
-	let st: FrameState = { ...s, queue: [...s.queue, i], order: [...s.order, i], frames: [...s.frames, { slot: b.slot, image: i, hazard: b.hazard || badWait }] };
+	const img = s.imgs[i]!;
+	const b = s.batches[img.rendered!]!;
+	// A signal of the last batch rendering the image, or of any later batch on the queue, follows the rendering and
+	// the transition to PRESENT_SRC_KHR in submission order (its first synchronization scope covers them).
+	const from = unclaimed(s.sems[wait]!)!.from;
+	const badWait = !(from.by === 'batch' && from.id >= b.id);
+	let st: FrameState = { ...s, queue: [...s.queue, i], order: [...s.order, i], frames: [...s.frames, { slot: b.slot, image: i, hazard: img.broken || badWait }] };
 	st = setImg(st, i, { owner: 'queued', acq: null });
-	st = setSem(st, wait, { claim: { by: 'present', img: i } });
+	st = claimSig(st, wait, { by: 'present', img: i });
 	const log: Line[] = [call(`vkQueuePresentKHR(image ${i}, wait ${semName(wait)}) -> VK_SUCCESS`)];
 	if (badWait) log.push({ kind: 'error', text: SYNC.present.text.replace('{i}', String(i)), sync: SYNC.present.id }, msg('info', 'hazardPresent', { i, sem: semName(b.signal) }));
 	return { state: st, log };
@@ -391,31 +474,39 @@ export function present(s: FrameState, i: number, wait: string): Step {
 // ---------------------------------------------------------------------------------------------------------------
 // Time: the GPU queue and the presentation engine
 
-/** The oldest pending batch, and the semaphore it still waits for (null = it can run). */
-function nextBatch(s: FrameState): { b: Batch; blockedBy: string | null } | null {
+/** The oldest pending batch, and the signal it still waits for (null = it can run). */
+function nextBatch(s: FrameState): { b: Batch; blockedBy: Sig | null } | null {
 	const b = pendingBatches(s)[0];
 	if (!b) return null;
-	return { b, blockedBy: s.sems[b.wait]!.sig === 'signaled' ? null : b.wait };
+	const w = claimedBy(s, { by: 'batch', id: b.id })!.sig;
+	return { b, blockedBy: w.fired ? null : w };
 }
 
 export function gpuBlockers(s: FrameState): Line[] {
 	const n = nextBatch(s);
 	if (!n) return [msg('info', 'gpuIdle')];
 	if (n.blockedBy) {
-		const img = s.imgs.findIndex((m) => m.release === n.blockedBy);
-		return [msg('info', 'gpuWaits', { n: n.b.id, sem: semName(n.blockedBy), i: img < 0 ? '?' : img })];
+		const from = n.blockedBy.from;
+		return [msg('info', 'gpuWaits', { n: n.b.id, sem: semName(n.b.wait), i: from.by === 'acquire' ? from.img : '?' })];
 	}
 	return [];
 }
 
-/** The GPU executes the oldest pending batch: its wait completes, its signal and fence fire. */
+/**
+ * The GPU executes the oldest pending batch: its wait completes, its signal and fence fire. The host learns nothing
+ * from it: the command buffer, the fence and the semaphore wait stay in use for the host until a fence wait.
+ */
 export function gpuStep(s: FrameState): Step {
 	const { b } = nextBatch(s)!;
 	let st = setBatch(s, b.id, { done: true });
-	st = setSem(st, b.wait, { sig: 'none', claim: null });
-	st = setSem(st, b.signal, { sig: 'signaled' });
-	st = setCb(st, b.slot, { state: 'invalid' });
-	if (b.fence) st = setFence(st, slotOf(b.fence), { signaled: true, batch: null });
+	st = mapSigs(st, (sigs) =>
+		sigs.map((g) => {
+			if (sameClaim(g.claim, { by: 'batch', id: b.id })) return { ...g, used: true };
+			if (g.from.by === 'batch' && g.from.id === b.id) return { ...g, fired: true };
+			return g;
+		}),
+	);
+	if (b.fence) st = setFence(st, slotOf(b.fence), { signaled: true });
 	return { state: st, log: [msg('info', 'gpuRan', { n: b.id, slot: b.slot, i: b.image, sem: semName(b.signal), fence: b.fence ? `in_flight[${slotOf(b.fence)}]` : '-' })] };
 }
 
@@ -423,9 +514,9 @@ export function gpuStep(s: FrameState): Step {
 function nextShown(s: FrameState): { i: number; waits: string | null } | null {
 	const i = s.queue[0];
 	if (i === undefined) return null;
-	const sem = SEMS.find((id) => { const c = s.sems[id]!.claim; return c?.by === 'present' && c.img === i; });
+	const w = claimedBy(s, { by: 'present', img: i });
 	// The present's wait completes when its semaphore is signaled.
-	return { i, waits: sem && s.sems[sem]!.sig !== 'signaled' ? sem : null };
+	return { i, waits: w && !w.sig.fired ? w.sem : null };
 }
 
 export function peBlockers(s: FrameState): Line[] {
@@ -439,20 +530,17 @@ export function peBlockers(s: FrameState): Line[] {
 export function peStep(s: FrameState): Step {
 	const { i } = nextShown(s)!;
 	let st: FrameState = { ...s, queue: s.queue.slice(1), screen: i };
-	const sem = SEMS.find((id) => { const c = st.sems[id]!.claim; return c?.by === 'present' && c.img === i; });
-	// The present's wait has executed; the app still cannot see it (the claim stays until image i is acquired again).
-	if (sem) st = setSem(st, sem, { sig: 'none' });
+	// The present's wait has executed; the app still cannot see it (the signal stays until image i is acquired again).
+	st = mapSigs(st, (sigs) => sigs.map((g) => (sameClaim(g.claim, { by: 'present', img: i }) ? { ...g, used: true } : g)));
 	st = setImg(st, i, { owner: 'shown' });
 	const log: Line[] = [msg('info', 'peShown', { i })];
 	const old = s.screen;
 	if (old !== null) {
-		const o = st.imgs[old]!;
-		if (o.owner === 'shown') st = setImg(st, old, { owner: 'free' });
-		if (o.release) {
-			st = setSem(st, o.release, { sig: 'signaled' });
-			st = setImg(st, old, { release: null });
-		}
-		log.push(msg('info', 'peReleased', { i: old, sem: o.release ? semName(o.release) : '-' }));
+		if (st.imgs[old]!.owner === 'shown') st = setImg(st, old, { owner: 'free' });
+		// An acquire that returned the image while it was on screen signals its semaphore now.
+		const rel = SEMS.find((id) => st.sems[id]!.sigs.some((g) => g.from.by === 'acquire' && g.from.img === old && !g.fired));
+		if (rel) st = mapSigs(st, (sigs, id) => (id === rel ? sigs.map((g) => (g.from.by === 'acquire' && g.from.img === old ? { ...g, fired: true } : g)) : sigs));
+		log.push(msg('info', 'peReleased', { i: old, sem: rel ? semName(rel) : '-' }));
 	}
 	return { state: st, log };
 }
@@ -477,11 +565,19 @@ export function runUntil(s: FrameState, done: (s: FrameState) => boolean): Step 
 // ---------------------------------------------------------------------------------------------------------------
 // Words on the cards
 
-export function semState(s: FrameState, id: string): 'unsignaled' | 'pending' | 'signaled' | 'waited' | 'present' {
-	const x = s.sems[id]!;
-	if (x.claim?.by === 'present') return 'present';
-	if (x.claim?.by === 'batch') return 'waited';
-	return x.sig === 'none' ? 'unsignaled' : x.sig;
+/**
+ * A semaphore as the host sees it: taken by a present (`present`, image) or by a batch (`waited`, or `waitedDone`
+ * once the GPU executed that wait but no fence wait told the host), else the state of its newest signal.
+ */
+export type SemView = { st: 'unsignaled' | 'pending' | 'signaled' } | { st: 'waited' | 'waitedDone'; n: number } | { st: 'present'; i: number };
+export function semView(s: FrameState, id: string): SemView {
+	const sigs = s.sems[id]!.sigs;
+	const p = sigs.find((g) => g.claim?.by === 'present')?.claim;
+	if (p?.by === 'present') return { st: 'present', i: p.img };
+	const w = sigs.find((g) => g.claim?.by === 'batch');
+	if (w?.claim?.by === 'batch') return { st: w.used ? 'waitedDone' : 'waited', n: w.claim.id };
+	const last = sigs.at(-1);
+	return { st: !last ? 'unsignaled' : last.fired ? 'signaled' : 'pending' };
 }
 export function fenceState(s: FrameState, k: number): 'none' | 'signaled' | 'unsignaled' | 'pending' {
 	const f = s.fences[k]!;

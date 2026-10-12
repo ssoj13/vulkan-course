@@ -152,11 +152,26 @@ uses it too).
   WRITE_AFTER_PRESENT); TOP_OF_PIPE -> clean; present without wait semaphore -> "PRESENT_AFTER_WRITE hazard" and then
   03868 "previously signaled ... and has not since been waited on"; no fence wait -> 01779, 01123, 00045, 00049,
   03875, 01430. Not reproduced live (registry + spec only): 04894, 04895, 03873, 01286, 07783, 03268, 03874.
-- Model simplifications (stated on the lab page): batches complete in submission order; FIFO presentation engine
-  returning images in present order; no OUT_OF_DATE. A host wait (fence, acquire of a not-yet-shown image) runs GPU +
-  presentation engine until it returns; a wait that never could is refused as a labeled deadlock.
-- [ ] Engine gap (course-kit): the trainer console keeps its scroll at the top, so new lines go out of view once it
-  overflows (14rem); worked around with `lines={8}`. Proposal: scroll the log to the newest line on change.
+- Model simplifications (text `simplified`, the figcaption of FrameAssembly.astro, so EVERY embedding states them; the
+  lab page no longer repeats them): batches complete in submission order; FIFO presentation engine returning images in
+  present order; the host learns of completions only through vkWaitForFences (timeout 0 = vkGetFenceStatus); no
+  OUT_OF_DATE. A host wait (fence, acquire of a not-yet-shown image) runs GPU + presentation engine until it returns; a
+  wait that never could is refused as a labeled deadlock.
+- Review fixes (2026-10-11, tests "review fixes" in tests/labs/frame-assembly.test.ts):
+  - GPU truth vs host knowledge: `Batch.done`/`Sig.fired`/`Sig.used`/`Fence.signaled` = what executed; `Batch.seen` =
+    a fence wait returned VK_SUCCESS for it or a later batch (`see()`). Host-facing rules read the host view: cb pending
+    (00045/00049/03875) and fence in use (01123/04895) until seen; a semaphore keeps a batch's wait until seen (01779).
+    The "GPU" button alone never frees anything for the host.
+  - Semaphores are lists of signal operations (`Sem.sigs`, each with its claim): a batch may signal a semaphore whose
+    current signal an earlier pending batch waits on (03868 holds: that wait executes first, submission order); a
+    present's claim still refuses (released only by re-acquiring the image).
+  - Acquire hazard: `Img.acqWaited` only from a chained batch, `Img.broken` ORs every batch's hazard since the acquire
+    (a later batch cannot hide it). Present hazard = broken, or the waited signal comes from a batch BEFORE the image's
+    last rendering batch (a later batch's signal covers it by submission order).
+  - Recording for any image is valid (recording does not touch it); `notHeld` refuses the submit. Item options left ''
+    (stored runs) are refused with `noPick`, never thrown. Present's default wait = the rendering batch's signal.
+- [x] Engine gap (course-kit): the console stayed at the top; fixed in course-kit v0.7.1 (follows the newest line,
+  stays put while the reader scrolled up), `lines={8}` removed. Verified headless 2026-10-11.
 
 ## Labs (12, 2026-10-10)
 
@@ -220,7 +235,8 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
 
 ## State (2026-10-10)
 
-- Engine: `github:ssoj13/course-kit#v0.7.0` (public, released 2026-10-11: trainer API v2 = StaleAct, scenario version,
+- Engine: `github:ssoj13/course-kit#v0.7.1` (v0.7.1 2026-10-11: trainer console follows its newest line; v0.7.0
+  released 2026-10-11: trainer API v2 = StaleAct, scenario version,
   option kinds, global actions, card status words; one-`:root` theme contract, `--ck-on-fill`, `--ck-mono`. v0.6.0 color
   tokens `--ck-*` + trainers; v0.5.0 concept
   trees, v0.4.1 declarations and v0.4.2 labs catalog are in it). Bump the tag in package.json for engine changes, then `bun install`. node_modules/course-kit files are

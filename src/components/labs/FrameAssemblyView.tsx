@@ -72,8 +72,6 @@ export default function FrameAssemblyView({ lang, version }: FrameAssemblyViewPr
 				hint={t.hint}
 				body={(it) => <p>{it.def}</p>}
 				startHint={t.startHint}
-				// A frame prints ~10 lines and the engine console keeps its scroll at the top: show only the newest ones.
-				lines={8}
 				statusText={statusText}
 				statusTag={statusTag}
 				progressText={(c, state) => {

@@ -25,6 +25,8 @@ const steps = [t.fb_1, t.fb_2, t.fb_3, t.fb_4, t.fb_5, t.fb_6];
 
 <figure class="vk-frame-assembly not-content">
 	<FrameAssemblyView client:only="react" lang={lang} version={version} />
+	{/* The model's simplifications travel with the widget: every page that embeds it states them. */}
+	<figcaption class="vk-frame-assembly-caption">{t.simplified}</figcaption>
 	<details class="vk-frame-assembly-text">
 		<summary>{t.asText}</summary>
 		<p>{t.fb_intro}</p>
@@ -36,6 +38,11 @@ const steps = [t.fb_1, t.fb_2, t.fb_3, t.fb_4, t.fb_5, t.fb_6];
 	.vk-frame-assembly {
 		margin: 1.5rem 0;
 		min-height: 10rem;
+	}
+	.vk-frame-assembly-caption {
+		margin-top: 0.6rem;
+		font-size: var(--sl-text-sm);
+		color: var(--sl-color-gray-2);
 	}
 	.vk-frame-assembly-text {
 		margin-top: 0.4rem;

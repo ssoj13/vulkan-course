@@ -28,11 +28,8 @@ Every refused call quotes the rule that refuses it:
 
 <FrameAssembly />
 
-**Simplifications**, so you know what is model and what is Vulkan: the queue completes batches in submission order
-(a real queue may overlap them); the presentation engine is FIFO and gives images back in the order they were
-presented (the spec leaves the order to the implementation, and step 10 runs MAILBOX on the course machine); no call
-returns `VK_ERROR_OUT_OF_DATE_KHR` ([swapchain recreation](lesson:swapchain-recreation) handles that). The frame
-loop itself, the objects and the rules are step 10's.
+The simplifications under the simulator say what is model and what is Vulkan; `VK_ERROR_OUT_OF_DATE_KHR`, which it
+never returns, is handled in [swapchain recreation](lesson:swapchain-recreation).
 
 Things to try:
 

@@ -23,7 +23,7 @@
     "@astrojs/react": "^7.0.1",
     "@astrojs/starlight": "^0.42.6",
     "astro": "^7.3.8",
-    "course-kit": "github:ssoj13/course-kit#v0.7.0",
+    "course-kit": "github:ssoj13/course-kit#v0.7.1",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "sharp": "^0.35.3"

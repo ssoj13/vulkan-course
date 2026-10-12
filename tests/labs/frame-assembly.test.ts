@@ -4,7 +4,7 @@ import { textErrors } from '../../src/lib/text';
 import { TEXT } from '../../src/components/labs/frame-assembly.text';
 import { ITEMS, frameScenario } from '../../src/lib/frame-trainer';
 import { ruleVersion } from '../../src/lib/object-trainer';
-import { SYNC, type FrameState } from '../../src/lib/frames';
+import { SYNC, semView, type FrameState } from '../../src/lib/frames';
 
 const V = 'test';
 const sc = frameScenario('en', V);
@@ -37,6 +37,11 @@ function play(acts: readonly Act[], s = sc): Run<FrameState> {
 }
 const refs = (r: Run<FrameState>) => (r.last?.log ?? []).map((e) => e.ref).filter(Boolean);
 const refused = (r: Run<FrameState>) => r.last?.ok === false;
+/** Candidates of an item option in a state; the first one is the default. */
+function candidates(st: FrameState, item: string, verb: string, opt: string): readonly string[] {
+	const o = sc.verbs(st, item).find((v) => v.id === verb)?.options?.find((x) => x.id === opt);
+	return o?.kind === 'item' ? o.of(st) : [];
+}
 
 describe('frame assembly: the correct loop of step 10', () => {
 	test('4 frames, 2 per slot, no hazard, two frames in flight: complete', () => {
@@ -59,12 +64,12 @@ describe('frame assembly: the correct loop of step 10', () => {
 	test('the 4th acquire gets image 0 back only after the presentation engine showed it (FIFO); its semaphore signal waits for the next vblank', () => {
 		const r = play([...SETUP, ...frame(0, 0), ...frame(1, 1), ...frame(0, 2), wait(1), acquire('ia1')]);
 		expect(r.state.screen).toBe(0);
-		expect(r.state.sems.ia1!.sig).toBe('pending');
+		expect(semView(r.state, 'ia1').st).toBe('pending');
 		const blocked = act(sc, play([...r.acts, reset(1), rec(1, 0), submit(1, 'ia1', 'rf0')]), gpu);
 		expect(blocked.last?.log[0]!.text).toStartWith('Batch #3 cannot complete yet: it waits for image_available[1]');
 		// The next vblank shows image 1 and releases image 0: its acquire signal fires and the batch can complete.
 		const vblank = act(sc, blocked, pe);
-		expect(vblank.state.sems.ia1!.sig).toBe('signaled');
+		expect(vblank.state.sems.ia1!.sigs.map((g) => g.fired)).toEqual([true]);
 		expect(act(sc, vblank, gpu).state.batches.every((x) => x.done)).toBe(true);
 	});
 	test('undo, reload (encode/decode) and replay rebuild the same run', () => {
@@ -130,9 +135,107 @@ describe('frame assembly: refusals quote the real rules', () => {
 		expect(z.last?.ok).toBe(true);
 		expect(z.last?.log.map((e) => e.text)).toContain('-> VK_TIMEOUT');
 	});
-	test('recording with no acquired image is refused (spec: use only between acquire and present)', () => {
-		const r = play([...SETUP, { item: 'cb0', verb: 'record' }]);
-		expect(r.last?.log[0]!.text).toStartWith('No acquired image to render to.');
+});
+
+describe('frame assembly: review fixes (2026-10-11)', () => {
+	test('1: the host knows a batch completed only from a fence wait, not from the GPU having run it', () => {
+		// No fences at all: the GPU runs batch #0, but nothing tells the host.
+		const noFence = [acquire('ia0'), rec(0, 0), submit(0, 'ia0', 'rf0', ''), present(0, 'rf0'), acquire('ia1'), rec(1, 1), submit(1, 'ia1', 'rf1', ''), present(1, 'rf1'), gpu];
+		const r = play(noFence);
+		expect(r.state.batches[0]!.done).toBe(true);
+		expect(refs(play([...noFence, acquire('ia0')]))).toEqual(['VUID-vkAcquireNextImageKHR-semaphore-01779']);
+		expect(refs(play([...noFence, rec(0, 2)]))).toEqual(['VUID-vkResetCommandBuffer-commandBuffer-00045', 'VUID-vkBeginCommandBuffer-commandBuffer-00049']);
+		expect(sc.badge!(r.state, 'cb0')).toStartWith('pending for the host: batch #0 completed');
+		// With a fence: the GPU step alone does not free cmd[0] or the fence; the wait does.
+		const f = [...SETUP, wait(0), acquire('ia0'), reset(0), rec(0, 0), submit(0, 'ia0', 'rf0'), gpu];
+		expect(refs(play([...f, rec(0, 0)]))).toEqual(['VUID-vkResetCommandBuffer-commandBuffer-00045', 'VUID-vkBeginCommandBuffer-commandBuffer-00049']);
+		expect(refs(play([...f, reset(0)]))).toEqual(['VUID-vkResetFences-pFences-01123']);
+		expect(sc.badge!(play(f).state, 'ia0')).toStartWith('batch #0 waited on it');
+		// Timeout 0 on the signaled fence returns VK_SUCCESS: the host knows now.
+		expect(play([...f, wait(0, 'zero'), rec(0, 0)]).last?.ok).toBe(true);
+		expect(play([...f, wait(0), reset(0)]).last?.ok).toBe(true);
+	});
+	test('1: a fence wait tells the host about its batch and every earlier batch on the queue', () => {
+		const r = play([...SETUP, ...frame(0, 0), ...frame(1, 1), wait(1)]);
+		expect(r.state.batches.map((b) => b.seen)).toEqual([true, true]);
+		expect(r.state.cbs.map((c) => c.state)).toEqual(['invalid', 'invalid']);
+	});
+	test('2: a later batch does not hide an earlier batch\'s acquire hazard', () => {
+		const r = play([...SETUP, wait(0), acquire('ia0'), reset(0), rec(0, 0), submit(0, 'ia0', 'rf1', 'f0', 'BOTTOM_OF_PIPE'), rec(1, 0), submit(1, 'rf1', 'rf0', ''), present(0, 'rf0')]);
+		expect(r.state.batches.map((b) => b.hazard)).toEqual([true, true]);
+		expect(r.state.frames).toEqual([{ slot: 1, image: 0, hazard: true }]);
+	});
+	test('2: a batch after a chained one is chained too (submission order), whatever it waits on', () => {
+		const r = play([...SETUP, wait(0), acquire('ia0'), reset(0), rec(0, 0), submit(0, 'ia0', 'rf1'), rec(1, 0), submit(1, 'rf1', 'rf0', ''), present(0, 'rf0')]);
+		expect(r.state.frames).toEqual([{ slot: 1, image: 0, hazard: false }]);
+	});
+	test('4a: signaling a semaphore whose signal an earlier pending batch waits on is valid (that wait executes first)', () => {
+		const pre = [...SETUP, wait(0), acquire('ia0'), reset(0), rec(0, 0), submit(0, 'ia0', 'rf0'), rec(1, 0), submit(1, 'rf0', 'rf1', ''), wait(0), reset(0), rec(0, 0)];
+		const r = play([...pre, submit(0, 'rf1', 'rf0')]);
+		expect(r.last?.ok).toBe(true);
+		expect(r.state.batches[1]!.done).toBe(false); // batch #1's wait on rf0 is still pending
+		const shown = play([...r.acts, present(0, 'rf0'), gpu, gpu, pe]);
+		expect(shown.state.frames).toEqual([{ slot: 0, image: 0, hazard: false }]);
+		expect(shown.state.screen).toBe(0);
+		// A present's wait gives no such order: the challenge still fails with 03868.
+		expect(refs(play([...SETUP, ...frame(0, 0), ...frame(1, 1), wait(0), acquire('ia0'), reset(0), rec(0, 2), submit(0, 'ia0', 'rf0')]))).toEqual(['VUID-vkQueueSubmit2-semaphore-03868']);
+	});
+	test('4b: a present may wait on a later batch\'s signal (it covers the rendering), not on an earlier one', () => {
+		const two = [...SETUP, wait(0), acquire('ia0'), reset(0), rec(0, 0), submit(0, 'ia0', 'rf0'), wait(1), acquire('ia1'), reset(1), rec(1, 1), submit(1, 'ia1', 'rf1')];
+		const later = play([...two, present(0, 'rf1')]);
+		expect(later.last?.log.map((e) => e.ref).filter(Boolean)).toEqual([]);
+		expect(later.state.frames[0]!.hazard).toBe(false);
+		const earlier = play([...two, present(0, 'rf1'), present(1, 'rf0')]);
+		expect(earlier.last?.log[1]).toMatchObject({ kind: 'error', ref: SYNC.present.id });
+		expect(earlier.state.frames[1]!.hazard).toBe(true);
+	});
+	test('5: recording for an image the app does not hold is valid; the submit is refused until it is acquired', () => {
+		const r = play([...SETUP, wait(0), rec(0, 0)]);
+		expect(r.last?.ok).toBe(true);
+		const s = play([...r.acts, submit(0, 'ia0', 'rf0')]);
+		expect(s.last?.log[0]!.text).toStartWith('These commands render to image 0, which the app does not hold');
+		expect(play([...r.acts, acquire('ia0'), reset(0), submit(0, 'ia0', 'rf0')]).last?.ok).toBe(true);
+		// Images the app holds come first (the default): here image 1, while image 0 is presented.
+		const held = play([...SETUP, ...frame(0, 0), wait(1), acquire('ia1')]).state;
+		expect(candidates(held, 'cb1', 'record', 'image')).toEqual(['img1', 'img0', 'img2']);
+	});
+	test('6: a stored act with no object picked (\'\') is refused, never thrown', () => {
+		const base = [...SETUP, wait(0), acquire('ia0'), reset(0), rec(0, 0)];
+		const bad: Act[] = [
+			{ item: GLOBAL, verb: 'acquire', opts: { sem: '' } },
+			{ item: 'cb0', verb: 'record', opts: { image: '' } },
+			{ item: 'cb0', verb: 'submit', opts: { wait: '', stage: 'COLOR_ATTACHMENT_OUTPUT', signal: 'rf0', fence: 'f0' } },
+			{ item: 'cb0', verb: 'submit', opts: { wait: 'ia0', stage: 'COLOR_ATTACHMENT_OUTPUT', signal: '', fence: 'f0' } },
+			{ item: 'img0', verb: 'present', opts: { wait: '' } },
+		];
+		for (const a of bad) {
+			const r = play([...base, a]);
+			expect(r.last?.ok).toBe(false);
+			expect(r.last?.log[0]!.text).toStartWith('This call needs an object that is not picked');
+		}
+	});
+	test('7: Russian verb forms: "подать сигнал", never the colloquial "просигналить"', () => {
+		const ru = Object.values(TEXT.ru).join('\n');
+		expect(ru).not.toMatch(/просигнал|сигнализир/);
+		expect(TEXT.ru.m_semInUseByPresent).toStartWith('Present изображения {i} всё ещё ждёт {sem}.');
+		expect(TEXT.ru.m_hazardPresent).toContain('семафор, сигнал которого подаёт рисующий пакет');
+	});
+	test('8: the default present wait is the semaphore the image\'s rendering batch signals', () => {
+		const st = play([...SETUP, wait(0), acquire('ia0'), reset(0), rec(0, 0), submit(0, 'ia0', 'rf0'), wait(1), acquire('ia1'), reset(1), rec(1, 1), submit(1, 'ia1', 'rf1')]).state;
+		const of = (i: number) => candidates(st, `img${i}`, 'present', 'wait');
+		expect(of(1)[0]).toBe('rf1');
+		expect(of(0)[0]).toBe('rf0');
+		expect(sc.status(st, 'img1')).toBe('ready');
+	});
+	test('9: 07783 quotes the spec\'s S-M sentence', () => {
+		const r = play([...SETUP, acquire('ia0'), acquire('ia1'), acquire('rf0')]);
+		expect(r.last?.log[1]!.text).toContain('"should not be called if the number of images that the application has currently acquired is greater than S-M"');
+		expect(r.last?.log[1]!.text).toContain('With S = 3 images and M = minImageCount = 2');
+	});
+	test('3: the simplifications are part of the widget (caption in every language)', () => {
+		for (const t of Object.values(TEXT)) expect(t.simplified).toMatch(/FIFO/);
+		expect(TEXT.en.simplified).toContain('submission order');
+		expect(TEXT.en.simplified).toContain('fence wait');
 	});
 });
 

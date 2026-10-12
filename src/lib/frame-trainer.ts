@@ -23,17 +23,17 @@ import {
 	frameCounts,
 	gpuBlockers,
 	gpuStep,
-	heldImages,
 	peBlockers,
 	peStep,
 	present,
 	presentBlockers,
 	record,
 	recordBlockers,
+	recordImages,
 	resetBlockers,
 	resetFence,
 	semName,
-	semState,
+	semView,
 	stageName,
 	submit,
 	submitBlockers,
@@ -63,12 +63,15 @@ const num = (id: string) => Number(id.replace(/^\D+/, ''));
 const imgId = (i: number) => `img${i}`;
 
 /**
- * Present's wait candidates: semaphores holding a signal no one waits for first (render_finished before
- * image_available), then the rest; the first is the default, and the status must agree with it.
+ * Present's wait candidates for image i: semaphores holding a signal no wait has taken first, then the rest; within
+ * each, the semaphore the image's rendering batch signals, then render_finished before image_available. The first is
+ * the default (the correct one when it can be), and the status must agree with it.
  */
-function presentWaits(s: FrameState): string[] {
-	const free = (id: string) => s.sems[id]!.sig !== 'none' && s.sems[id]!.claim === null;
-	const order = [...SEMS.filter((id) => id.startsWith('rf')), ...SEMS.filter((id) => id.startsWith('ia'))];
+export function presentWaits(s: FrameState, i: number): string[] {
+	const free = (id: string) => s.sems[id]!.sigs.some((g) => g.claim === null);
+	const r = s.imgs[i]!.rendered;
+	const own = r === null ? [] : [s.batches[r]!.signal];
+	const order = [...new Set([...own, ...SEMS.filter((id) => id.startsWith('rf')), ...SEMS.filter((id) => id.startsWith('ia'))])];
 	return [...order.filter(free), ...order.filter((id) => !free(id))];
 }
 
@@ -84,12 +87,12 @@ export function frameStatus(s: FrameState, id: string): Status {
 	if (id.startsWith('cb')) {
 		const cb = s.cbs[n]!;
 		if (cb.state === 'executable') return 'done';
-		return recordBlockers(s, n, heldImages(s)[0] ?? null).length ? 'locked' : 'ready';
+		return recordBlockers(s, n, recordImages(s)[0]!).length ? 'locked' : 'ready';
 	}
 	if (id.startsWith('img')) {
 		const o = s.imgs[n]!.owner;
 		if (o === 'queued' || o === 'shown') return 'done';
-		return presentBlockers(s, n, presentWaits(s)[0]!).length ? 'locked' : 'ready';
+		return presentBlockers(s, n, presentWaits(s, n)[0]!).length ? 'locked' : 'ready';
 	}
 	return 'done';
 }
@@ -105,15 +108,14 @@ export function frameBadge(s: FrameState, id: string, t: FrameText, lang: string
 	if (id.startsWith('cb')) {
 		const cb = s.cbs[n]!;
 		if (cb.state === 'executable') return f(t.cb_executable, { i: cb.image! });
-		if (cb.state === 'pending') return f(t.cb_pending, { n: s.batches.filter((b) => b.slot === n && !b.done)[0]!.id });
+		if (cb.state === 'pending') return f(s.batches[cb.batch!]!.done ? t.cb_doneUnseen : t.cb_pending, { n: cb.batch! });
 		return t[`cb_${cb.state}`];
 	}
 	if (id.startsWith('ia') || id.startsWith('rf')) {
-		const st = semState(s, id);
-		const c = s.sems[id]!.claim;
-		if (st === 'waited' && c?.by === 'batch') return f(t.s_waited, { n: c.id });
-		if (st === 'present' && c?.by === 'present') return f(t.s_present, { i: c.img });
-		return t[`s_${st as 'unsignaled' | 'pending' | 'signaled'}`];
+		const v = semView(s, id);
+		if (v.st === 'waited' || v.st === 'waitedDone') return f(t[`s_${v.st}`], { n: v.n });
+		if (v.st === 'present') return f(t.s_present, { i: v.i });
+		return t[`s_${v.st}`];
 	}
 	if (id.startsWith('img')) {
 		const m = s.imgs[n]!;
@@ -159,7 +161,7 @@ export function frameScenario(lang: string, version: string): Scenario<FrameStat
 			id: 'record',
 			label: t.v_record,
 			primary: true,
-			options: [{ kind: 'item', id: 'image', label: t.o_image, of: (x) => heldImages(x).map(imgId) }],
+			options: [{ kind: 'item', id: 'image', label: t.o_image, of: (x) => recordImages(x).map(imgId) }],
 			check: (x, o) => words(recordBlockers(x, k, o.image ? num(String(o.image)) : null)),
 			apply: (x, o) => step(record(x, k, num(String(o.image)))),
 		},
@@ -182,7 +184,7 @@ export function frameScenario(lang: string, version: string): Scenario<FrameStat
 			id: 'present',
 			label: t.v_present,
 			primary: true,
-			options: [{ kind: 'item', id: 'wait', label: t.o_wait, of: presentWaits }],
+			options: [{ kind: 'item', id: 'wait', label: t.o_wait, of: (x) => presentWaits(x, i) }],
 			check: (x, o) => words(presentBlockers(x, i, String(o.wait))),
 			apply: (x, o) => step(present(x, i, String(o.wait))),
 		},
