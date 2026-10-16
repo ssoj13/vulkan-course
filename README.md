@@ -1,10 +1,10 @@
 # Vulkan from Zero
 
+**Live site: <https://ssoj13.github.io/course_vulkan/>** — English; Russian: <https://ssoj13.github.io/course_vulkan/ru/>.
+
 An interactive, visual Vulkan 1.4 course for graphics people: mind maps of every concept, an explorable map of all
 Vulkan objects, a create/destroy exercise that answers with the real validation errors, and companion programs in
 **Rust (ash)** and **C++ (Vulkan-Hpp)** from which every code snippet in the lessons is cut.
-
-Read it at **https://ssoj13.github.io/course_vulkan/**.
 
 ## Build the examples
 
