@@ -1,5 +1,5 @@
 {
-  "id": "vulkan-course",
+  "id": "course-vulkan",
   "title": "Vulkan from Zero",
   "description": "An interactive, visual Vulkan course for graphics people: every object, frame and barrier you can see and step through, with Rust (ash) and C++ (Vulkan-Hpp) code.",
   "modules": [

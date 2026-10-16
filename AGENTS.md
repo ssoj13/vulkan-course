@@ -1,4 +1,4 @@
-# vulkan-course — working notes for agents
+# course_vulkan — working notes for agents
 
 Keep this file current: structure, decisions, traps, TODOs (`[ ]` / `[x]`). `CLAUDE.md` only imports it.
 The engine lives in a separate repo (`../course-kit`, `ssoj13/course-kit`); read its AGENTS.md before touching
@@ -7,7 +7,7 @@ anything generic (sidebar, links, progress, mind maps, quiz).
 ## What this is
 
 Interactive, visualization-first textbook "Vulkan from zero" (English + Russian), published on GitHub Pages at
-https://ssoj13.github.io/vulkan-course/ (repo `ssoj13/vulkan-course`). Format: roadmap.sh-style course map,
+https://ssoj13.github.io/course_vulkan/ (repo `ssoj13/course_vulkan`). Format: roadmap.sh-style course map,
 concept mind maps everywhere, live scrubbable visualizations of Vulkan objects, frames and synchronization.
 
 Reader profile: CG/VFX developer (Maya, Houdini, shaders), Rust and C++; wants very gentle, step-by-step
@@ -341,7 +341,7 @@ Real data and how to refresh it (all from the dev machine: RTX 3080 Ti, driver 6
 - Queue order wording, course-wide: submission order is the logical order barriers and semaphores refer to; by itself
   it orders neither start nor finish, even within one queue (exception: batches of one vkQueueSubmit begin in order);
   between queues there is not even that.
-- Repo `ssoj13/vulkan-course` (public, Pages via Actions). `task.md` (private notes) and `.omh/` are gitignored and
+- Repo `ssoj13/course_vulkan` (public, Pages via Actions). `task.md` (private notes) and `.omh/` are gitignored and
   were never published; the pre-publication local history was deleted.
 - examples 06-09 (modules 4-6, 2026-10-10): 06_window_surface, 07_swapchain, 08_pipeline, 09_triangle in both
   languages; run on the RTX 3080 Ti, stdout identical (no handles printed), validation clean (core + sync + best

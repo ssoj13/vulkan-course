@@ -4,7 +4,7 @@ An interactive, visual Vulkan 1.4 course for graphics people: mind maps of every
 Vulkan objects, a create/destroy exercise that answers with the real validation errors, and companion programs in
 **Rust (ash)** and **C++ (Vulkan-Hpp)** from which every code snippet in the lessons is cut.
 
-Read it at **https://ssoj13.github.io/vulkan-course/**.
+Read it at **https://ssoj13.github.io/course_vulkan/**.
 
 ## Build the examples
 
@@ -30,8 +30,8 @@ command that runs the step.
 ### Run a step
 
 ```powershell
-git clone https://github.com/ssoj13/vulkan-course
-cd vulkan-course
+git clone https://github.com/ssoj13/course_vulkan
+cd course_vulkan
 
 # Rust
 cd examples/rust
@@ -63,35 +63,35 @@ Vulkan Configurator (`vkconfig`, in the SDK) can set the same options without en
 
 | Step | Lessons that show its code |
 | --- | --- |
-| `01_instance` | [The loader and VkInstance](https://ssoj13.github.io/vulkan-course/instance/loader-and-instance/) |
-| `02_validation` | [Validation layers and the debug messenger](https://ssoj13.github.io/vulkan-course/instance/validation/) |
-| `03_physical_devices` | [Physical devices: properties, features, limits](https://ssoj13.github.io/vulkan-course/devices/physical-devices/) |
-| `04_queue_families` | [Queue families: the GPU's engines](https://ssoj13.github.io/vulkan-course/devices/queue-families/) |
-| `05_logical_device` | [Logical device and queues](https://ssoj13.github.io/vulkan-course/devices/logical-device/) |
-| `06_window_surface` | [A window and its surface](https://ssoj13.github.io/vulkan-course/presentation/window-and-surface/) |
-| `07_swapchain` | [The swapchain and present modes](https://ssoj13.github.io/vulkan-course/presentation/swapchain/), [Images and image views](https://ssoj13.github.io/vulkan-course/presentation/image-views/) |
-| `08_pipeline` | [Shaders, Slang and SPIR-V](https://ssoj13.github.io/vulkan-course/pipeline/shaders-and-spirv/), [The graphics pipeline object](https://ssoj13.github.io/vulkan-course/pipeline/graphics-pipeline/), [The pipeline layout](https://ssoj13.github.io/vulkan-course/pipeline/pipeline-layout/), [Dynamic rendering](https://ssoj13.github.io/vulkan-course/pipeline/dynamic-rendering/) |
-| `09_triangle` | [Dynamic rendering](https://ssoj13.github.io/vulkan-course/pipeline/dynamic-rendering/), [Command pools and command buffers](https://ssoj13.github.io/vulkan-course/commands/command-buffers/), [The first triangle](https://ssoj13.github.io/vulkan-course/commands/first-triangle/) |
-| `10_frames_in_flight` | [Fences and semaphores](https://ssoj13.github.io/vulkan-course/sync/fences-and-semaphores/), [Frames in flight](https://ssoj13.github.io/vulkan-course/sync/frames-in-flight/) |
-| `11_resize` | [Swapchain recreation](https://ssoj13.github.io/vulkan-course/sync/swapchain-recreation/) |
-| `12_timeline` | [Pipeline barriers and image layouts](https://ssoj13.github.io/vulkan-course/sync/barriers-and-layouts/), [Timeline semaphores](https://ssoj13.github.io/vulkan-course/sync/timeline-semaphores/), [Swapchain recreation](https://ssoj13.github.io/vulkan-course/sync/swapchain-recreation/) |
-| `13_memory_types` | [Memory heaps and memory types](https://ssoj13.github.io/vulkan-course/memory/memory-types/) |
-| `14_vertex_buffer` | [Vertex and index buffers](https://ssoj13.github.io/vulkan-course/memory/vertex-and-index-buffers/) |
-| `15_staging` | [Staging uploads](https://ssoj13.github.io/vulkan-course/memory/staging-uploads/) |
-| `16_allocator` | [Allocators and sub-allocation](https://ssoj13.github.io/vulkan-course/memory/allocators/) |
-| `17_uniforms` | [Uniform buffers](https://ssoj13.github.io/vulkan-course/descriptors/uniform-buffers/), [Descriptor sets](https://ssoj13.github.io/vulkan-course/descriptors/descriptor-sets/) |
-| `18_push_constants` | [Push constants and push descriptors](https://ssoj13.github.io/vulkan-course/descriptors/push-constants/) |
-| `19_buffer_device_address` | [Buffer device address](https://ssoj13.github.io/vulkan-course/descriptors/buffer-device-address/) |
-| `20_bindless` | [Bindless descriptors](https://ssoj13.github.io/vulkan-course/descriptors/bindless/) |
-| `21_texture` | [Textures and samplers](https://ssoj13.github.io/vulkan-course/images/textures-and-samplers/) |
-| `22_depth` | [Depth buffers](https://ssoj13.github.io/vulkan-course/images/depth/) |
-| `23_mipmaps` | [Mipmaps](https://ssoj13.github.io/vulkan-course/images/mipmaps/) |
-| `24_msaa` | [Multisample anti-aliasing (MSAA)](https://ssoj13.github.io/vulkan-course/images/msaa/) |
-| `25_compute` | [Compute pipelines](https://ssoj13.github.io/vulkan-course/compute/compute-pipelines/) |
-| `26_particles` | [Particles](https://ssoj13.github.io/vulkan-course/compute/particles/) |
-| `27_async_compute` | [Async compute](https://ssoj13.github.io/vulkan-course/compute/async-compute/) |
-| `28_debug_labels` | [Debugging and profiling](https://ssoj13.github.io/vulkan-course/advanced/debugging-and-profiling/) |
-| `29_gpu_queries` | [Debugging and profiling](https://ssoj13.github.io/vulkan-course/advanced/debugging-and-profiling/) |
+| `01_instance` | [The loader and VkInstance](https://ssoj13.github.io/course_vulkan/instance/loader-and-instance/) |
+| `02_validation` | [Validation layers and the debug messenger](https://ssoj13.github.io/course_vulkan/instance/validation/) |
+| `03_physical_devices` | [Physical devices: properties, features, limits](https://ssoj13.github.io/course_vulkan/devices/physical-devices/) |
+| `04_queue_families` | [Queue families: the GPU's engines](https://ssoj13.github.io/course_vulkan/devices/queue-families/) |
+| `05_logical_device` | [Logical device and queues](https://ssoj13.github.io/course_vulkan/devices/logical-device/) |
+| `06_window_surface` | [A window and its surface](https://ssoj13.github.io/course_vulkan/presentation/window-and-surface/) |
+| `07_swapchain` | [The swapchain and present modes](https://ssoj13.github.io/course_vulkan/presentation/swapchain/), [Images and image views](https://ssoj13.github.io/course_vulkan/presentation/image-views/) |
+| `08_pipeline` | [Shaders, Slang and SPIR-V](https://ssoj13.github.io/course_vulkan/pipeline/shaders-and-spirv/), [The graphics pipeline object](https://ssoj13.github.io/course_vulkan/pipeline/graphics-pipeline/), [The pipeline layout](https://ssoj13.github.io/course_vulkan/pipeline/pipeline-layout/), [Dynamic rendering](https://ssoj13.github.io/course_vulkan/pipeline/dynamic-rendering/) |
+| `09_triangle` | [Dynamic rendering](https://ssoj13.github.io/course_vulkan/pipeline/dynamic-rendering/), [Command pools and command buffers](https://ssoj13.github.io/course_vulkan/commands/command-buffers/), [The first triangle](https://ssoj13.github.io/course_vulkan/commands/first-triangle/) |
+| `10_frames_in_flight` | [Fences and semaphores](https://ssoj13.github.io/course_vulkan/sync/fences-and-semaphores/), [Frames in flight](https://ssoj13.github.io/course_vulkan/sync/frames-in-flight/) |
+| `11_resize` | [Swapchain recreation](https://ssoj13.github.io/course_vulkan/sync/swapchain-recreation/) |
+| `12_timeline` | [Pipeline barriers and image layouts](https://ssoj13.github.io/course_vulkan/sync/barriers-and-layouts/), [Timeline semaphores](https://ssoj13.github.io/course_vulkan/sync/timeline-semaphores/), [Swapchain recreation](https://ssoj13.github.io/course_vulkan/sync/swapchain-recreation/) |
+| `13_memory_types` | [Memory heaps and memory types](https://ssoj13.github.io/course_vulkan/memory/memory-types/) |
+| `14_vertex_buffer` | [Vertex and index buffers](https://ssoj13.github.io/course_vulkan/memory/vertex-and-index-buffers/) |
+| `15_staging` | [Staging uploads](https://ssoj13.github.io/course_vulkan/memory/staging-uploads/) |
+| `16_allocator` | [Allocators and sub-allocation](https://ssoj13.github.io/course_vulkan/memory/allocators/) |
+| `17_uniforms` | [Uniform buffers](https://ssoj13.github.io/course_vulkan/descriptors/uniform-buffers/), [Descriptor sets](https://ssoj13.github.io/course_vulkan/descriptors/descriptor-sets/) |
+| `18_push_constants` | [Push constants and push descriptors](https://ssoj13.github.io/course_vulkan/descriptors/push-constants/) |
+| `19_buffer_device_address` | [Buffer device address](https://ssoj13.github.io/course_vulkan/descriptors/buffer-device-address/) |
+| `20_bindless` | [Bindless descriptors](https://ssoj13.github.io/course_vulkan/descriptors/bindless/) |
+| `21_texture` | [Textures and samplers](https://ssoj13.github.io/course_vulkan/images/textures-and-samplers/) |
+| `22_depth` | [Depth buffers](https://ssoj13.github.io/course_vulkan/images/depth/) |
+| `23_mipmaps` | [Mipmaps](https://ssoj13.github.io/course_vulkan/images/mipmaps/) |
+| `24_msaa` | [Multisample anti-aliasing (MSAA)](https://ssoj13.github.io/course_vulkan/images/msaa/) |
+| `25_compute` | [Compute pipelines](https://ssoj13.github.io/course_vulkan/compute/compute-pipelines/) |
+| `26_particles` | [Particles](https://ssoj13.github.io/course_vulkan/compute/particles/) |
+| `27_async_compute` | [Async compute](https://ssoj13.github.io/course_vulkan/compute/async-compute/) |
+| `28_debug_labels` | [Debugging and profiling](https://ssoj13.github.io/course_vulkan/advanced/debugging-and-profiling/) |
+| `29_gpu_queries` | [Debugging and profiling](https://ssoj13.github.io/course_vulkan/advanced/debugging-and-profiling/) |
 | `30_pipeline_cache` | Pipeline cache (lesson in progress) |
 
 ## Repository
